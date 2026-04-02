@@ -1,0 +1,255 @@
+import SwiftUI
+
+// MARK: - AI Chat View
+
+struct AIChatView: View {
+    @ObservedObject var viewModel: AIChatViewModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            chatHeader
+
+            Divider().opacity(0.2)
+
+            // Messages
+            if viewModel.hasAPIKey {
+                messageList
+            } else {
+                noAPIKeyView
+            }
+
+            Divider().opacity(0.2)
+
+            // Input bar
+            if viewModel.hasAPIKey {
+                inputBar
+            }
+        }
+        .background(Color.gSurface(for: colorScheme))
+    }
+
+    // MARK: - Header
+
+    var chatHeader: some View {
+        HStack(spacing: GSpacing.sm) {
+            Image(systemName: "sparkles")
+                .font(.gIconMedium)
+                .foregroundColor(.gPrimary)
+            Text("AI Assistant")
+                .font(.gSubheadline.weight(.semibold))
+                .foregroundColor(.gTextPrimary(for: colorScheme))
+            Spacer()
+        }
+        .padding(.horizontal, GSpacing.md)
+        .padding(.vertical, GSpacing.sm)
+    }
+
+    // MARK: - Message List
+
+    var messageList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: GSpacing.sm) {
+                    if viewModel.messages.isEmpty && !viewModel.isStreaming {
+                        welcomeMessage
+                    }
+
+                    ForEach(viewModel.messages) { message in
+                        MessageBubble(message: message, colorScheme: colorScheme)
+                            .id(message.id)
+                    }
+
+                    // Streaming indicator
+                    if viewModel.isStreaming && !viewModel.streamingText.isEmpty {
+                        streamingBubble
+                            .id("streaming")
+                    }
+
+                    // Error
+                    if let error = viewModel.errorMessage {
+                        errorBubble(error)
+                    }
+                }
+                .padding(GSpacing.md)
+            }
+            .onChange(of: viewModel.messages.count) { _, _ in
+                if let lastId = viewModel.messages.last?.id {
+                    withAnimation { proxy.scrollTo(lastId, anchor: .bottom) }
+                }
+            }
+            .onChange(of: viewModel.streamingText) { _, _ in
+                withAnimation {
+                    proxy.scrollTo("streaming", anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    var welcomeMessage: some View {
+        VStack(spacing: GSpacing.sm) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 32))
+                .foregroundColor(.gPrimary.opacity(0.5))
+            Text("Ask me anything about your canvas")
+                .font(.gSubheadline)
+                .foregroundColor(.gTextTertiary(for: colorScheme))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, GSpacing.xl)
+    }
+
+    var streamingBubble: some View {
+        HStack(alignment: .top, spacing: GSpacing.xs) {
+            Image(systemName: "sparkles")
+                .font(.gCaption)
+                .foregroundColor(.gPrimary)
+                .frame(width: 20, height: 20)
+
+            Text(viewModel.streamingText)
+                .font(.gSubheadline)
+                .foregroundColor(.gTextPrimary(for: colorScheme))
+                .textSelection(.enabled)
+
+            Spacer()
+        }
+        .padding(GSpacing.sm)
+        .background(
+            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                .fill(Color.gElevated(for: colorScheme))
+        )
+    }
+
+    func errorBubble(_ text: String) -> some View {
+        HStack(spacing: GSpacing.xs) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.gCaption)
+                .foregroundColor(.red)
+            Text(text)
+                .font(.gCaption)
+                .foregroundColor(.red)
+        }
+        .padding(GSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: GRadius.xs, style: .continuous)
+                .fill(Color.red.opacity(0.1))
+        )
+    }
+
+    // MARK: - No API Key
+
+    var noAPIKeyView: some View {
+        VStack(spacing: GSpacing.md) {
+            Spacer()
+            Image(systemName: "key.fill")
+                .font(.system(size: 36))
+                .foregroundColor(.gTextTertiary(for: colorScheme))
+            Text("API Key Required")
+                .font(.gSubheadline.weight(.semibold))
+                .foregroundColor(.gTextPrimary(for: colorScheme))
+            Text("Add your Anthropic API key\nin Settings to use the AI assistant.")
+                .font(.gCaption)
+                .foregroundColor(.gTextSecondary(for: colorScheme))
+                .multilineTextAlignment(.center)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Input Bar
+
+    var inputBar: some View {
+        HStack(spacing: GSpacing.xs) {
+            TextField("Ask something…", text: $viewModel.inputText, axis: .vertical)
+                .font(.gSubheadline)
+                .foregroundColor(.gTextPrimary(for: colorScheme))
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .padding(.horizontal, GSpacing.sm)
+                .padding(.vertical, GSpacing.xs)
+                .background(
+                    RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                        .fill(Color.gElevated(for: colorScheme))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                                .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
+                        )
+                )
+
+            if viewModel.isStreaming {
+                Button {
+                    viewModel.cancelStream()
+                } label: {
+                    Image(systemName: "stop.circle.fill")
+                        .font(.gIconLarge)
+                        .foregroundColor(.red)
+                }
+            } else {
+                Button {
+                    Task { await viewModel.sendMessage() }
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.gIconLarge)
+                        .foregroundColor(
+                            viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? .gTextTertiary(for: colorScheme)
+                            : .gPrimary
+                        )
+                }
+                .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.horizontal, GSpacing.md)
+        .padding(.vertical, GSpacing.sm)
+    }
+}
+
+// MARK: - Message Bubble
+
+struct MessageBubble: View {
+    let message: AIMessage
+    let colorScheme: ColorScheme
+
+    var isUser: Bool { message.role == .user }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: GSpacing.xs) {
+            if isUser { Spacer(minLength: 40) }
+
+            if !isUser {
+                Image(systemName: "sparkles")
+                    .font(.gCaption)
+                    .foregroundColor(.gPrimary)
+                    .frame(width: 20, height: 20)
+            }
+
+            VStack(alignment: isUser ? .trailing : .leading, spacing: GSpacing.xxs) {
+                if message.imageData != nil {
+                    HStack(spacing: GSpacing.xxs) {
+                        Image(systemName: "photo")
+                            .font(.gCaption2)
+                            .foregroundColor(.gTextTertiary(for: colorScheme))
+                        Text("Canvas snapshot attached")
+                            .font(.gCaption2)
+                            .foregroundColor(.gTextTertiary(for: colorScheme))
+                    }
+                }
+
+                Text(message.content)
+                    .font(.gSubheadline)
+                    .foregroundColor(.gTextPrimary(for: colorScheme))
+                    .textSelection(.enabled)
+            }
+            .padding(GSpacing.sm)
+            .background(
+                RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                    .fill(isUser ? Color.gPrimary.opacity(0.15) : Color.gElevated(for: colorScheme))
+            )
+
+            if !isUser { Spacer(minLength: 40) }
+        }
+    }
+}
