@@ -48,7 +48,14 @@ struct CanvasContainerView: View {
         }
         .task {
             if let userId = authViewModel.currentUserId {
+                await canvasVM.loadNotebook(notebookId: notebook.id, userId: userId)
                 await aiVM.startSession(userId: userId, notebookId: notebook.id)
+            }
+        }
+        .onDisappear {
+            // Force save any pending strokes immediately before the view model is destroyed
+            Task {
+                await canvasVM.flushSave()
             }
         }
     }
@@ -57,11 +64,7 @@ struct CanvasContainerView: View {
 
     var canvasArea: some View {
         ZStack(alignment: .top) {
-            // Background pattern (CATiledLayer)
-            TiledBackgroundView(pattern: canvasVM.backgroundPattern)
-                .ignoresSafeArea()
-
-            // PencilKit drawing surface
+            // PencilKit drawing surface (background pattern is embedded inside scroll content)
             PKCanvasRepresentable(
                 viewModel: canvasVM,
                 allowsFingerDrawing: !canvasVM.palmRejectionEnabled
@@ -96,7 +99,7 @@ struct CanvasContainerView: View {
             // Properties Panel
             if canvasVM.showProperties && canvasVM.isToolbarVisible {
                 VStack {
-                    Spacer().frame(height: 64)
+                    Spacer().frame(height: showPageStrip ? 172 : 64)
                     HStack(alignment: .top) {
                         PropertiesPanel(viewModel: canvasVM)
                             .padding(.leading, 16)

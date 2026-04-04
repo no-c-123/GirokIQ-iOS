@@ -151,7 +151,7 @@ struct GCard<Content: View>: View {
 // MARK: - Scale Button Style
 
 struct GScaleButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
+    func makeBody(configuration: ButtonStyleConfiguration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
             .animation(GAnimation.springFast, value: configuration.isPressed)

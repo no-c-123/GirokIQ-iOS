@@ -47,10 +47,6 @@ struct CanvasToolbar: View {
                     .background(Color.gBorderStrong)
                     .padding(.horizontal, GSpacing.xxs)
 
-                ToolbarIconButton(icon: "square.on.square", label: "Shape") {
-                    // shape snapping tool
-                }
-
                 ToolbarIconButton(icon: "arrow.up.left.and.arrow.down.right", label: "Select") {
                     viewModel.selectTool(.selection)
                 }
@@ -120,6 +116,38 @@ struct CanvasToolbar: View {
                     .accessibilityLabel("AI Assistant")
                     .accessibilityHint(isAIPanelVisible ? "Double tap to hide AI panel" : "Double tap to show AI panel")
                     .accessibilityAddTraits(isAIPanelVisible ? .isSelected : [])
+                }
+
+                // Open in Web deep link
+                if let webURL = viewModel.webURL(notebookId: notebook.id) {
+                    Link(destination: webURL) {
+                        Image(systemName: "globe")
+                            .canvasToolbarIcon()
+                    }
+                    .minTapTarget()
+                    .accessibilityLabel("Open in web")
+                    .accessibilityHint("Opens this notebook in the web app")
+                }
+
+                // Presence badge — shown when notebook is also open on web
+                if viewModel.isOpenOnWeb {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 6, height: 6)
+                        Text("Web")
+                            .font(.gCaption2.weight(.medium))
+                            .foregroundColor(.gTextSecondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .fill(Color.green.opacity(0.12))
+                            .overlay(Capsule().strokeBorder(Color.green.opacity(0.3), lineWidth: 0.5))
+                    )
+                    .transition(.scale.combined(with: .opacity))
+                    .accessibilityLabel("Also open on web")
                 }
 
                 if viewModel.isSaving {

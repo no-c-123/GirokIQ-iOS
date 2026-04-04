@@ -2,12 +2,20 @@ import SwiftUI
 
 // MARK: - Notebook Card
 
-struct NotebookCard: View {
+/// Performance-optimized notebook card.
+/// - Uses `Equatable` conformance to skip redundant SwiftUI diffs during scroll.
+/// - Avoids offscreen rendering by using `compositingGroup()` instead of separate overlay strokes.
+struct NotebookCard: View, Equatable {
     let notebook: Notebook
     let viewMode: HomeViewModel.ViewMode
     let onTap: () -> Void
 
-    @State private var isPressed = false
+    static func == (lhs: NotebookCard, rhs: NotebookCard) -> Bool {
+        lhs.notebook.id == rhs.notebook.id &&
+        lhs.notebook.name == rhs.notebook.name &&
+        lhs.notebook.updatedAt == rhs.notebook.updatedAt &&
+        lhs.viewMode == rhs.viewMode
+    }
 
     /// Generate a consistent accent color from the notebook's ID
     private var accentColor: Color {
@@ -77,15 +85,16 @@ struct NotebookCard: View {
             .padding(.horizontal, GSpacing.xxs)
             .padding(.vertical, GSpacing.xs)
         }
-        .background(
-            RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                .fill(Color.gSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                        .stroke(Color.gBorder, lineWidth: 0.5)
-                )
-        )
+        .background(Color.gSurface)
         .clipShape(RoundedRectangle(cornerRadius: GRadius.md, style: .continuous))
+        // Use compositingGroup to flatten all layers into a single offscreen buffer,
+        // then apply the border stroke once — avoids per-frame offscreen rendering
+        // that Core Animation would otherwise trigger for each overlay + clip combination.
+        .overlay(
+            RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                .stroke(Color.gBorder, lineWidth: 0.5)
+        )
+        .compositingGroup()
     }
 
     // MARK: - List Card
@@ -117,13 +126,12 @@ struct NotebookCard: View {
                 .foregroundColor(.gTextTertiary)
         }
         .padding(GSpacing.md)
-        .background(
+        .background(Color.gSurface)
+        .clipShape(RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous))
+        .overlay(
             RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                .fill(Color.gSurface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                        .stroke(Color.gBorder, lineWidth: 0.5)
-                )
+                .stroke(Color.gBorder, lineWidth: 0.5)
         )
+        .compositingGroup()
     }
 }

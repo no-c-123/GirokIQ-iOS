@@ -1,21 +1,27 @@
 import LocalAuthentication
 
+// MARK: - Biometric Auth Service
+
 /// Wraps LAContext for Face ID / Touch ID biometric authentication.
 /// Used for privacy lock after the app has been in the background.
 final class BiometricAuthService {
 
-    /// Whether biometric authentication is available on this device.
-    func canUseBiometrics() -> Bool {
-        let context = LAContext()
-        var error: NSError?
-        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
-    }
+    // MARK: - Properties
 
     /// The type of biometric available (Face ID, Touch ID, or none).
     var biometricType: LABiometryType {
         let context = LAContext()
         _ = context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: nil)
         return context.biometryType
+    }
+
+    // MARK: - Public Methods
+
+    /// Whether biometric authentication is available on this device.
+    func canUseBiometrics() -> Bool {
+        let context = LAContext()
+        var error: NSError?
+        return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
     }
 
     /// Prompt the user for biometric authentication. Returns `true` on success.

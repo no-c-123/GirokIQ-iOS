@@ -1,0 +1,133 @@
+# GirokIQ SwiftLint Configuration
+# Part 11: Code Quality Standards
+
+# Paths
+included:
+  - GirokIQ-ios
+
+excluded:
+  - GirokIQ-ios/Assets.xcassets
+  - DerivedData
+  - .build
+
+# Rule severity overrides
+opt_in_rules:
+  - empty_count
+  - closure_spacing
+  - contains_over_filter_count
+  - discouraged_optional_boolean
+  - fatal_error_message
+  - first_where
+  - implicitly_unwrapped_optional
+  - modifier_order
+  - overridden_super_call
+  - private_action
+  - private_outlet
+  - redundant_nil_coalescing
+  - sorted_first_last
+  - unowned_variable_capture
+  - vertical_whitespace_closing_braces
+
+disabled_rules:
+  - todo
+  - trailing_comma
+  - opening_brace
+
+# Line length: 120 chars (warning), 200 chars (error)
+line_length:
+  warning: 120
+  error: 200
+  ignores_comments: true
+  ignores_urls: true
+  ignores_function_declarations: false
+
+# Function body: 50 lines warning, 80 lines error
+function_body_length:
+  warning: 50
+  error: 80
+
+# Type body: 300 lines warning, 500 lines error
+type_body_length:
+  warning: 300
+  error: 500
+
+# File length
+file_length:
+  warning: 500
+  error: 800
+
+# Force operations — these are errors, not warnings
+force_cast:
+  severity: error
+
+force_try:
+  severity: error
+
+# Implicitly unwrapped optionals
+implicitly_unwrapped_optional:
+  severity: warning
+  mode: all_except_iboutlets
+
+# Identifier name rules
+identifier_name:
+  min_length:
+    warning: 2
+    error: 1
+  max_length:
+    warning: 50
+    error: 60
+  excluded:
+    - id
+    - x
+    - y
+    - r
+    - i
+    - j
+    - w
+    - h
+    - a
+    - c
+    - p
+    - f
+    - l
+    - g
+    - t
+    - pt
+    - cx
+    - cy
+    - vm
+    - db
+    - ts
+
+# Nesting depth
+nesting:
+  type_level: 2
+  function_level: 3
+
+# Cyclomatic complexity
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+# Large tuple
+large_tuple:
+  warning: 3
+  error: 4
+
+# Vertical whitespace
+vertical_whitespace:
+  max_empty_lines: 2
+
+# Custom rules
+custom_rules:
+  no_dispatch_main:
+    name: "No DispatchQueue.main"
+    regex: "DispatchQueue\\.main"
+    message: "Use Task { @MainActor in } or @MainActor instead of DispatchQueue.main"
+    severity: warning
+  
+  no_combine_import:
+    name: "Prefer async/await over Combine"
+    regex: "import Combine"
+    message: "Prefer Swift Concurrency (async/await) over Combine where possible"
+    severity: warning

@@ -1,6 +1,6 @@
 import Foundation
+import CoreGraphics
 import SwiftUI
-import Combine
 
 // MARK: - Remote Stroke (matches Supabase `strokes` table)
 
@@ -30,9 +30,13 @@ struct RemoteStroke: Codable, Identifiable {
 
 // MARK: - Local Stroke (in-memory drawing state for Core Graphics canvas)
 
-class Stroke: Identifiable, ObservableObject {
+/// In-memory representation of a stroke being drawn or displayed on the canvas.
+/// This is a canvas-layer rendering model — it uses `Color` and `CGFloat` because
+/// it's consumed exclusively by canvas drawing code (DrawingCanvasView, CanvasViewModel).
+/// Not used for persistence; `RemoteStroke` is the sync/persistence model.
+class Stroke: Identifiable {
     var id: UUID = UUID()
-    @Published var points: [StrokePoint] = []
+    var points: [StrokePoint] = []
     var color: Color
     var width: CGFloat
     var opacity: Double
@@ -146,7 +150,7 @@ enum StrokeStyle: String, CaseIterable {
 
 extension Color {
     static let strokePresets: [Color] = [
-        .white,
+        Color(hex: "#FFFFFE"), // Off-white (prevents PencilKit auto-inversion)
         Color(hex: "#A78BFA"),
         Color(hex: "#60A5FA"),
         Color(hex: "#34D399"),
@@ -155,6 +159,6 @@ extension Color {
         Color(hex: "#FB923C"),
         Color(hex: "#22D3EE"),
         Color(hex: "#F472B6"),
-        .black
+        Color(hex: "#000001")  // Off-black (prevents PencilKit auto-inversion)
     ]
 }

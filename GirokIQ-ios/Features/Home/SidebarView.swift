@@ -26,6 +26,9 @@ struct SidebarView: View {
                     Label("All Notebooks", systemImage: "book.closed")
                         .foregroundColor(selectedFolderId == nil ? .gPrimary : .gTextPrimary(for: colorScheme))
                 }
+                .accessibilityLabel("All Notebooks")
+                .accessibilityHint("Double tap to show all notebooks")
+                .accessibilityAddTraits(selectedFolderId == nil ? .isSelected : [])
             }
 
             // MARK: - Folders
@@ -44,13 +47,16 @@ struct SidebarView: View {
                             }
                             .foregroundColor(selectedFolderId == folder.id ? .gPrimary : .gTextPrimary(for: colorScheme))
                         }
+                        .accessibilityLabel("\(folder.name) folder, \(viewModel.notebooksInFolder(folder.id).count) notebooks")
+                        .accessibilityHint("Double tap to filter by this folder")
+                        .accessibilityAddTraits(selectedFolderId == folder.id ? .isSelected : [])
                     }
                 }
             }
 
             // MARK: - Recents
             Section("Recent") {
-                ForEach(recentNotebooks) { notebook in
+                ForEach(viewModel.recentNotebooks) { notebook in
                     Button {
                         selectedNotebook = notebook
                     } label: {
@@ -67,6 +73,8 @@ struct SidebarView: View {
                             }
                         }
                     }
+                    .accessibilityLabel("\(notebook.name), updated \(notebook.updatedAt.formatted(.relative(presentation: .named)))")
+                    .accessibilityHint("Double tap to open this notebook")
                 }
             }
 
@@ -78,6 +86,7 @@ struct SidebarView: View {
                     Label("New Folder", systemImage: "folder.badge.plus")
                         .foregroundColor(.gPrimary)
                 }
+                .accessibilityHint("Double tap to create a new folder")
 
                 Button {
                     showSettings = true
@@ -85,6 +94,7 @@ struct SidebarView: View {
                     Label("Settings", systemImage: "gearshape")
                         .foregroundColor(.gTextPrimary(for: colorScheme))
                 }
+                .accessibilityHint("Double tap to open app settings")
             }
         }
         .listStyle(.sidebar)
@@ -105,11 +115,6 @@ struct SidebarView: View {
     }
 
     // MARK: - Helpers
-
-    /// Most recently updated 5 notebooks
-    private var recentNotebooks: [Notebook] {
-        Array(viewModel.notebooks.sorted { $0.updatedAt > $1.updatedAt }.prefix(5))
-    }
 
     private func recentNotebookIcon(for notebook: Notebook) -> some View {
         let colors: [Color] = [.gPrimary, Color(hex: "#8B5CF6"), Color(hex: "#06B6D4"), Color(hex: "#10B981"), Color(hex: "#F59E0B"), Color(hex: "#EC4899")]

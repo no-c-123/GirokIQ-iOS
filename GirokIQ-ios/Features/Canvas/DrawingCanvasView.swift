@@ -61,7 +61,7 @@ struct DrawingCanvasView: UIViewRepresentable {
         // MARK: Apple Pencil Double Tap
 
         func pencilInteractionDidTap(_ interaction: UIPencilInteraction) {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.viewModel.selectTool(self.viewModel.selectedTool == .eraser ? .pen : .eraser)
                 HapticEngine.light()
             }
@@ -80,7 +80,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     width: translation.x - lastPanTranslation.x,
                     height: translation.y - lastPanTranslation.y
                 )
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self.viewModel.canvasOffset = CGSize(
                         width: self.viewModel.canvasOffset.width + delta.width,
                         height: self.viewModel.canvasOffset.height + delta.height
@@ -99,7 +99,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                 pinchStartScale = viewModel.canvasScale
             case .changed:
                 let newScale = (pinchStartScale * gesture.scale).clamped(to: 0.2...5.0)
-                DispatchQueue.main.async { self.viewModel.canvasScale = newScale }
+                Task { @MainActor in self.viewModel.canvasScale = newScale }
                 view.setNeedsDisplay()
             default: break
             }
@@ -151,7 +151,7 @@ struct DrawingCanvasView: UIViewRepresentable {
                     guard let self, let s = self.strokeForSnap, s.points.count > 3 else { return }
                     self.applyShapeSnapping(to: s)
                     HapticEngine.medium()
-                    DispatchQueue.main.async { self.canvasView?.setNeedsDisplay() }
+                    Task { @MainActor in self.canvasView?.setNeedsDisplay() }
                 }
             }
         }
@@ -192,7 +192,7 @@ struct DrawingCanvasView: UIViewRepresentable {
             }
 
             guard let stroke = currentStroke, !stroke.points.isEmpty else { return }
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.viewModel.pages[self.viewModel.currentPageIndex].strokes.append(stroke)
             }
             currentStroke = nil
@@ -212,7 +212,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func eraseAt(_ pt: CGPoint) {
             let radius = viewModel.strokeWidth * 4
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.viewModel.currentPage.strokes.removeAll {
                     $0.points.contains { hypot($0.location.x - pt.x, $0.location.y - pt.y) < radius }
                 }
@@ -222,10 +222,11 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func selectStrokesInLasso() {
             guard lassoPoints.count > 2 else { return }
-            DispatchQueue.main.async {
+            let polygonCopy = lassoPoints
+            Task { @MainActor in
                 self.viewModel.selectedStrokes = Set(self.viewModel.currentPage.strokes.compactMap { stroke in
                     let c = CGPoint(x: stroke.boundingRect.midX, y: stroke.boundingRect.midY)
-                    return self.pointInPolygon(c, polygon: self.lassoPoints) ? stroke.id : nil
+                    return self.pointInPolygon(c, polygon: polygonCopy) ? stroke.id : nil
                 })
             }
         }
@@ -262,10 +263,12 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func isRect(_ p: [CGPoint]) -> Bool {
             let xs = p.map { $0.x }, ys = p.map { $0.y }
-            let w = xs.max()! - xs.min()!, h = ys.max()! - ys.min()!
+            guard let minX = xs.min(), let maxX = xs.max(),
+                  let minY = ys.min(), let maxY = ys.max() else { return false }
+            let w = maxX - minX, h = maxY - minY
             guard w > 30, h > 30 else { return false }
-            let corners = [CGPoint(x: xs.min()!, y: ys.min()!), CGPoint(x: xs.max()!, y: ys.min()!),
-                           CGPoint(x: xs.max()!, y: ys.max()!), CGPoint(x: xs.min()!, y: ys.max()!)]
+            let corners = [CGPoint(x: minX, y: minY), CGPoint(x: maxX, y: minY),
+                           CGPoint(x: maxX, y: maxY), CGPoint(x: minX, y: maxY)]
             return corners.filter { c in p.contains { hypot($0.x - c.x, $0.y - c.y) < 50 } }.count >= 3
         }
 
@@ -285,10 +288,15 @@ struct DrawingCanvasView: UIViewRepresentable {
 
         private func snapToRect(_ stroke: Stroke) {
             let xs = stroke.points.map { $0.location.x }, ys = stroke.points.map { $0.location.y }
-            let corners = [CGPoint(x: xs.min()!, y: ys.min()!), CGPoint(x: xs.max()!, y: ys.min()!),
-                           CGPoint(x: xs.max()!, y: ys.max()!), CGPoint(x: xs.min()!, y: ys.max()!),
-                           CGPoint(x: xs.min()!, y: ys.min()!)]
-            stroke.points = corners.map { StrokePoint(location: $0, force: 1, azimuth: 0, altitude: 0, timestamp: Date().timeIntervalSince1970) }
+            guard let minX = xs.min(), let maxX = xs.max(),
+                  let minY = ys.min(), let maxY = ys.max() else { return }
+            let corners = [CGPoint(x: minX, y: minY), CGPoint(x: maxX, y: minY),
+                           CGPoint(x: maxX, y: maxY), CGPoint(x: minX, y: maxY),
+                           CGPoint(x: minX, y: minY)]
+            let ts = Date().timeIntervalSince1970
+            stroke.points = corners.map {
+                StrokePoint(location: $0, force: 1, azimuth: 0, altitude: 0, timestamp: ts)
+            }
         }
 
         private func snapToCircle(_ stroke: Stroke) {

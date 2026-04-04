@@ -49,7 +49,8 @@ final class AIChatViewModel: ObservableObject {
         do {
             chat = try await supabaseService.createChat(newChat)
         } catch {
-            chat = newChat // Offline fallback
+            print("[AIChatVM] Failed to create chat remotely, using offline fallback: \(error)")
+            chat = newChat
         }
     }
 
@@ -152,9 +153,9 @@ final class AIChatViewModel: ObservableObject {
             createdAt: Date()
         )
         do {
-            try await supabaseService.insertMessage(message)
+            _ = try await supabaseService.insertMessage(message)
         } catch {
-            // Offline — SyncEngine will handle later
+            print("[AIChatVM] Failed to persist message, SyncEngine will retry: \(error)")
         }
     }
 }

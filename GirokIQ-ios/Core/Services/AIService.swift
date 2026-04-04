@@ -5,7 +5,13 @@ import Foundation
 /// Calls the Anthropic Messages API (or OpenAI-compatible endpoint) via direct URLSession.
 /// API key is stored in Keychain — never hardcoded.
 final class AIService {
-    private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    private static let endpointURL: URL = {
+        guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
+            preconditionFailure("Invalid static API endpoint URL")
+        }
+        return url
+    }()
+    private var endpoint: URL { Self.endpointURL }
     private let model = "claude-sonnet-4-20250514"
     private let keychain = KeychainService.shared
     private let keychainKey = "anthropic_api_key"

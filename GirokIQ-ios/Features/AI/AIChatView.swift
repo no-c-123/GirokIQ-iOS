@@ -44,6 +44,8 @@ struct AIChatView: View {
         }
         .padding(.horizontal, GSpacing.md)
         .padding(.vertical, GSpacing.sm)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("AI Assistant")
     }
 
     // MARK: - Message List
@@ -99,6 +101,8 @@ struct AIChatView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, GSpacing.xl)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Ask me anything about your canvas")
     }
 
     var streamingBubble: some View {
@@ -120,6 +124,8 @@ struct AIChatView: View {
             RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
                 .fill(Color.gElevated(for: colorScheme))
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("AI is responding: \(viewModel.streamingText)")
     }
 
     func errorBubble(_ text: String) -> some View {
@@ -137,6 +143,8 @@ struct AIChatView: View {
             RoundedRectangle(cornerRadius: GRadius.xs, style: .continuous)
                 .fill(Color.red.opacity(0.1))
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Error: \(text)")
     }
 
     // MARK: - No API Key
@@ -157,6 +165,8 @@ struct AIChatView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("API key required. Add your Anthropic API key in Settings to use the AI assistant.")
     }
 
     // MARK: - Input Bar
@@ -168,6 +178,8 @@ struct AIChatView: View {
                 .foregroundColor(.gTextPrimary(for: colorScheme))
                 .textFieldStyle(.plain)
                 .lineLimit(1...4)
+                .accessibilityLabel("Message input")
+                .accessibilityHint("Type a question for the AI assistant")
                 .padding(.horizontal, GSpacing.sm)
                 .padding(.vertical, GSpacing.xs)
                 .background(
@@ -187,6 +199,8 @@ struct AIChatView: View {
                         .font(.gIconLarge)
                         .foregroundColor(.red)
                 }
+                .accessibilityLabel("Stop generating")
+                .accessibilityHint("Double tap to stop AI response")
             } else {
                 Button {
                     Task { await viewModel.sendMessage() }
@@ -200,6 +214,8 @@ struct AIChatView: View {
                         )
                 }
                 .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel("Send message")
+                .accessibilityHint("Double tap to send your message to the AI")
             }
         }
         .padding(.horizontal, GSpacing.md)
@@ -251,5 +267,7 @@ struct MessageBubble: View {
 
             if !isUser { Spacer(minLength: 40) }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(isUser ? "You" : "AI"): \(message.content)")
     }
 }

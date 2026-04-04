@@ -3,8 +3,13 @@ import Combine
 import Supabase
 import AuthenticationServices
 
+// MARK: - Auth ViewModel
+
 @MainActor
 final class AuthViewModel: ObservableObject {
+
+    // MARK: - Properties
+
     @Published var isAuthenticated: Bool = false
     @Published var currentUserId: UUID?
     @Published var currentUserEmail: String?
@@ -16,13 +21,16 @@ final class AuthViewModel: ObservableObject {
 
     private let syncEngine: SyncEngine
 
+    // MARK: - Lifecycle
+
     init(syncEngine: SyncEngine? = nil) {
         self.syncEngine = syncEngine ?? SyncEngine()
-        // Restore session from SDK's persistent storage
         Task {
             await restoreSession()
         }
     }
+
+    // MARK: - Private Methods
 
     private func restoreSession() async {
         do {
@@ -128,7 +136,9 @@ final class AuthViewModel: ObservableObject {
     func signOut() async {
         do {
             try await supabase.auth.signOut()
-        } catch { /* Ignore network errors on sign out */ }
+        } catch {
+            print("[Auth] Sign out network error (ignored): \(error)")
+        }
 
         self.currentUserId = nil
         self.currentUserEmail = nil
@@ -144,7 +154,7 @@ final class KeychainService {
     private let service = "com.girokiq.app"
 
     func set(_ value: String, forKey key: String) {
-        let data = value.data(using: .utf8)!
+        guard let data = value.data(using: .utf8) else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

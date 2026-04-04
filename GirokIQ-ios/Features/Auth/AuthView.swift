@@ -195,12 +195,20 @@ struct AuthView: View {
 
                 Spacer()
 
-                Text("By continuing, you agree to our Terms & Privacy Policy")
-                    .font(.gCaption2)
-                    .foregroundColor(.gTextTertiary(for: colorScheme))
-                    .multilineTextAlignment(.center)
-                    .padding(.bottom, GSpacing.xxl)
-                    .padding(.horizontal, GSpacing.xxxl)
+                HStack(spacing: 4) {
+                    Text("By continuing, you agree to our")
+                        .foregroundColor(.gTextTertiary(for: colorScheme))
+                    Link("Terms", destination: URL(string: "https://girokiq.com/terms")!)
+                        .foregroundColor(.gPrimary)
+                    Text("&")
+                        .foregroundColor(.gTextTertiary(for: colorScheme))
+                    Link("Privacy Policy", destination: URL(string: "https://girokiq.com/privacy")!)
+                        .foregroundColor(.gPrimary)
+                }
+                .font(.gCaption2)
+                .multilineTextAlignment(.center)
+                .padding(.bottom, GSpacing.xxl)
+                .padding(.horizontal, GSpacing.xxxl)
             }
         }
     }

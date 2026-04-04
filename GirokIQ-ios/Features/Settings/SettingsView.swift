@@ -75,11 +75,15 @@ struct SettingsView: View {
 
             if viewModel.canUseBiometrics {
                 Toggle("\(viewModel.biometricName) Lock", isOn: $viewModel.biometricLockEnabled)
+                    .accessibilityLabel("\(viewModel.biometricName) lock")
+                    .accessibilityHint("Require \(viewModel.biometricName) to unlock the app")
             }
 
             Button("Sign Out", role: .destructive) {
                 Task { await authViewModel.signOut() }
             }
+            .accessibilityLabel("Sign out")
+            .accessibilityHint("Double tap to sign out of your account")
         } header: {
             Text("Account")
         }
@@ -96,6 +100,7 @@ struct SettingsView: View {
             }
 
             Toggle("Reduce Motion", isOn: $viewModel.reducedMotion)
+                .accessibilityHint("Reduces animations throughout the app")
         } header: {
             Text("Appearance")
         }
@@ -114,7 +119,9 @@ struct SettingsView: View {
             }
 
             Toggle("Palm Rejection", isOn: $viewModel.palmRejection)
+                .accessibilityHint("Ignore palm touches while drawing with Apple Pencil")
             Toggle("Finger Drawing", isOn: $viewModel.fingerDrawingEnabled)
+                .accessibilityHint("Allow drawing with your finger in addition to Apple Pencil")
 
             HStack {
                 Text("Default Stroke Width")
@@ -124,6 +131,8 @@ struct SettingsView: View {
             }
             Slider(value: $viewModel.defaultStrokeWidth, in: 0.5...20, step: 0.5)
                 .tint(.gPrimary)
+                .accessibilityLabel("Default stroke width")
+                .accessibilityValue("\(viewModel.defaultStrokeWidth, specifier: "%.1f") points")
         } header: {
             Text("Canvas Defaults")
         }
@@ -134,6 +143,7 @@ struct SettingsView: View {
     var aiSection: some View {
         Section {
             Toggle("Enable AI Assistant", isOn: $viewModel.aiEnabled)
+                .accessibilityHint("Show the AI assistant button on the canvas toolbar")
 
             if viewModel.hasAPIKey {
                 HStack {
@@ -145,16 +155,21 @@ struct SettingsView: View {
                 Button("Remove API Key", role: .destructive) {
                     viewModel.removeAPIKey()
                 }
+                .accessibilityHint("Double tap to remove the stored API key")
             } else {
                 HStack {
                     SecureField("Anthropic API Key", text: $viewModel.apiKeyText)
                         .textFieldStyle(.plain)
                         .font(.gSubheadline)
+                        .accessibilityLabel("API key input")
+                        .accessibilityHint("Enter your Anthropic API key")
                     Button("Save") {
                         viewModel.saveAPIKey()
                     }
                     .disabled(viewModel.apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .foregroundColor(.gPrimary)
+                    .accessibilityLabel("Save API key")
+                    .accessibilityHint("Double tap to save the entered API key to Keychain")
                 }
             }
         } header: {
@@ -169,7 +184,9 @@ struct SettingsView: View {
     var dataSection: some View {
         Section {
             Toggle("Auto Sync", isOn: $viewModel.autoSync)
+                .accessibilityHint("Automatically sync notebooks to the cloud")
             Toggle("Wi-Fi Only", isOn: $viewModel.syncOnWiFiOnly)
+                .accessibilityHint("Only sync when connected to Wi-Fi")
 
             Button {
                 Task {
@@ -181,6 +198,7 @@ struct SettingsView: View {
             } label: {
                 Label("Export All Data", systemImage: "square.and.arrow.up")
             }
+            .accessibilityHint("Double tap to export all notebooks as an archive")
         } header: {
             Text("Data & Sync")
         }
@@ -202,6 +220,10 @@ struct SettingsView: View {
                 Text(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
                     .foregroundColor(.gTextSecondary(for: colorScheme))
             }
+            Link("Privacy Policy", destination: URL(string: "https://girokiq.com/privacy")!)
+                .foregroundColor(.gPrimary)
+            Link("Terms of Service", destination: URL(string: "https://girokiq.com/terms")!)
+                .foregroundColor(.gPrimary)
         } header: {
             Text("About")
         } footer: {

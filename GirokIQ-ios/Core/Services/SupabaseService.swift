@@ -1,11 +1,12 @@
 import Foundation
 import Supabase
+import Realtime
 
 // MARK: - Supabase Client
 
 let supabase = SupabaseClient(
-    supabaseURL: URL(string: "https://bapqxqydqzopbpjrpnna.supabase.co")!,
-    supabaseKey: "sb_publishable_423Dnw91Y5cLpTMC7wCuMA_3cAuqY-t"
+    supabaseURL: Configuration.supabaseURL,
+    supabaseKey: Configuration.supabaseAnonKey
 )
 
 // MARK: - Supabase Service
@@ -179,6 +180,80 @@ final class SupabaseService {
             .value
     }
 
+    // MARK: - Web Strokes
+
+    /// Fetch web-format strokes for a page from the `strokes_web` table.
+    /// Used as fallback when a page has no PKDrawing `drawing_data`.
+    func fetchWebStrokes(pageId: UUID) async throws -> [WebStroke] {
+        try await supabase.from("strokes_web")
+            .select()
+            .eq("page_id", value: pageId.uuidString)
+            .order("created_at", ascending: true)
+            .execute()
+            .value
+    }
+
+    // MARK: - Presence
+
+    /// Join a Supabase Realtime presence channel for a notebook.
+    /// Returns the channel so the caller can track and remove it later.
+    func joinNotebookPresence(
+        notebookId: UUID,
+        userId: UUID,
+        platform: String = "ios",
+        onPresenceChange: @escaping @Sendable (_ webUsers: [PresenceEntry]) -> Void
+    ) -> RealtimeChannelV2 {
+        let channel = supabase.realtimeV2.channel("notebook:\(notebookId.uuidString)")
+
+        // Track accumulated web presence state across join/leave events
+        let webUsersActor = WebPresenceActor()
+
+        // Subscribe to presence sync events via callback
+        _ = channel.onPresenceChange { action in
+            let joins = action.joins
+            let leaves = action.leaves
+
+            Task {
+                // Add joining web users
+                for (_, presence) in joins {
+                    let state = presence.state
+                    if let userIdStr = state["user_id"]?.stringValue,
+                       let platformStr = state["platform"]?.stringValue,
+                       platformStr == "web",
+                       let uid = UUID(uuidString: userIdStr) {
+                        await webUsersActor.add(PresenceEntry(userId: uid, platform: platformStr))
+                    }
+                }
+
+                // Remove leaving web users
+                for (_, presence) in leaves {
+                    let state = presence.state
+                    if let userIdStr = state["user_id"]?.stringValue,
+                       let uid = UUID(uuidString: userIdStr) {
+                        await webUsersActor.remove(uid)
+                    }
+                }
+
+                let current = await webUsersActor.entries
+                onPresenceChange(current)
+            }
+        }
+
+        Task {
+            try await channel.subscribeWithError()
+
+            // Track this device in the presence channel
+            try? await channel.track(["user_id": userId.uuidString, "platform": platform])
+        }
+
+        return channel
+    }
+
+    /// Leave a notebook presence channel.
+    func leaveNotebookPresence(_ channel: RealtimeChannelV2) async {
+        await supabase.realtimeV2.removeChannel(channel)
+    }
+
     // MARK: - App State
 
     func fetchAppState(userId: UUID) async throws -> AppState? {
@@ -194,6 +269,32 @@ final class SupabaseService {
         try await supabase.from("app_state")
             .upsert(state)
             .execute()
+    }
+}
+
+// MARK: - Presence Entry
+
+struct PresenceEntry: Identifiable, Sendable {
+    let userId: UUID
+    let platform: String
+
+    var id: UUID { userId }
+}
+
+// MARK: - Web Presence Actor
+
+/// Thread-safe accumulator for presence state across join/leave events.
+actor WebPresenceActor {
+    private(set) var entries: [PresenceEntry] = []
+
+    func add(_ entry: PresenceEntry) {
+        if !entries.contains(where: { $0.userId == entry.userId }) {
+            entries.append(entry)
+        }
+    }
+
+    func remove(_ userId: UUID) {
+        entries.removeAll { $0.userId == userId }
     }
 }
 

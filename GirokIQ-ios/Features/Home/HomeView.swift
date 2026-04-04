@@ -7,9 +7,6 @@ struct HomeView: View {
     /// Shared ViewModel — either owned internally or provided externally (iPad split view)
     @ObservedObject var viewModel: HomeViewModel
 
-    /// Folder filter — set by the sidebar panel
-    @State private var selectedFolderId: UUID?
-
     /// External notebook selection binding (iPad detail coordination)
     @Binding var selectedNotebook: Notebook?
 
@@ -32,29 +29,6 @@ struct HomeView: View {
         return [GridItem(.adaptive(minimum: 150), spacing: GSpacing.md)]
     }
 
-    /// Notebooks filtered by folder selection + search
-    private var displayedNotebooks: [Notebook] {
-        let filtered = viewModel.filteredNotebooks
-        if let folderId = selectedFolderId {
-            return filtered.filter { $0.folderId == folderId }
-        }
-        return filtered
-    }
-
-    /// Unfoldered among the displayed set
-    private var displayedUnfolderedNotebooks: [Notebook] {
-        if selectedFolderId != nil {
-            return displayedNotebooks  // Already filtered to one folder
-        }
-        return displayedNotebooks.filter { $0.folderId == nil }
-    }
-
-    /// Folders to show (only when not filtered to a specific folder)
-    private var displayedFolders: [Folder] {
-        if selectedFolderId != nil { return [] }
-        return viewModel.folders
-    }
-
     var body: some View {
         let content = ZStack {
             themeManager.backgroundColor.ignoresSafeArea()
@@ -71,7 +45,7 @@ struct HomeView: View {
                 // Content
                 if viewModel.isLoading || authViewModel.isSyncing {
                     skeletonGrid
-                } else if displayedNotebooks.isEmpty {
+                } else if viewModel.displayedNotebooks.isEmpty {
                     emptyState
                 } else {
                     notebookContent
@@ -125,9 +99,9 @@ struct HomeView: View {
                 SidebarPanelView(
                     viewModel: viewModel,
                     selectedFolderId: Binding(
-                        get: { selectedFolderId },
+                        get: { viewModel.selectedFolderId },
                         set: { newValue in
-                            selectedFolderId = newValue
+                            viewModel.selectedFolderId = newValue
                             animateMotionSafe {
                                 showSidebarPanel = false
                             }
@@ -305,7 +279,7 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(spacing: GSpacing.md) {
                 // Folder sections (hidden when sidebar drives folder selection)
-                ForEach(displayedFolders) { folder in
+                ForEach(viewModel.displayedFolders) { folder in
                     FolderRow(
                         folder: folder,
                         isExpanded: viewModel.expandedFolderIds.contains(folder.id),
@@ -319,8 +293,8 @@ struct HomeView: View {
                 }
 
                 // Notebooks grid
-                if !displayedUnfolderedNotebooks.isEmpty {
-                    if !displayedFolders.isEmpty {
+                if !viewModel.displayedUnfolderedNotebooks.isEmpty {
+                    if !viewModel.displayedFolders.isEmpty {
                         HStack {
                             Text("Notebooks")
                                 .font(.gCaption.weight(.semibold))
@@ -333,7 +307,7 @@ struct HomeView: View {
                     }
 
                     LazyVGrid(columns: columns, spacing: GSpacing.md) {
-                        ForEach(displayedUnfolderedNotebooks) { notebook in
+                        ForEach(viewModel.displayedUnfolderedNotebooks) { notebook in
                             NotebookCard(
                                 notebook: notebook,
                                 viewMode: viewModel.viewMode
@@ -345,7 +319,7 @@ struct HomeView: View {
                         }
                     }
                     .padding(.horizontal, GSpacing.lg)
-                    .animation(GAnimation.spring, value: displayedNotebooks.count)
+                    .animation(GAnimation.spring, value: viewModel.displayedNotebooks.count)
                 }
             }
             .padding(.vertical, GSpacing.md)
@@ -613,11 +587,6 @@ struct SidebarPanelView: View {
     @State private var showNewFolderAlert = false
     @State private var newFolderName = ""
 
-    /// Most recently updated 5 notebooks
-    private var recentNotebooks: [Notebook] {
-        Array(viewModel.notebooks.sorted { $0.updatedAt > $1.updatedAt }.prefix(5))
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Header
@@ -666,10 +635,10 @@ struct SidebarPanelView: View {
                     }
 
                     // Recents
-                    if !recentNotebooks.isEmpty {
+                    if !viewModel.recentNotebooks.isEmpty {
                         sectionHeader("Recent")
 
-                        ForEach(recentNotebooks) { notebook in
+                        ForEach(viewModel.recentNotebooks) { notebook in
                             Button {
                                 selectedNotebook = notebook
                             } label: {

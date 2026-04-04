@@ -37,8 +37,8 @@ struct PageStripView: View {
                         .fill(Color.gElevated)
                         .frame(width: 56, height: 74)
 
-                    // PencilKit thumbnail
-                    if let thumbnail = pageThumbnail(for: page) {
+                    // Use cached thumbnail from CanvasViewModel (generated async off main thread)
+                    if let thumbnail = canvasVM.pageThumbnails[page.id] {
                         Image(uiImage: thumbnail)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
@@ -64,15 +64,6 @@ struct PageStripView: View {
         .accessibilityLabel("Page \(index + 1)")
         .accessibilityHint(isSelected ? "Currently selected" : "Double tap to switch to page \(index + 1)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-
-    /// Generate a small thumbnail from the page's PKDrawing data
-    private func pageThumbnail(for page: DrawingPage) -> UIImage? {
-        guard let data = page.drawingData,
-              let drawing = PencilKitBridge.deserialize(data) else { return nil }
-        let bounds = CGRect(origin: .zero, size: CGSize(width: 56, height: 74))
-        let image = drawing.image(from: drawing.bounds.isEmpty ? bounds : drawing.bounds, scale: 1.0)
-        return image
     }
 
     private var addPageButton: some View {
