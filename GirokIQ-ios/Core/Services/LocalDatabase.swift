@@ -104,6 +104,13 @@ final class LocalDatabase {
         }
     }
 
+    func deleteFolder(id: UUID, syncStatus: SyncStatus = .pending) async throws {
+        try await dbQueue.write { db in
+            _ = try Folder.filter(Column("id") == id.uuidString).deleteAll(db)
+            try self.recordSyncChange(db: db, table: "folder", id: id.uuidString, status: syncStatus)
+        }
+    }
+
     // MARK: - Pages
 
     func fetchPages(notebookId: UUID) async throws -> [(page: Page, drawingData: Data?)] {
@@ -139,6 +146,20 @@ final class LocalDatabase {
                 ON CONFLICT(page_id) DO UPDATE SET drawing_data = excluded.drawing_data
                 """, arguments: [pageId.uuidString, drawingData])
             try self.recordSyncChange(db: db, table: "page", id: pageId.uuidString, status: syncStatus)
+        }
+    }
+
+    func saveCanvasElements(_ elements: [CanvasElement], forPageId pageId: UUID) async throws {
+        try await dbQueue.write { db in
+            if let row = try Row.fetchOne(db, sql: "SELECT * FROM page WHERE id = ?", arguments: [pageId.uuidString]) {
+                var page = try Page(row: row)
+                if page.settings == nil {
+                    page.settings = PageSettings()
+                }
+                page.settings?.elements = elements
+                try page.save(db)
+                try self.recordSyncChange(db: db, table: "page", id: pageId.uuidString, status: .pending)
+            }
         }
     }
 

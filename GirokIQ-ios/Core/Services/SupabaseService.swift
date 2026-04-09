@@ -69,6 +69,20 @@ final class SupabaseService {
             .value
     }
 
+    func updateFolder(_ folder: Folder) async throws {
+        try await supabase.from("folders")
+            .update(folder)
+            .eq("id", value: folder.id.uuidString)
+            .execute()
+    }
+
+    func deleteFolder(id: UUID) async throws {
+        try await supabase.from("folders")
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     // MARK: - Pages
 
     func fetchPages(notebookId: UUID) async throws -> [Page] {

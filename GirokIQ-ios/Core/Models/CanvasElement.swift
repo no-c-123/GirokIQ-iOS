@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Canvas Element (matches Supabase `canvas_elements` table)
 
-struct CanvasElement: Codable, Identifiable {
+struct CanvasElement: Codable, Identifiable, Hashable, Equatable {
     let id: UUID
     let pageId: UUID
     let userId: UUID

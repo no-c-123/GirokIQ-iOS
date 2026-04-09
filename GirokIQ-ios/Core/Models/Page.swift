@@ -64,6 +64,7 @@ struct PageSettings: Codable, Hashable {
     var backgroundPattern: String?   // "grid" | "dots" | "lines" | "blank" | "isometric"
     var zoomScale: Double?
     var drawingData: String?         // base64-encoded PKDrawing (iOS only)
+    var elements: [CanvasElement]?   // Optional array of non-ink elements
 }
 
 // MARK: - Background Pattern (UI helper, not persisted directly)
@@ -95,6 +96,7 @@ struct DrawingPage: Identifiable {
     var drawingData: Data?
     var backgroundPattern: BackgroundPattern = .grid
     var order: Int = 0
+    var elements: [CanvasElement] = []
 
     var pkDrawing: PKDrawing {
         if let data = drawingData {
