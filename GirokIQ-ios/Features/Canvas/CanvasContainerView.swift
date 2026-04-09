@@ -110,6 +110,7 @@ struct CanvasContainerView: View {
                 .transition(.opacity)
             }
         }
+        .tint(Color.gPrimary)
         // Finger touch detection is handled by TouchTypeRecognizer in PKCanvasRepresentable.
         // It calls viewModel.showToolbar() when a finger touch is detected.
     }

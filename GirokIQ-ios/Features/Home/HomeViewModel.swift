@@ -176,6 +176,41 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    func renameFolder(_ folder: Folder, to newName: String) async {
+        guard let index = folders.firstIndex(where: { $0.id == folder.id }) else { return }
+        folders[index].name = newName
+        var updated = folders[index]
+        updated.updatedAt = Date()
+        
+        do {
+            try await LocalDatabase.shared.saveFolder(updated)
+        } catch {
+            print("[Home] Failed to rename folder locally: \(error)")
+        }
+
+        do {
+            try await service.updateFolder(updated)
+        } catch {
+            print("[Home] Failed to rename folder remotely, SyncEngine will retry: \(error)")
+        }
+    }
+
+    func deleteFolder(_ folder: Folder) async {
+        folders.removeAll { $0.id == folder.id }
+        
+        do {
+            try await LocalDatabase.shared.deleteFolder(id: folder.id)
+        } catch {
+            print("[Home] Failed to delete folder locally: \(error)")
+        }
+        
+        do {
+            try await service.deleteFolder(id: folder.id)
+        } catch {
+            print("[Home] Failed to delete folder remotely, SyncEngine will retry: \(error)")
+        }
+    }
+
     func toggleFolder(_ folderId: UUID) {
         if expandedFolderIds.contains(folderId) {
             expandedFolderIds.remove(folderId)

@@ -220,9 +220,9 @@ struct SettingsView: View {
                 Text(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
                     .foregroundColor(.gTextSecondary(for: colorScheme))
             }
-            Link("Privacy Policy", destination: URL(string: "https://girokiq.com/privacy")!)
+            Link("Privacy Policy", destination: URL(string: "https://girokiq.app/privacy")!)
                 .foregroundColor(.gPrimary)
-            Link("Terms of Service", destination: URL(string: "https://girokiq.com/terms")!)
+            Link("Terms of Service", destination: URL(string: "https://girokiq.app/terms")!)
                 .foregroundColor(.gPrimary)
         } header: {
             Text("About")

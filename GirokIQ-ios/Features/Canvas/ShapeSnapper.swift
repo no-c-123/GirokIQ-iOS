@@ -14,10 +14,10 @@ final class ShapeSnapper {
     static func recognizeShape(from points: [CGPoint]) -> ShapeType? {
         guard points.count > 2 else { return nil }
         
-        if let circle = recognizeCircle(points) {
-            return .circle(center: circle.center, radius: circle.radius)
-        } else if let rect = recognizeRect(points) {
+        if let rect = recognizeRect(points) {
             return .rect(corners: rect)
+        } else if let circle = recognizeCircle(points) {
+            return .circle(center: circle.center, radius: circle.radius)
         } else if let line = recognizeLine(points) {
             return .line(start: line.start, end: line.end)
         }
@@ -38,20 +38,42 @@ final class ShapeSnapper {
     }
     
     private static func recognizeRect(_ p: [CGPoint]) -> [CGPoint]? {
+        guard let f = p.first, let l = p.last else { return nil }
+        
+        // For a closed shape like a rectangle, the start and end points should be relatively close
+        let startEndDist = hypot(l.x - f.x, l.y - f.y)
+        
         let xs = p.map { $0.x }, ys = p.map { $0.y }
         guard let minX = xs.min(), let maxX = xs.max(),
               let minY = ys.min(), let maxY = ys.max() else { return nil }
         let w = maxX - minX, h = maxY - minY
         guard w > 30, h > 30 else { return nil }
         
+        // The start and end points must be closer together than the overall size of the shape
+        guard startEndDist < max(w, h) * 0.4 else { return nil }
+        
         let corners = [CGPoint(x: minX, y: minY), CGPoint(x: maxX, y: minY),
                        CGPoint(x: maxX, y: maxY), CGPoint(x: minX, y: maxY)]
         
-        let matchedCorners = corners.filter { c in
-            p.contains { hypot($0.x - c.x, $0.y - c.y) < max(w, h) * 0.25 }
+        // Count how many points lie roughly along the 4 edges of the bounding box
+        let edgeTolerance = max(w, h) * 0.15
+        var pointsOnEdge = 0
+        
+        for pt in p {
+            let onTop = abs(pt.y - minY) < edgeTolerance
+            let onBottom = abs(pt.y - maxY) < edgeTolerance
+            let onLeft = abs(pt.x - minX) < edgeTolerance
+            let onRight = abs(pt.x - maxX) < edgeTolerance
+            
+            if onTop || onBottom || onLeft || onRight {
+                pointsOnEdge += 1
+            }
         }
         
-        if matchedCorners.count >= 3 {
+        // If a high percentage of the drawn points are near the bounding box edges, it's a rectangle
+        let edgeDensity = CGFloat(pointsOnEdge) / CGFloat(p.count)
+        
+        if edgeDensity > 0.85 {
             return corners
         }
         return nil
@@ -70,9 +92,10 @@ final class ShapeSnapper {
         return nil
     }
     
-    // MARK: - Grid Snapping
+    // MARK: - Shape Straightening
     
-    static func snapToGrid(shape: ShapeType, gridSize: CGFloat = 28.0) -> ShapeType {
+    /// Straightens lines (perfectly horizontal or vertical) and passes through perfectly recognized circles/rectangles.
+    static func straightenShape(_ shape: ShapeType) -> ShapeType {
         switch shape {
         case .line(let start, let end):
             var s = start
@@ -86,50 +109,24 @@ final class ShapeSnapper {
             // Snap to horizontal (close to 0 or 180 degrees)
             if angle < 15 || angle > 165 {
                 let avgY = (s.y + e.y) / 2
-                let snappedY = round(avgY / gridSize) * gridSize
-                s.y = snappedY
-                e.y = snappedY
-                s.x = round(s.x / gridSize) * gridSize
-                e.x = round(e.x / gridSize) * gridSize
+                s.y = avgY
+                e.y = avgY
             } 
             // Snap to vertical (close to 90 degrees)
             else if abs(angle - 90) < 15 {
                 let avgX = (s.x + e.x) / 2
-                let snappedX = round(avgX / gridSize) * gridSize
-                s.x = snappedX
-                e.x = snappedX
-                s.y = round(s.y / gridSize) * gridSize
-                e.y = round(e.y / gridSize) * gridSize
-            } 
-            // Diagonal, snap start and end points to grid
-            else {
-                s.x = round(s.x / gridSize) * gridSize
-                s.y = round(s.y / gridSize) * gridSize
-                e.x = round(e.x / gridSize) * gridSize
-                e.y = round(e.y / gridSize) * gridSize
+                s.x = avgX
+                e.x = avgX
             }
+            // Diagonal lines remain unchanged (perfectly straight between start and end)
             
             return .line(start: s, end: e)
             
         case .rect(let corners):
-            guard corners.count == 4 else { return shape }
-            let minX = round(corners[0].x / gridSize) * gridSize
-            let minY = round(corners[0].y / gridSize) * gridSize
-            let maxX = round(corners[2].x / gridSize) * gridSize
-            let maxY = round(corners[2].y / gridSize) * gridSize
-            
-            return .rect(corners: [
-                CGPoint(x: minX, y: minY),
-                CGPoint(x: maxX, y: minY),
-                CGPoint(x: maxX, y: maxY),
-                CGPoint(x: minX, y: maxY)
-            ])
+            return shape // recognizeRect already generates a perfect axis-aligned rectangle
             
         case .circle(let center, let radius):
-            let snappedCx = round(center.x / gridSize) * gridSize
-            let snappedCy = round(center.y / gridSize) * gridSize
-            let snappedR = max(gridSize, round(radius / gridSize) * gridSize)
-            return .circle(center: CGPoint(x: snappedCx, y: snappedCy), radius: snappedR)
+            return shape // recognizeCircle already generates a perfect circle
         }
     }
     

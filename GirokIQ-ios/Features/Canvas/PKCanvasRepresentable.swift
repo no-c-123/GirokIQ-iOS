@@ -1,6 +1,55 @@
 import SwiftUI
 import PencilKit
 
+final class GirokCanvasView: PKCanvasView {
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        let actionName = NSStringFromSelector(action)
+        // Disable "Select All" and "Insert Space" which appear when tapping empty canvas
+        if actionName == "selectAll:" || actionName == "_insertSpace:" || actionName == "insertSpace:" {
+            return false
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+}
+
+// MARK: - Menu Blocker Gesture Recognizer
+
+final class MenuBlockerGestureRecognizer: UITapGestureRecognizer, UIGestureRecognizerDelegate {
+    weak var canvas: PKCanvasView?
+    
+    init(canvas: PKCanvasView) {
+        self.canvas = canvas
+        super.init(target: nil, action: nil)
+        self.addTarget(self, action: #selector(dummyAction))
+        self.delegate = self
+        self.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        self.cancelsTouchesInView = true
+    }
+    
+    @objc private func dummyAction() {}
+    
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // Only block finger taps if the drawing policy is pencil only.
+        // (If finger drawing is enabled, PencilKit draws a dot instead of showing a menu).
+        guard let canvas = canvas, canvas.drawingPolicy == .pencilOnly else { return false }
+        
+        // We only want to block the tap if there is NO active selection.
+        // If there is an active selection (Lasso), we must let the tap pass through 
+        // so the user can tap the selection to see the "Copy/Delete/Duplicate" menu.
+        func hasSelectionView(_ view: UIView) -> Bool {
+            let name = String(describing: type(of: view))
+            if name.contains("Selection") || name.contains("EditMenu") { return true }
+            for subview in view.subviews {
+                if hasSelectionView(subview) { return true }
+            }
+            return false
+        }
+        
+        // Return true to swallow the touch if there is NO selection
+        return !hasSelectionView(canvas)
+    }
+}
+
 // MARK: - CanvasHostView
 
 /// Hosts the background pattern scroll view and PKCanvasView as siblings.
@@ -18,17 +67,20 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
 
     // MARK: - Public
 
-    let canvasView = PKCanvasView()
+    let canvasView = GirokCanvasView()
     let backgroundPatternView: BackgroundPatternView
+    var blockOverlayHostView: UIHostingController<BlockOverlayView>?
 
     // MARK: - Private
 
     private let backgroundScrollView = UIScrollView()
     private let canvasContentSize = CGSize(width: 50_000, height: 50_000)
+    private var viewModel: CanvasViewModel?
 
     // MARK: - Init
 
-    override init(frame: CGRect) {
+    init(frame: CGRect = .zero, viewModel: CanvasViewModel? = nil) {
+        self.viewModel = viewModel
         backgroundPatternView = BackgroundPatternView(
             frame: CGRect(origin: .zero, size: CGSize(width: 50_000, height: 50_000))
         )
@@ -56,9 +108,21 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         backgroundScrollView.delegate = self  // for viewForZooming(in:)
         backgroundScrollView.addSubview(backgroundPatternView)
 
+        // index 0 — tiled background
         addSubview(backgroundScrollView)
 
-        // --- PKCanvasView ---
+        // index 1 — block overlay (images, text blocks)
+        if let viewModel = viewModel {
+            let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel))
+            blockHost.view.backgroundColor = .clear
+            blockHost.view.isUserInteractionEnabled = true
+            blockHost.view.frame = bounds
+            blockHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            addSubview(blockHost.view)
+            self.blockOverlayHostView = blockHost
+        }
+
+        // index 2 — PKCanvasView (ink on top, transparent)
         canvasView.frame = bounds
         canvasView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvasView.contentSize = canvasContentSize
@@ -114,6 +178,25 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         backgroundScrollView.contentOffset = canvasView.contentOffset
         backgroundScrollView.zoomScale = canvasView.zoomScale
     }
+
+    // MARK: - Hit Testing
+    
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // We want touches to go to the block overlay if they hit a block (so users can drag/resize images)
+        if let blockView = blockOverlayHostView?.view {
+            let blockPoint = self.convert(point, to: blockView)
+            if let hit = blockView.hitTest(blockPoint, with: event) {
+                // If it hit a specific SwiftUI view inside the hosting controller (like an image block), let it handle it.
+                // We check if the hit view is NOT the root background of the hosting controller.
+                if hit != blockView && !String(describing: type(of: hit)).contains("HostingView") {
+                    return hit
+                }
+            }
+        }
+        
+        // Otherwise, let PKCanvasView (or its subviews) handle the touch (for drawing, panning, native lasso)
+        return super.hitTest(point, with: event)
+    }
 }
 
 // MARK: - PKCanvasRepresentable
@@ -132,7 +215,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> CanvasHostView {
-        let hostView = CanvasHostView()
+        let hostView = CanvasHostView(viewModel: viewModel)
         let canvasView = hostView.canvasView
 
         canvasView.delegate = context.coordinator
@@ -167,25 +250,25 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         touchRecognizer.delaysTouchesBegan = false
         canvasView.addGestureRecognizer(touchRecognizer)
 
-        // Install shape snap gesture recognizer
-        let shapeSnapRecognizer = ShapeSnapGestureRecognizer(target: nil, action: nil)
-        shapeSnapRecognizer.canvasView = canvasView
-        shapeSnapRecognizer.onShapeRecognized = { shape, stroke in
-            return context.coordinator.handleShapeRecognized(shape: shape, stroke: stroke)
-        }
-        shapeSnapRecognizer.onShapeUpdated = { shape in
-            context.coordinator.handleShapeUpdated(shape: shape)
-        }
-        shapeSnapRecognizer.onShapeCommitted = {
-            context.coordinator.handleShapeCommitted()
-        }
-        canvasView.addGestureRecognizer(shapeSnapRecognizer)
+        // Install Menu Blocker to stop "Select All / Insert Space" on empty canvas
+        let menuBlocker = MenuBlockerGestureRecognizer(canvas: canvasView)
+        canvasView.addGestureRecognizer(menuBlocker)
+        
+        // Custom Pan Gesture to track Lasso rectangle in canvas space
+        let lassoTracker = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLassoPan(_:)))
+        lassoTracker.delegate = context.coordinator
+        lassoTracker.cancelsTouchesInView = false
+        canvasView.addGestureRecognizer(lassoTracker)
 
         // Forward UndoManager to viewModel
         Task { @MainActor in
             viewModel.pkUndoManager = canvasView.undoManager
             viewModel.refreshUndoState()
         }
+
+        // Tap gesture for text and image placement
+        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleCanvasTap(_:)))
+        canvasView.addGestureRecognizer(tapGesture)
 
         return hostView
     }
@@ -200,9 +283,16 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         }
 
         // Update drawing policy only when changed
-        let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
-        if canvasView.drawingPolicy != newPolicy {
-            canvasView.drawingPolicy = newPolicy
+        let isBlockTool = viewModel.selectedTool == .text || viewModel.selectedTool == .image
+        if isBlockTool {
+            canvasView.drawingGestureRecognizer.isEnabled = false
+            canvasView.drawingPolicy = .anyInput // Let taps register on canvas
+        } else {
+            canvasView.drawingGestureRecognizer.isEnabled = true
+            let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
+            if canvasView.drawingPolicy != newPolicy {
+                canvasView.drawingPolicy = newPolicy
+            }
         }
 
         // Sync background pattern when it changes
@@ -215,12 +305,23 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             context.coordinator.currentPageIndex = viewModel.currentPageIndex
             context.coordinator.currentPageId = viewModel.currentPage.id
             let pageDrawing = viewModel.currentPage.pkDrawing
-            context.coordinator.setDrawing(pageDrawing, on: canvasView)
             
             if viewModel.forceDrawingUpdate {
+                // If it's a programmatic shape update, inject it using the UndoManager to preserve undo/redo stack
+                if let undoManager = canvasView.undoManager {
+                    let oldDrawing = canvasView.drawing
+                    undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
+                        coordinator.setDrawing(oldDrawing, on: canvasView)
+                    }
+                }
+                context.coordinator.setDrawing(pageDrawing, on: canvasView)
+                
                 DispatchQueue.main.async {
                     viewModel.forceDrawingUpdate = false
                 }
+            } else {
+                // Regular page change, just set drawing normally
+                context.coordinator.setDrawing(pageDrawing, on: canvasView)
             }
             
             Task { @MainActor in
@@ -257,12 +358,14 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
     // MARK: - Coordinator
 
-    final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate {
+    final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
         var viewModel: CanvasViewModel
         weak var canvasView: PKCanvasView?
         weak var hostView: CanvasHostView?
         var currentPageIndex: Int = 0
         var currentPageId: UUID?
+
+        var lassoStartPoint: CGPoint? = nil
 
         /// Tracks whether we are currently performing a programmatic drawing update
         private var isUpdatingDrawing = false
@@ -270,11 +373,6 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         /// Tracks whether the current/most-recent stroke came from Apple Pencil
         private var lastStrokeFromPencil = true
         
-        /// Shape snapping state
-        private var liveShapeOverlay: CAShapeLayer?
-        private var liveShapeType: ShapeSnapper.ShapeType?
-        private var liveShapeOriginalStroke: PKStroke?
-
         init(viewModel: CanvasViewModel) {
             self.viewModel = viewModel
             self.currentPageIndex = viewModel.currentPageIndex
@@ -295,139 +393,40 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isUpdatingDrawing else { return }
 
-            let fromPencil = lastStrokeFromPencil
-            
-            // If the gesture recognizer is actively showing an overlay, don't save the live stroke.
-            if liveShapeOverlay != nil {
-                // We swapped the tool to force PencilKit to commit the messy stroke.
-                // We need to silently remove that messy stroke so it doesn't stay behind our overlay.
-                isUpdatingDrawing = true
-                var strokes = canvasView.drawing.strokes
-                if !strokes.isEmpty {
-                    strokes.removeLast()
-                    canvasView.drawing = PKDrawing(strokes: strokes)
+            // If lasso tool is active, try to determine which strokes are selected
+            // by checking which strokes' renderBounds intersect the lasso region
+            if viewModel.selectedTool == .lasso, let lassoRect = viewModel.pendingLassoRect {
+                let drawing = canvasView.drawing
+                let selected = drawing.strokes.indices.filter { i in
+                    drawing.strokes[i].renderBounds.intersects(lassoRect)
                 }
-                isUpdatingDrawing = false
-                return
+                Task { @MainActor in
+                    self.viewModel.selectedStrokeIndices = Set(selected)
+                    self.viewModel.computeSelectionBoundingBox()
+                }
             }
+
+            let fromPencil = lastStrokeFromPencil
 
             Task { @MainActor in
                 self.viewModel.drawingDidChange(canvasView.drawing, fromPencil: fromPencil)
             }
         }
         
-        // MARK: - Shape Snapping Callbacks
-        
-        func handleShapeRecognized(shape: ShapeSnapper.ShapeType, stroke: PKStroke) -> Bool {
-            guard viewModel.isShapeSnappingEnabled, let canvas = canvasView else { return false }
-            liveShapeType = shape
-            liveShapeOriginalStroke = stroke
-            
-            // Create and show overlay layer
-            let overlay = CAShapeLayer()
-            overlay.fillColor = UIColor.clear.cgColor
-            overlay.strokeColor = stroke.ink.color.cgColor
-            let width = stroke.path.first?.size.width ?? 4.0
-            overlay.lineWidth = width * canvas.zoomScale
-            overlay.lineCap = .round
-            overlay.lineJoin = .round
-            
-            canvas.layer.addSublayer(overlay)
-            liveShapeOverlay = overlay
-            
-            updateOverlayPath()
-            HapticEngine.rigid()
-            return true
-        }
-        
-        func handleShapeUpdated(shape: ShapeSnapper.ShapeType) {
-            guard viewModel.isShapeSnappingEnabled else { return }
-            liveShapeType = shape
-            updateOverlayPath()
-        }
-        
-        func handleShapeCommitted() {
-            guard viewModel.isShapeSnappingEnabled,
-                  let canvas = canvasView,
-                  let shape = liveShapeType,
-                  let originalStroke = liveShapeOriginalStroke else {
-                removeOverlay()
-                return
-            }
-            
-            let snappedShape = ShapeSnapper.snapToGrid(shape: shape, gridSize: 28.0)
-            let newStroke = ShapeSnapper.createStroke(from: snappedShape, originalStroke: originalStroke)
-            
-            // Insert into canvas view
-            isUpdatingDrawing = true
-            var strokes = canvas.drawing.strokes
-            strokes.append(newStroke)
-            canvas.drawing = PKDrawing(strokes: strokes)
-            isUpdatingDrawing = false
-            
-            // Force save
-            Task { @MainActor in
-                viewModel.drawingDidChange(canvas.drawing, fromPencil: lastStrokeFromPencil)
-            }
-            
-            removeOverlay()
-        }
-        
-        private func removeOverlay() {
-            liveShapeOverlay?.removeFromSuperlayer()
-            liveShapeOverlay = nil
-            liveShapeType = nil
-            liveShapeOriginalStroke = nil
-        }
-        
-        private func updateOverlayPath() {
-            guard let overlay = liveShapeOverlay, let shape = liveShapeType, let canvas = canvasView else { return }
-            
-            // Convert canvas coordinates to view coordinates considering scroll and zoom
-            let scale = canvas.zoomScale
-            let offset = canvas.contentOffset
-            
-            let transformPoint = { (pt: CGPoint) -> CGPoint in
-                CGPoint(x: pt.x * scale - offset.x, y: pt.y * scale - offset.y)
-            }
-            
-            let path = UIBezierPath()
-            switch shape {
-            case .line(let start, let end):
-                path.move(to: transformPoint(start))
-                path.addLine(to: transformPoint(end))
-            case .rect(let corners):
-                if corners.count == 4 {
-                    path.move(to: transformPoint(corners[0]))
-                    path.addLine(to: transformPoint(corners[1]))
-                    path.addLine(to: transformPoint(corners[2]))
-                    path.addLine(to: transformPoint(corners[3]))
-                    path.close()
-                }
-            case .circle(let center, let radius):
-                let tc = transformPoint(center)
-                let tr = radius * scale
-                path.addArc(withCenter: tc, radius: tr, startAngle: 0, endAngle: .pi * 2, clockwise: true)
-            }
-            
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            overlay.path = path.cgPath
-            if let originalStroke = liveShapeOriginalStroke {
-                let width = originalStroke.path.first?.size.width ?? 4.0
-                overlay.lineWidth = width * scale
-            }
-            CATransaction.commit()
-        }
-
         // MARK: UIScrollViewDelegate (via PKCanvasViewDelegate)
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             hostView?.syncBackground()
+            Task { @MainActor in
+                self.viewModel.canvasOffset = CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y)
+            }
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             hostView?.syncBackground()
+            Task { @MainActor in
+                self.viewModel.canvasScale = scrollView.zoomScale
+            }
         }
 
         /// Called by the finger-touch gesture recognizer installed on the canvas
@@ -453,13 +452,121 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        // MARK: - Page Switching Support
+        // MARK: - Lasso Pan Gesture
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            return true
+        }
+
+        @objc func handleLassoPan(_ gesture: UIPanGestureRecognizer) {
+            guard viewModel.selectedTool == .lasso, let canvas = canvasView else { return }
+            let screenLocation = gesture.location(in: canvas)
+            
+            // Convert screen location to canvas coordinate space
+            let scale = viewModel.canvasScale
+            let offset = viewModel.canvasOffset
+            let canvasLocation = CGPoint(
+                x: (screenLocation.x + offset.width) / scale,
+                y: (screenLocation.y + offset.height) / scale
+            )
+            
+            switch gesture.state {
+            case .began:
+                lassoStartPoint = canvasLocation
+                viewModel.pendingLassoRect = nil
+            case .changed:
+                if let start = lassoStartPoint {
+                    let rect = CGRect(
+                        x: min(start.x, canvasLocation.x),
+                        y: min(start.y, canvasLocation.y),
+                        width: abs(canvasLocation.x - start.x),
+                        height: abs(canvasLocation.y - start.y)
+                    )
+                    viewModel.pendingLassoRect = rect
+                }
+            case .ended, .cancelled:
+                if let rect = viewModel.pendingLassoRect {
+                    // Check intersection with elements and set them in viewModel
+                    let hits = viewModel.currentPage.elements.filter { el in
+                        let w = el.width ?? 200
+                        let h = el.height ?? 200
+                        let elRect = CGRect(
+                            x: el.positionX - w / 2,
+                            y: el.positionY - h / 2,
+                            width: w,
+                            height: h
+                        )
+                        return rect.intersects(elRect)
+                    }
+                    viewModel.selectedElementIds = Set(hits.map(\.id))
+                    
+                    // The drawingDidChange delegate will handle strokes.
+                    // But if there are no strokes, drawingDidChange might NOT fire!
+                    // We must manually trigger bounding box computation just in case.
+                    viewModel.computeSelectionBoundingBox()
+                }
+                lassoStartPoint = nil
+            default:
+                break
+            }
+        }
+
+        // MARK: - Tap Gesture for Blocks
+
+        @objc func handleCanvasTap(_ gesture: UITapGestureRecognizer) {
+            guard let canvas = canvasView else { return }
+            let tool = viewModel.selectedTool
+            if tool == .text || tool == .image {
+                let location = gesture.location(in: canvas)
+                // Convert screen coordinates to internal canvas coordinates
+                let scale = canvas.zoomScale
+                let offset = canvas.contentOffset
+                let canvasX = (location.x + offset.x) / scale
+                let canvasY = (location.y + offset.y) / scale
+                
+                Task { @MainActor in
+                    let newElement = CanvasElement(
+                        pageId: self.viewModel.currentPage.id,
+                        userId: self.viewModel.userId ?? UUID(),
+                        type: tool == .text ? "text" : "image",
+                        content: tool == .text ? "" : nil, // Start empty
+                        positionX: Double(canvasX),
+                        positionY: Double(canvasY),
+                        width: tool == .text ? 200 : 300,  // Initial size matching GoodNotes
+                        height: tool == .text ? 50 : 200,  // Initial size
+                        style: tool == .text ? ElementStyle(fontSize: 24, textColor: "#000000") : nil
+                    )
+                    self.viewModel.addElement(newElement)
+                    HapticEngine.medium()
+                }
+            }
+        }
+
+        // MARK: - Page Switching & Programmatic Updates
 
         func setDrawing(_ drawing: PKDrawing, on canvasView: PKCanvasView? = nil) {
-            isUpdatingDrawing = true
             let target = canvasView ?? self.canvasView
-            target?.drawing = drawing
+            guard let canvas = target else { return }
+            
+            // If this is called from an Undo/Redo block, we need to register the *reverse* action
+            // so the user can keep undoing/redoing back and forth.
+            if let undoManager = canvas.undoManager, undoManager.isUndoing || undoManager.isRedoing {
+                let currentDrawing = canvas.drawing
+                undoManager.registerUndo(withTarget: self) { coordinator in
+                    coordinator.setDrawing(currentDrawing, on: canvas)
+                }
+            }
+            
+            isUpdatingDrawing = true
+            canvas.drawing = drawing
             isUpdatingDrawing = false
+            
+            // Force a viewModel sync if this was triggered by an undo/redo
+            if let undoManager = canvas.undoManager, undoManager.isUndoing || undoManager.isRedoing {
+                Task { @MainActor in
+                    self.viewModel.drawingDidChange(drawing, fromPencil: self.lastStrokeFromPencil)
+                }
+            }
         }
     }
 

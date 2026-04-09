@@ -7,22 +7,22 @@ extension Color {
     // MARK: - Backgrounds (adaptive light/dark)
 
     /// Deepest background — near-black in dark, off-white in light
-    static let gBackground = Color(light: Color(hex: "#F8F8FA"), dark: Color(hex: "#0D0D0F"))
+    static let gBackground = Color(light: Color(hex: "#F8F8FA"), dark: Color(hex: "#0F0F0E"))
     /// Cards, sheets
-    static let gSurface = Color(light: Color(hex: "#FFFFFF"), dark: Color(hex: "#1A1A1F"))
+    static let gSurface = Color(light: Color(hex: "#FFFFFF"), dark: Color(hex: "#1A1A1A"))
     /// Hover, selected states
-    static let gElevated = Color(light: Color(hex: "#F0F0F5"), dark: Color(hex: "#222228"))
+    static let gElevated = Color(light: Color(hex: "#F0F0F5"), dark: Color(hex: "#262626"))
     /// Modals, overlays
     static let gOverlay = Color(light: Color(hex: "#E8E8ED"), dark: Color(hex: "#2C2C35"))
 
     // MARK: - Brand
 
-    /// Indigo — main accent
-    static let gPrimary = Color(hex: "#6366F1")
+    /// Warm gold — main accent
+    static let gPrimary = Color(hex: "#C9A84C")
     /// Primary at 15% opacity for subtle highlights
-    static let gPrimaryMuted = Color(hex: "#6366F1").opacity(0.15)
-    /// Violet — secondary accent
-    static let gSecondary = Color(hex: "#8B5CF6")
+    static let gPrimaryMuted = Color(hex: "#C9A84C").opacity(0.15)
+    /// Deep ink blue — secondary accent
+    static let gSecondary = Color(hex: "#3D5A80")
 
     // MARK: - Semantic
 
@@ -48,15 +48,15 @@ extension Color {
 
     /// Returns the appropriate background color for the given color scheme
     static func gBackground(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#0D0D0F") : Color(hex: "#F8F8FA")
+        scheme == .dark ? Color(hex: "#0F0F0E") : Color(hex: "#F8F8FA")
     }
 
     static func gSurface(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#1A1A1F") : Color(hex: "#FFFFFF")
+        scheme == .dark ? Color(hex: "#1A1A1A") : Color(hex: "#FFFFFF")
     }
 
     static func gElevated(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#222228") : Color(hex: "#F0F0F5")
+        scheme == .dark ? Color(hex: "#262626") : Color(hex: "#F0F0F5")
     }
 
     static func gOverlay(for scheme: ColorScheme) -> Color {

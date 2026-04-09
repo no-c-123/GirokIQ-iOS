@@ -58,13 +58,13 @@ extension UIColor {
 
 extension UIColor {
     // Backgrounds
-    static let gBackground    = UIColor(hex: "#0D0D0F")
-    static let gSurface       = UIColor(hex: "#1A1A1F")
-    static let gElevated      = UIColor(hex: "#222228")
+    static let gBackground    = UIColor(hex: "#0F0F0E")
+    static let gSurface       = UIColor(hex: "#1A1A1A")
+    static let gElevated      = UIColor(hex: "#262626")
 
     // Brand
-    static let gPrimary       = UIColor(hex: "#6366F1")
-    static let gPrimaryMuted  = UIColor(hex: "#6366F1").withAlphaComponent(0.15)
+    static let gPrimary       = UIColor(hex: "#C9A84C")
+    static let gPrimaryMuted  = UIColor(hex: "#C9A84C").withAlphaComponent(0.15)
 
     // Semantic
     static let gDestructive   = UIColor(hex: "#F87171")

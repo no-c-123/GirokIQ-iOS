@@ -29,6 +29,29 @@ struct NotebookCard: View, Equatable {
         String(notebook.name.prefix(1)).uppercased()
     }
 
+    /// Generates a unique, rich dark gradient based on the notebook's ID
+    private var coverGradient: LinearGradient {
+        let index = abs(notebook.id.hashValue) % 4
+        let topColors = [
+            Color(hex: "#1A233A"), // Deep Navy
+            Color(hex: "#2A1A3A"), // Deep Purple
+            Color(hex: "#1A3A2B"), // Dark Forest
+            Color(hex: "#3A1A1A")  // Deep Burgundy
+        ]
+        return LinearGradient(
+            colors: [topColors[index], Color(hex: "#0A0C10")],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    /// Generates a subtle notebook type icon based on the notebook's ID
+    private var coverIcon: String {
+        let icons = ["doc.plaintext", "squareshape.split.3x3", "line.horizontal.3", "book.closed"]
+        let index = abs(notebook.id.hashValue) % icons.count
+        return icons[index]
+    }
+
     var body: some View {
         Button(action: onTap) {
             if viewMode == .grid {
@@ -48,53 +71,57 @@ struct NotebookCard: View, Equatable {
     var gridCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
-                RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [accentColor, accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
+                // Rich dark ink gradient
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(coverGradient)
 
-                VStack(spacing: 8) {
-                    ForEach(0..<5, id: \.self) { _ in
-                        RoundedRectangle(cornerRadius: 1)
-                            .fill(Color.white.opacity(0.15))
-                            .frame(height: 1)
+                // Faint paper grain texture overlay
+                Image(systemName: "circle.grid.cross")
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .opacity(0.05)
+                    .blendMode(.multiply)
+
+                // Spine binding effect
+                HStack {
+                    VStack(spacing: 8) {
+                        ForEach(0..<5, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 1)
+                                .fill(Color.white.opacity(0.15))
+                                .frame(height: 1)
+                        }
                     }
+                    .frame(width: 8)
+                    .padding(.leading, 8)
+                    Spacer()
                 }
-                .padding(GSpacing.md)
 
-                Text(initial)
-                    .font(.gEmojiMedium)
-                    .foregroundColor(.white)
+                // Center icon representing notebook type
+                Image(systemName: coverIcon)
+                    .font(.system(size: 24, weight: .light))
+                    .foregroundColor(Color.white.opacity(0.7))
             }
-            .frame(height: 110)
+            .aspectRatio(0.75, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .shadow(color: Color.black.opacity(0.2), radius: 8, x: 0, y: 4)
+            .padding([.top, .horizontal], 12)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(notebook.name)
-                    .font(.gFootnote.weight(.semibold))
+                    .font(.custom("InstrumentSerif-Regular", size: 20))
                     .foregroundColor(.gTextPrimary)
                     .lineLimit(1)
 
                 Text(notebook.updatedAt.formatted(.relative(presentation: .named)))
-                    .font(.gCaption2)
+                    .font(.custom("PlusJakartaSans-Medium", size: 12))
                     .foregroundColor(.gTextTertiary)
             }
-            .padding(.horizontal, GSpacing.xxs)
-            .padding(.vertical, GSpacing.xs)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
         }
         .background(Color.gSurface)
-        .clipShape(RoundedRectangle(cornerRadius: GRadius.md, style: .continuous))
-        // Use compositingGroup to flatten all layers into a single offscreen buffer,
-        // then apply the border stroke once — avoids per-frame offscreen rendering
-        // that Core Animation would otherwise trigger for each overlay + clip combination.
-        .overlay(
-            RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                .stroke(Color.gBorder, lineWidth: 0.5)
-        )
-        .compositingGroup()
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: Color.black.opacity(0.15), radius: 12, x: 0, y: 6)
     }
 
     // MARK: - List Card

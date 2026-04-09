@@ -20,13 +20,20 @@ struct HomeView: View {
     @State private var renameText = ""
     @State private var showSettings = false
     @State private var showSidebarPanel = false
+    
+    // Folder Creation & Management
+    @State private var showNewFolderAlert = false
+    @State private var newFolderName = ""
+    @State private var folderToRename: Folder?
+    @State private var renameFolderText = ""
 
     /// Adaptive columns: fits as many as possible with 150pt minimum
     private var columns: [GridItem] {
         if viewModel.viewMode == .list {
             return [GridItem(.flexible())]
         }
-        return [GridItem(.adaptive(minimum: 150), spacing: GSpacing.md)]
+        // Use an adaptive layout so the portrait cards don't grow to fill the screen
+        return [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: GSpacing.md)]
     }
 
     var body: some View {
@@ -70,11 +77,47 @@ struct HomeView: View {
             TextField("Name", text: $renameText)
             Button("Rename") {
                 if let notebook = notebookToRename {
-                    Task { await viewModel.renameNotebook(notebook, to: renameText) }
+                    let nameToSave = renameText
+                    Task { await viewModel.renameNotebook(notebook, to: nameToSave) }
                 }
                 notebookToRename = nil
+                renameText = ""
             }
-            Button("Cancel", role: .cancel) { notebookToRename = nil }
+            Button("Cancel", role: .cancel) { 
+                notebookToRename = nil
+                renameText = ""
+            }
+        }
+        .alert("New Folder", isPresented: $showNewFolderAlert) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Create") {
+                if let userId = authViewModel.currentUserId, !newFolderName.isEmpty {
+                    let nameToSave = newFolderName
+                    newFolderName = ""
+                    Task { await viewModel.createFolder(userId: userId, name: nameToSave) }
+                } else {
+                    newFolderName = ""
+                }
+            }
+            Button("Cancel", role: .cancel) { newFolderName = "" }
+        }
+        .alert("Rename Folder", isPresented: Binding(
+            get: { folderToRename != nil },
+            set: { if !$0 { folderToRename = nil } }
+        )) {
+            TextField("Folder name", text: $renameFolderText)
+            Button("Rename") {
+                if let folder = folderToRename {
+                    let nameToSave = renameFolderText
+                    Task { await viewModel.renameFolder(folder, to: nameToSave) }
+                }
+                folderToRename = nil
+                renameFolderText = ""
+            }
+            Button("Cancel", role: .cancel) { 
+                folderToRename = nil
+                renameFolderText = ""
+            }
         }
 
         // Wrap content with optional sidebar overlay panel
@@ -121,7 +164,8 @@ struct HomeView: View {
                         animateMotionSafe {
                             showSidebarPanel = false
                         }
-                    }
+                    },
+                    onFolderContextAction: { handleFolderContextAction($0, folder: $1) }
                 )
                 .frame(width: 280)
                 .transition(.move(edge: .leading))
@@ -161,11 +205,8 @@ struct HomeView: View {
 
             // App logo
             HStack(spacing: GSpacing.xs) {
-                Image(systemName: "pencil.and.outline")
-                    .font(.gIconLarge.weight(.semibold))
-                    .foregroundColor(.gPrimary)
                 Text("GirokIQ")
-                    .font(.gTitle3.weight(.bold))
+                    .font(.custom("InstrumentSerif-Regular", size: 24))
                     .foregroundColor(themeManager.textPrimary)
             }
             .accessibilityElement(children: .combine)
@@ -200,16 +241,30 @@ struct HomeView: View {
             .accessibilityLabel(viewModel.viewMode == .grid ? "Switch to list view" : "Switch to grid view")
             .accessibilityHint("Double tap to change layout")
 
-            // New notebook
-            Button {
-                showNewNotebookSheet = true
+            // New notebook / folder
+            Menu {
+                Button {
+                    showNewNotebookSheet = true
+                } label: {
+                    Label("New Notebook", systemImage: "book.closed")
+                        .font(.custom("PlusJakartaSans-Medium", size: 15))
+                }
+                
+                Button {
+                    showNewFolderAlert = true
+                } label: {
+                    Label("New Folder", systemImage: "folder.badge.plus")
+                        .font(.custom("PlusJakartaSans-Medium", size: 15))
+                }
             } label: {
                 Image(systemName: "plus")
                     .toolbarIconStyle(primary: true)
+            } primaryAction: {
+                showNewNotebookSheet = true
             }
             .minTapTarget()
-            .accessibilityLabel("Create new notebook")
-            .accessibilityHint("Double tap to open the new notebook dialog")
+            .accessibilityLabel("Create")
+            .accessibilityHint("Single tap to create a notebook, long press for more options")
             .keyboardShortcut("n", modifiers: .command)
 
             // Avatar / user
@@ -218,11 +273,11 @@ struct HomeView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(Color.gPrimaryMuted)
+                        .fill(Color.gPrimary)
                         .frame(width: 32, height: 32)
                     Text(authViewModel.displayName.prefix(1).uppercased())
                         .font(.gFootnote.weight(.bold))
-                        .foregroundColor(.gPrimary)
+                        .foregroundColor(.white)
                 }
             }
             .minTapTarget()
@@ -278,35 +333,48 @@ struct HomeView: View {
     var notebookContent: some View {
         ScrollView {
             LazyVStack(spacing: GSpacing.md) {
-                // Folder sections (hidden when sidebar drives folder selection)
-                ForEach(viewModel.displayedFolders) { folder in
-                    FolderRow(
-                        folder: folder,
-                        isExpanded: viewModel.expandedFolderIds.contains(folder.id),
-                        notebooks: viewModel.notebooksInFolder(folder.id),
-                        viewMode: viewModel.viewMode,
-                        columns: columns,
-                        onToggle: { viewModel.toggleFolder(folder.id) },
-                        onSelectNotebook: { selectedNotebook = $0 },
-                        onContextAction: { handleContextAction($0, notebook: $1) }
-                    )
+                // 1. Recent
+                if !viewModel.recentNotebooks.isEmpty && viewModel.selectedFolderId == nil {
+                    SectionHeaderView(title: "Recent")
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: GSpacing.md) {
+                        ForEach(viewModel.recentNotebooks) { notebook in
+                            NotebookCard(
+                                notebook: notebook,
+                                viewMode: viewModel.viewMode
+                            ) {
+                                selectedNotebook = notebook
+                            }
+                            .contextMenu { notebookContextMenu(for: notebook) }
+                            .transition(.scale(scale: 0.9).combined(with: .opacity))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, GSpacing.lg)
+                    .padding(.bottom, GSpacing.md)
                 }
 
-                // Notebooks grid
-                if !viewModel.displayedUnfolderedNotebooks.isEmpty {
-                    if !viewModel.displayedFolders.isEmpty {
-                        HStack {
-                            Text("Notebooks")
-                                .font(.gCaption.weight(.semibold))
-                                .foregroundColor(.gTextTertiary)
-                                .textCase(.uppercase)
-                                .tracking(0.4)
-                            Spacer()
-                        }
-                        .padding(.horizontal, GSpacing.lg)
+                // 2. Folders
+                if !viewModel.displayedFolders.isEmpty {
+                    SectionHeaderView(title: "Folders")
+                    ForEach(viewModel.displayedFolders) { folder in
+                        FolderRow(
+                            folder: folder,
+                            isExpanded: viewModel.expandedFolderIds.contains(folder.id),
+                            notebooks: viewModel.notebooksInFolder(folder.id),
+                            viewMode: viewModel.viewMode,
+                            columns: columns,
+                            onToggle: { viewModel.toggleFolder(folder.id) },
+                            onSelectNotebook: { selectedNotebook = $0 },
+                            onContextAction: { handleContextAction($0, notebook: $1) },
+                            onFolderContextAction: { handleFolderContextAction($0, folder: $1) }
+                        )
                     }
+                }
 
-                    LazyVGrid(columns: columns, spacing: GSpacing.md) {
+                // 3. My Notebooks
+                if !viewModel.displayedUnfolderedNotebooks.isEmpty {
+                    SectionHeaderView(title: "My Notebooks")
+                    LazyVGrid(columns: columns, alignment: .leading, spacing: GSpacing.md) {
                         ForEach(viewModel.displayedUnfolderedNotebooks) { notebook in
                             NotebookCard(
                                 notebook: notebook,
@@ -318,6 +386,7 @@ struct HomeView: View {
                             .transition(.scale(scale: 0.9).combined(with: .opacity))
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, GSpacing.lg)
                     .animation(GAnimation.spring, value: viewModel.displayedNotebooks.count)
                 }
@@ -342,26 +411,29 @@ struct HomeView: View {
     // MARK: - Empty State
 
     var emptyState: some View {
-        VStack(spacing: GSpacing.lg) {
+        VStack(spacing: GSpacing.xl) {
             Spacer()
-            Image(systemName: viewModel.searchText.isEmpty ? "book.closed" : "magnifyingglass")
-                .font(.system(size: 48))
-                .foregroundColor(.gTextTertiary)
-
+            
             if viewModel.searchText.isEmpty {
-                Text("No Notebooks Yet")
-                    .font(.gTitle3.weight(.semibold))
+                // Minimal line art illustration
+                ZStack {
+                    Circle()
+                        .fill(Color.gPrimaryMuted)
+                        .frame(width: 80, height: 80)
+                    Image(systemName: "pencil.and.outline")
+                        .font(.system(size: 40, weight: .light))
+                        .foregroundColor(.gPrimary)
+                }
+
+                Text("Start your first notebook")
+                    .font(.custom("InstrumentSerif-Regular", size: 26))
                     .foregroundColor(.gTextPrimary)
-                Text("Tap + to create your first notebook\nand start thinking on canvas.")
-                    .font(.gSubheadline)
-                    .foregroundColor(.gTextSecondary)
-                    .multilineTextAlignment(.center)
 
                 Button {
                     showNewNotebookSheet = true
                 } label: {
-                    Text("Create Notebook")
-                        .font(.gCallout.weight(.semibold))
+                    Text("New Notebook")
+                        .font(.custom("PlusJakartaSans-Medium", size: 16))
                         .foregroundColor(.white)
                         .padding(.horizontal, GSpacing.xl)
                         .padding(.vertical, GSpacing.sm)
@@ -371,9 +443,12 @@ struct HomeView: View {
                         )
                 }
                 .minTapTarget()
-                .accessibilityLabel("Create notebook")
+                .accessibilityLabel("Create new notebook")
                 .accessibilityHint("Double tap to create your first notebook")
             } else {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 48, weight: .light))
+                    .foregroundColor(.gTextTertiary)
                 Text("No Results")
                     .font(.gTitle3.weight(.semibold))
                     .foregroundColor(.gTextPrimary)
@@ -434,6 +509,16 @@ struct HomeView: View {
             Task { await viewModel.moveNotebookToFolder(notebook, folderId: folderId) }
         }
     }
+
+    private func handleFolderContextAction(_ action: FolderContextAction, folder: Folder) {
+        switch action {
+        case .rename:
+            renameFolderText = folder.name
+            folderToRename = folder
+        case .delete:
+            Task { await viewModel.deleteFolder(folder) }
+        }
+    }
 }
 
 // MARK: - Notebook Context Action
@@ -442,6 +527,33 @@ enum NotebookContextAction {
     case rename
     case delete
     case moveToFolder(UUID?)
+}
+
+// MARK: - Folder Context Action
+
+enum FolderContextAction {
+    case rename
+    case delete
+}
+
+// MARK: - Section Header View
+
+struct SectionHeaderView: View {
+    let title: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.custom("PlusJakartaSans-Medium", size: 13))
+                .foregroundColor(.gTextSecondary)
+            
+            Rectangle()
+                .fill(Color.gBorder.opacity(0.5))
+                .frame(height: 1)
+        }
+        .padding(.horizontal, GSpacing.lg)
+        .padding(.vertical, GSpacing.xs)
+    }
 }
 
 // MARK: - Folder Row (Accordion)
@@ -455,6 +567,7 @@ struct FolderRow: View {
     let onToggle: () -> Void
     let onSelectNotebook: (Notebook) -> Void
     let onContextAction: (NotebookContextAction, Notebook) -> Void
+    let onFolderContextAction: (FolderContextAction, Folder) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -463,16 +576,20 @@ struct FolderRow: View {
                 HStack(spacing: GSpacing.sm) {
                     Image(systemName: isExpanded ? "folder.fill" : "folder")
                         .font(.gIconMedium)
-                        .foregroundColor(.gPrimary)
-                    Text(folder.name)
-                        .font(.gSubheadline.weight(.semibold))
+                        .foregroundColor(isExpanded ? .gPrimary : .gTextSecondary)
+                    
+                    Text(folder.name.isEmpty ? "Unnamed Folder" : folder.name)
+                        .font(.custom("PlusJakartaSans-Medium", size: 15))
                         .foregroundColor(.gTextPrimary)
-                    Text("\(notebooks.count)")
-                        .font(.gCaption)
-                        .foregroundColor(.gTextTertiary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.gElevated))
+                    
+                    if !isExpanded {
+                        Text("\(notebooks.count)")
+                            .font(.gCaption)
+                            .foregroundColor(.gTextTertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.gElevated))
+                    }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.gCaption.weight(.medium))
@@ -482,11 +599,27 @@ struct FolderRow: View {
                 }
                 .padding(.horizontal, GSpacing.lg)
                 .padding(.vertical, GSpacing.sm)
+                .contentShape(Rectangle())
+            }
+            .contextMenu {
+                Button {
+                    onFolderContextAction(.rename, folder)
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                
+                Divider()
+                
+                Button(role: .destructive) {
+                    onFolderContextAction(.delete, folder)
+                } label: {
+                    Label("Delete Folder", systemImage: "trash")
+                }
             }
 
             // Expanded content
             if isExpanded && !notebooks.isEmpty {
-                LazyVGrid(columns: columns, spacing: GSpacing.md) {
+                LazyVGrid(columns: columns, alignment: .leading, spacing: GSpacing.md) {
                     ForEach(notebooks) { notebook in
                         NotebookCard(
                             notebook: notebook,
@@ -514,6 +647,7 @@ struct FolderRow: View {
                         }
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, GSpacing.lg)
                 .padding(.bottom, GSpacing.md)
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -582,10 +716,9 @@ struct SidebarPanelView: View {
     @Binding var selectedNotebook: Notebook?
     @Binding var showSettings: Bool
     var onClose: () -> Void
+    var onFolderContextAction: ((FolderContextAction, Folder) -> Void)?
 
     @EnvironmentObject var authViewModel: AuthViewModel
-    @State private var showNewFolderAlert = false
-    @State private var newFolderName = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -631,6 +764,19 @@ struct SidebarPanelView: View {
                             ) {
                                 selectedFolderId = folder.id
                             }
+                            .contextMenu {
+                                Button {
+                                    onFolderContextAction?(.rename, folder)
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+                                Divider()
+                                Button(role: .destructive) {
+                                    onFolderContextAction?(.delete, folder)
+                                } label: {
+                                    Label("Delete Folder", systemImage: "trash")
+                                }
+                            }
                         }
                     }
 
@@ -664,10 +810,6 @@ struct SidebarPanelView: View {
                     Divider().opacity(0.3).padding(.horizontal, GSpacing.md)
 
                     // Actions
-                    sidebarButton(icon: "folder.badge.plus", label: "New Folder", tint: .gPrimary) {
-                        showNewFolderAlert = true
-                    }
-
                     sidebarButton(icon: "gearshape", label: "Settings") {
                         showSettings = true
                         onClose()
@@ -686,16 +828,6 @@ struct SidebarPanelView: View {
             )
         )
         .shadow(color: .black.opacity(0.3), radius: 20, x: 4, y: 0)
-        .alert("New Folder", isPresented: $showNewFolderAlert) {
-            TextField("Folder name", text: $newFolderName)
-            Button("Create") {
-                if let userId = authViewModel.currentUserId, !newFolderName.isEmpty {
-                    Task { await viewModel.createFolder(userId: userId, name: newFolderName) }
-                }
-                newFolderName = ""
-            }
-            Button("Cancel", role: .cancel) { newFolderName = "" }
-        }
     }
 
     // MARK: - Sidebar Button

@@ -33,17 +33,19 @@ struct AIChatView: View {
     // MARK: - Header
 
     var chatHeader: some View {
-        HStack(spacing: GSpacing.sm) {
+        HStack(spacing: GSpacing.xs) {
             Image(systemName: "sparkles")
-                .font(.gIconMedium)
+                .font(.system(size: 16))
                 .foregroundColor(.gPrimary)
+            
             Text("AI Assistant")
-                .font(.gSubheadline.weight(.semibold))
+                .font(.custom("InstrumentSerif-Regular", size: 20))
                 .foregroundColor(.gTextPrimary(for: colorScheme))
             Spacer()
         }
         .padding(.horizontal, GSpacing.md)
-        .padding(.vertical, GSpacing.sm)
+        .padding(.top, GSpacing.md)
+        .padding(.bottom, GSpacing.xs)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("AI Assistant")
     }
@@ -150,23 +152,48 @@ struct AIChatView: View {
     // MARK: - No API Key
 
     var noAPIKeyView: some View {
-        VStack(spacing: GSpacing.md) {
+        VStack(spacing: GSpacing.lg) {
             Spacer()
-            Image(systemName: "key.fill")
-                .font(.system(size: 36))
-                .foregroundColor(.gTextTertiary(for: colorScheme))
-            Text("API Key Required")
-                .font(.gSubheadline.weight(.semibold))
-                .foregroundColor(.gTextPrimary(for: colorScheme))
-            Text("Add your Anthropic API key\nin Settings to use the AI assistant.")
-                .font(.gCaption)
-                .foregroundColor(.gTextSecondary(for: colorScheme))
-                .multilineTextAlignment(.center)
+            
+            ZStack {
+                Circle()
+                    .fill(Color.gPrimaryMuted)
+                    .frame(width: 72, height: 72)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 32, weight: .light))
+                    .foregroundColor(.gPrimary)
+            }
+
+            VStack(spacing: GSpacing.xs) {
+                Text("Meet your study assistant")
+                    .font(.custom("InstrumentSerif-Regular", size: 22))
+                    .foregroundColor(.gTextPrimary(for: colorScheme))
+                
+                Text("Summarize notes, explain concepts, generate practice questions — all from your canvas.")
+                    .font(.custom("PlusJakartaSans-Regular", size: 14))
+                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 240)
+            }
+
+            Button {
+                // Settings flow needs to be wired here
+            } label: {
+                Text("Set Up in Settings")
+                    .font(.custom("PlusJakartaSans-Medium", size: 15))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                            .fill(Color.gPrimary)
+                    )
+            }
+            .padding(.top, GSpacing.sm)
+
             Spacer()
         }
         .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("API key required. Add your Anthropic API key in Settings to use the AI assistant.")
     }
 
     // MARK: - Input Bar

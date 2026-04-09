@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 import PencilKit
 import Realtime
+import Photos
 
 // MARK: - Canvas ViewModel
 
@@ -96,6 +97,11 @@ final class CanvasViewModel: ObservableObject {
     var isOpenOnWeb: Bool { !webPresence.isEmpty }
     private var presenceChannel: RealtimeChannelV2?
 
+    // Photo Library State
+    @Published var hasPhotoAccess: Bool = false
+    @Published var recentPhotos: [PHAsset] = []
+    @Published var recentPhotoImages: [PHAsset: UIImage] = [:]
+
     // UndoManager forwarded from PKCanvasView
     @Published var canUndo: Bool = false
     @Published var canRedo: Bool = false
@@ -149,7 +155,8 @@ final class CanvasViewModel: ObservableObject {
                         title: tuple.page.title,
                         drawingData: tuple.drawingData,
                         backgroundPattern: bgPattern,
-                        order: tuple.page.pageIndex
+                        order: tuple.page.pageIndex,
+                        elements: tuple.page.settings?.elements ?? []
                     )
                 }
             }
@@ -221,6 +228,238 @@ final class CanvasViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Lasso Selection State
+    
+    /// IDs of CanvasElements currently inside the lasso selection
+    @Published var selectedElementIds: Set<UUID> = []
+    
+    /// The PKDrawing strokes selected by PencilKit's native lasso (read from canvasView.drawing after lasso)
+    /// These are identified by index into pkDrawing.strokes
+    @Published var selectedStrokeIndices: Set<Int> = []
+    
+    /// The frozen combined bounding box of ALL selected content (strokes + elements) in canvas space.
+    /// Computed once when selection is committed. Used as the resize origin.
+    @Published var selectionBoundingBox: CGRect? = nil
+    
+    /// Current scale factor applied to the selection during an active resize gesture.
+    /// Drive UI live from this value.
+    @Published var selectionScale: CGFloat = 1.0
+    
+    /// Whether a resize is actively in progress (drives handle visibility)
+    @Published var isResizing: Bool = false
+    
+    /// The rect drawn by the user for lasso selection (in canvas space)
+    @Published var pendingLassoRect: CGRect? = nil
+    
+    private var elementSaveTask: Task<Void, Never>?
+    
+    func addElement(_ element: CanvasElement) {
+        pages[currentPageIndex].elements.append(element)
+        // Explicitly trigger an update since it's a nested array
+        objectWillChange.send()
+        scheduleElementSave()
+    }
+    
+    func insertImage(_ asset: PHAsset) {
+        let manager = PHImageManager.default()
+        let options = PHImageRequestOptions()
+        options.isSynchronous = false
+        options.deliveryMode = .highQualityFormat
+        options.isNetworkAccessAllowed = true
+
+        manager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .default, options: options) { [weak self] image, info in
+            guard let self = self, let image = image else { return }
+            
+            // Generate a unique filename and save to local Documents directory
+            let fileName = UUID().uuidString + ".jpg"
+            guard let data = image.jpegData(compressionQuality: 0.8) else { return }
+            let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
+            
+            do {
+                try data.write(to: fileURL)
+            } catch {
+                print("Failed to save image locally: \(error)")
+                return
+            }
+            
+            Task { @MainActor in
+                // Calculate center of the visible canvas based on offset and scale
+                let canvasSize = UIScreen.main.bounds.size
+                let center = CGPoint(
+                    x: (canvasSize.width / 2 + self.canvasOffset.width) / self.canvasScale,
+                    y: (canvasSize.height / 2 + self.canvasOffset.height) / self.canvasScale
+                )
+                
+                // Initial block size
+                let blockWidth: Double = 300
+                let blockHeight: Double = Double(image.size.height / image.size.width) * blockWidth
+                
+                let newElement = CanvasElement(
+                    pageId: self.currentPage.id,
+                    userId: self.userId ?? UUID(),
+                    type: "image",
+                    content: fileName, // Store the local file name instead of base64
+                    positionX: Double(center.x - CGFloat(blockWidth / 2)),
+                    positionY: Double(center.y - CGFloat(blockHeight / 2)),
+                    width: blockWidth,
+                    height: blockHeight,
+                    rotation: 0,
+                    zIndex: self.currentPage.elements.count
+                )
+                
+                self.currentPage.elements.append(newElement)
+                self.selectedElementIds = [newElement.id]
+                self.objectWillChange.send()
+                self.scheduleElementSave()
+            }
+        }
+    }
+
+    func updateElement(_ element: CanvasElement) {
+        if let index = pages[currentPageIndex].elements.firstIndex(where: { $0.id == element.id }) {
+            pages[currentPageIndex].elements[index] = element
+            objectWillChange.send()
+            scheduleElementSave()
+        }
+    }
+    
+    func removeElement(id: UUID) {
+        pages[currentPageIndex].elements.removeAll { $0.id == id }
+        selectedElementIds.remove(id)
+        objectWillChange.send()
+        scheduleElementSave()
+    }
+    
+    private func scheduleElementSave() {
+        elementSaveTask?.cancel()
+        elementSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
+            guard !Task.isCancelled else { return }
+            await saveCanvasElements()
+        }
+    }
+    
+    private func saveCanvasElements() async {
+        guard let pageId = currentPage.id as UUID? else { return }
+        let elements = currentPage.elements
+        await Task.detached(priority: .utility) {
+            do {
+                try await LocalDatabase.shared.saveCanvasElements(elements, forPageId: pageId)
+            } catch {
+                print("Local element save error: \(error)")
+            }
+            for el in elements {
+                try? await SupabaseService.shared.upsertCanvasElement(el)
+            }
+        }.value
+    }
+
+    // MARK: - Unified Lasso Resize
+    
+    func computeSelectionBoundingBox() {
+        var rects: [CGRect] = []
+
+        // Bounding boxes from selected CanvasElements
+        for el in currentPage.elements where selectedElementIds.contains(el.id) {
+            let w = el.width ?? 200
+            let h = el.height ?? 200
+            rects.append(CGRect(
+                x: el.positionX - w / 2,
+                y: el.positionY - h / 2,
+                width: w,
+                height: h
+            ))
+        }
+
+        // Bounding boxes from selected PencilKit strokes
+        let drawing = currentPage.pkDrawing
+        for (i, stroke) in drawing.strokes.enumerated() where selectedStrokeIndices.contains(i) {
+            rects.append(stroke.renderBounds)
+        }
+
+        guard !rects.isEmpty else {
+            selectionBoundingBox = nil
+            return
+        }
+
+        // Union all rects into one combined bounding box
+        let combined = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+        selectionBoundingBox = combined
+        selectionScale = 1.0
+    }
+
+    func applySelectionResize(scale: CGFloat) {
+        guard let bbox = selectionBoundingBox, scale > 0 else { return }
+        let origin = bbox.origin  // top-left of combined bounding box — the fixed resize anchor
+
+        // 1. Resize CanvasElements
+        for i in pages[currentPageIndex].elements.indices {
+            let el = pages[currentPageIndex].elements[i]
+            guard selectedElementIds.contains(el.id) else { continue }
+
+            // Translate position relative to bbox origin, scale, translate back
+            let newX = origin.x + (el.positionX - origin.x) * scale
+            let newY = origin.y + (el.positionY - origin.y) * scale
+            let newW = (el.width  ?? 200) * scale
+            let newH = (el.height ?? 200) * scale
+
+            pages[currentPageIndex].elements[i].positionX = newX
+            pages[currentPageIndex].elements[i].positionY = newY
+            pages[currentPageIndex].elements[i].width  = max(40, newW)
+            pages[currentPageIndex].elements[i].height = max(40, newH)
+            pages[currentPageIndex].elements[i].updatedAt = Date()
+        }
+
+        // 2. Resize PencilKit strokes
+        let drawing = currentPage.pkDrawing
+        var newStrokes = drawing.strokes
+
+        for i in selectedStrokeIndices.sorted() where i < newStrokes.count {
+            let stroke = newStrokes[i]
+
+            // Build a CGAffineTransform: translate to origin, scale, translate back
+            let transform = CGAffineTransform(translationX: -origin.x, y: -origin.y)
+                .scaledBy(x: scale, y: scale)
+                .translatedBy(x: origin.x / scale, y: origin.y / scale)
+
+            // Reconstruct the PKStroke path using transformed points
+            var newPoints: [PKStrokePoint] = []
+            for point in stroke.path {
+                let newLocation = point.location.applying(transform)
+                let newPoint = PKStrokePoint(
+                    location: newLocation,
+                    timeOffset: point.timeOffset,
+                    size: CGSize(width: point.size.width * scale, height: point.size.height * scale),
+                    opacity: point.opacity,
+                    force: point.force,
+                    azimuth: point.azimuth,
+                    altitude: point.altitude
+                )
+                newPoints.append(newPoint)
+            }
+            let newPath = PKStrokePath(controlPoints: newPoints, creationDate: stroke.path.creationDate)
+            newStrokes[i] = PKStroke(ink: stroke.ink, path: newPath)
+        }
+
+        let newDrawing = PKDrawing(strokes: newStrokes)
+        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+
+        // 3. Update frozen bounding box to the new scaled size (for subsequent resizes)
+        selectionBoundingBox = CGRect(
+            x: origin.x,
+            y: origin.y,
+            width: bbox.width  * scale,
+            height: bbox.height * scale
+        )
+        selectionScale = 1.0  // reset — next gesture starts from 1.0 again
+
+        // 4. Notify PencilKit to redraw and save
+        forceDrawingUpdate = true
+        objectWillChange.send()
+        scheduleElementSave()
+        scheduleAutoSave()
+    }
+    
     // MARK: - Tool Selection (with per-tool memory)
 
     func selectTool(_ tool: DrawingTool) {
@@ -237,6 +476,10 @@ final class CanvasViewModel: ObservableObject {
             selectedStrokes.removeAll()
         }
         selectedTool = tool
+
+        if tool == .image {
+            requestPhotoAccessAndFetch()
+        }
 
         // Restore saved settings or use tool defaults
         if let saved = toolMemory[tool] {
@@ -261,7 +504,29 @@ final class CanvasViewModel: ObservableObject {
     /// Called by PKCanvasRepresentable when the drawing changes.
     /// `fromPencil` indicates whether the change came from Apple Pencil (true) or finger (false).
     func drawingDidChange(_ drawing: PKDrawing, fromPencil: Bool = true) {
-        let data = PencilKitBridge.serialize(drawing)
+        var modifiedDrawing = drawing
+        
+        // Shape snapping logic (post-processing method)
+        if isShapeSnappingEnabled, let lastStroke = modifiedDrawing.strokes.last {
+            let currentStrokes = pages[currentPageIndex].pkDrawing.strokes
+            // Only process if a new stroke was just added
+            if modifiedDrawing.strokes.count > currentStrokes.count {
+                let pts = lastStroke.path.compactMap { $0.location }
+                if let shape = ShapeSnapper.recognizeShape(from: pts) {
+                    let snappedShape = ShapeSnapper.straightenShape(shape)
+                    let newStroke = ShapeSnapper.createStroke(from: snappedShape, originalStroke: lastStroke)
+                    
+                    var newStrokes = modifiedDrawing.strokes
+                    newStrokes[newStrokes.count - 1] = newStroke
+                    modifiedDrawing = PKDrawing(strokes: newStrokes)
+                    
+                    // Trigger a view update so the canvas redrawns with the snapped stroke
+                    self.forceDrawingUpdate = true
+                }
+            }
+        }
+
+        let data = PencilKitBridge.serialize(modifiedDrawing)
         pages[currentPageIndex].drawingData = data
         refreshUndoState()
         scheduleAutoSave()
@@ -389,7 +654,72 @@ final class CanvasViewModel: ObservableObject {
 
     /// Build the "Open in Web" deep link URL for the current notebook.
     func webURL(notebookId: UUID) -> URL? {
-        URL(string: "https://app.girokiq.com/notebook/\(notebookId.uuidString)")
+        URL(string: "https://app.girokiq.app/notebook/\(notebookId.uuidString)")
+    }
+
+    // MARK: - Photo Access
+
+    func requestPhotoAccessAndFetch() {
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        switch status {
+        case .authorized, .limited:
+            hasPhotoAccess = true
+            fetchRecentPhotos()
+        case .notDetermined:
+            Task {
+                let newStatus = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
+                await MainActor.run {
+                    if newStatus == .authorized || newStatus == .limited {
+                        self.hasPhotoAccess = true
+                        self.fetchRecentPhotos()
+                    } else {
+                        self.hasPhotoAccess = false
+                    }
+                }
+            }
+        default:
+            hasPhotoAccess = false
+        }
+    }
+
+    private func fetchRecentPhotos() {
+        guard hasPhotoAccess else { return }
+        
+        Task.detached(priority: .userInitiated) {
+            let fetchOptions = PHFetchOptions()
+            fetchOptions.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+            fetchOptions.fetchLimit = 5
+            
+            let fetchResult = PHAsset.fetchAssets(with: .image, options: fetchOptions)
+            let imageManager = PHImageManager.default()
+            
+            let targetSize = CGSize(width: 100, height: 100)
+            let requestOptions = PHImageRequestOptions()
+            requestOptions.isSynchronous = true // safe on detached task
+            requestOptions.deliveryMode = .highQualityFormat
+            requestOptions.isNetworkAccessAllowed = true
+            
+            var fetchedAssets: [PHAsset] = []
+            var fetchedImages: [PHAsset: UIImage] = [:]
+            
+            for i in 0..<fetchResult.count {
+                let asset = fetchResult.object(at: i)
+                fetchedAssets.append(asset)
+                
+                imageManager.requestImage(for: asset, targetSize: targetSize, contentMode: .aspectFill, options: requestOptions) { image, _ in
+                    if let image = image {
+                        fetchedImages[asset] = image
+                    }
+                }
+            }
+            
+            let finalAssets = Array(fetchedAssets.prefix(5))
+            let finalImages = fetchedImages
+            await MainActor.run { [weak self] in
+                self?.recentPhotos = finalAssets
+                self?.recentPhotoImages = finalImages
+            }
+        }
     }
 
     // MARK: - Sync

@@ -8,11 +8,9 @@ struct PropertiesPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            panelHeader
-            Divider().opacity(0.15)
             scrollContent
         }
-        .frame(width: 180)
+        .frame(width: 200)
         .background(
             RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous)
                 .fill(Color.gSurface.opacity(0.96))
@@ -27,102 +25,112 @@ struct PropertiesPanel: View {
     }
 
     var panelHeader: some View {
-        HStack {
-            Text("Properties")
-                .font(.gCaption.weight(.semibold))
-                .foregroundColor(.gTextSecondary)
-                .textCase(.uppercase)
-                .tracking(0.5)
-            Spacer()
-            Button {
-                animateMotionSafe(GAnimation.springFast) {
-                    viewModel.showProperties = false
-                }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.gCaption2.weight(.bold))
-                    .foregroundColor(.gTextSecondary)
-                    .frame(width: 20, height: 20)
-                    .background(Circle().fill(Color.gBorder))
-                    .padding(12)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("Close properties panel")
-            .accessibilityHint("Double tap to hide properties")
-        }
-        .padding(.leading, GSpacing.md)
-        .padding(.trailing, GSpacing.xs)
-        .padding(.vertical, GSpacing.xxs)
+        EmptyView()
     }
 
     var scrollContent: some View {
-        VStack(alignment: .leading, spacing: GSpacing.md) {
-            
-            if viewModel.selectedTool == .eraser {
-                // ERASER PROPERTIES
-                PropertySection(title: "Eraser Type") {
-                    eraserTypeSelector
-                }
-            } else if viewModel.selectedTool == .lasso || viewModel.selectedTool == .selection {
-                // LASSO PROPERTIES
-                PropertySection(title: "Lasso Actions") {
-                    lassoActions
-                }
-            } else {
-                // INKING TOOLS PROPERTIES
-                if viewModel.selectedTool == .pen {
-                    PropertySection(title: "Pen Style") {
-                        penStyleSelector
+        let closeAction = {
+            animateMotionSafe(GAnimation.springFast) {
+                viewModel.showProperties = false
+            }
+        }
+        
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                
+                if viewModel.selectedTool == .eraser {
+                    // ERASER PROPERTIES
+                    PropertySection(title: "Eraser Type", showCloseButton: true, onClose: closeAction) {
+                        eraserTypeSelector
+                    }
+                } else if viewModel.selectedTool == .lasso || viewModel.selectedTool == .selection {
+                    // LASSO PROPERTIES
+                    PropertySection(title: "Lasso Actions", showCloseButton: true, onClose: closeAction) {
+                        lassoActions
+                    }
+                } else if viewModel.selectedTool == .text {
+                    // TEXT PROPERTIES
+                    PropertySection(title: "Text Color", showCloseButton: true, onClose: closeAction) {
+                        colorGrid
                     }
                     Divider().opacity(0.1)
+                    PropertySection(title: "Opacity") {
+                        opacitySlider
+                    }
+                    Divider().opacity(0.1)
+                    PropertySection(title: "Actions") {
+                        blockActions
+                    }
+                } else if viewModel.selectedTool == .image {
+                    // IMAGE PROPERTIES
+                    PropertySection(title: "Opacity", showCloseButton: true, onClose: closeAction) {
+                        opacitySlider
+                    }
+                    Divider().opacity(0.1)
+                    PropertySection(title: "Actions") {
+                        blockActions
+                    }
+                } else {
+                    // INKING TOOLS PROPERTIES
+                    if viewModel.selectedTool == .pen {
+                        PropertySection(title: "Pen Style", showCloseButton: true, onClose: closeAction) {
+                            penStyleSelector
+                        }
+                        Divider().opacity(0.1)
+                        PropertySection(title: "Stroke Color") {
+                            colorGrid
+                        }
+                    } else {
+                        PropertySection(title: "Stroke Color", showCloseButton: true, onClose: closeAction) {
+                            colorGrid
+                        }
+                    }
+
+                    Divider().opacity(0.1)
+
+                    PropertySection(title: "Stroke Width") {
+                        strokeWidthSelector
+                    }
+
+                    Divider().opacity(0.1)
+
+                    PropertySection(title: "Opacity") {
+                        opacitySlider
+                    }
                 }
-                
-                PropertySection(title: "Stroke Color") {
-                    colorGrid
+
+                // ASSISTANTS (Hide for lasso, text, image, and eraser tools)
+                if viewModel.selectedTool == .pen || viewModel.selectedTool == .pencil || viewModel.selectedTool == .marker {
+                    Divider().opacity(0.1)
+
+                    PropertySection(title: "Assistants") {
+                        HStack {
+                            Text("Palm Rejection")
+                                .font(.gFootnote)
+                                .foregroundColor(.gTextSecondary)
+                            Spacer()
+                            Toggle("Palm Rejection", isOn: $viewModel.palmRejectionEnabled)
+                                .toggleStyle(SwitchToggleStyle(tint: .gPrimary))
+                                .labelsHidden()
+                                .scaleEffect(0.8)
+                        }
+                        .accessibilityLabel("Palm rejection")
+                        .accessibilityHint(viewModel.palmRejectionEnabled ? "On. Double tap to allow finger drawing" : "Off. Double tap to enable palm rejection")
+
+                        HStack {
+                            Text("Shape Snap")
+                                .font(.gFootnote)
+                                .foregroundColor(.gTextSecondary)
+                            Spacer()
+                            Toggle("Shape Snapping", isOn: $viewModel.isShapeSnappingEnabled)
+                                .toggleStyle(SwitchToggleStyle(tint: .gPrimary))
+                                .labelsHidden()
+                                .scaleEffect(0.8)
+                        }
+                        .accessibilityLabel("Shape snapping")
+                        .accessibilityHint(viewModel.isShapeSnappingEnabled ? "On. Double tap to disable" : "Off. Double tap to enable shape snapping")
+                    }
                 }
-
-                Divider().opacity(0.1)
-
-                PropertySection(title: "Stroke Width") {
-                    strokeWidthSelector
-                }
-
-                Divider().opacity(0.1)
-
-                PropertySection(title: "Opacity") {
-                    opacitySlider
-                }
-            }
-
-            Divider().opacity(0.1)
-
-            // Drawing Assistants
-            PropertySection(title: "Assistants") {
-                HStack {
-                    Text("Palm Rejection")
-                        .font(.gFootnote)
-                        .foregroundColor(.gTextSecondary)
-                    Spacer()
-                    Toggle("Palm Rejection", isOn: $viewModel.palmRejectionEnabled)
-                        .toggleStyle(SwitchToggleStyle(tint: .gPrimary))
-                        .labelsHidden()
-                        .scaleEffect(0.8)
-                }
-                .accessibilityLabel("Palm rejection")
-                .accessibilityHint(viewModel.palmRejectionEnabled ? "On. Double tap to allow finger drawing" : "Off. Double tap to enable palm rejection")
-
-                HStack {
-                    Text("Shape Snap")
-                        .font(.gFootnote)
-                        .foregroundColor(.gTextSecondary)
-                    Spacer()
-                    Toggle("Shape Snapping", isOn: $viewModel.isShapeSnappingEnabled)
-                        .toggleStyle(SwitchToggleStyle(tint: .gPrimary))
-                        .labelsHidden()
-                        .scaleEffect(0.8)
-                }
-                .accessibilityLabel("Shape snapping")
-                .accessibilityHint(viewModel.isShapeSnappingEnabled ? "On. Double tap to disable" : "Off. Double tap to enable shape snapping")
             }
         }
         .padding(GSpacing.md)
@@ -132,6 +140,8 @@ struct PropertiesPanel: View {
 
     var colorGrid: some View {
         let cols = [GridItem(.adaptive(minimum: 22), spacing: GRadius.xs)]
+        let isCustomColorSelected = !Color.strokePresets.contains(where: { colorMatches(viewModel.strokeColor, $0) })
+        
         return LazyVGrid(columns: cols, alignment: .leading, spacing: GRadius.xs) {
             ForEach(Color.strokePresets, id: \.hashValue) { color in
                 ColorSwatch(
@@ -142,11 +152,28 @@ struct PropertiesPanel: View {
                 }
             }
 
-            // Custom color via system ColorPicker
-            ColorPicker("", selection: $viewModel.strokeColor, supportsOpacity: false)
-                .labelsHidden()
-                .frame(width: 22, height: 22)
-                .scaleEffect(1.2)
+            // Custom color via system ColorPicker disguised as a rainbow swatch
+            ZStack {
+                Circle()
+                    .fill(
+                        AngularGradient(
+                            colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
+                            center: .center
+                        )
+                    )
+                    .frame(width: 22, height: 22)
+                
+                if isCustomColorSelected {
+                    Circle()
+                        .stroke(Color.gPrimary, lineWidth: 2.5)
+                        .frame(width: 26, height: 26) // 2pt gap (22 + 2*2)
+                }
+                
+                ColorPicker("", selection: $viewModel.strokeColor, supportsOpacity: false)
+                    .labelsHidden()
+                    .frame(width: 22, height: 22)
+                    .opacity(0.01) // completely transparent but still tappable
+            }
         }
     }
 
@@ -262,36 +289,167 @@ struct PropertiesPanel: View {
 
     // MARK: - Lasso Actions
 
+    var blockActions: some View {
+        HStack(spacing: GSpacing.sm) {
+            Button(action: { /* Copy logic */ }) {
+                Image(systemName: "doc.on.doc")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.gElevated)
+                    .cornerRadius(8)
+            }
+            Button(action: { /* Paste logic */ }) {
+                Image(systemName: "doc.on.clipboard")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.gElevated)
+                    .cornerRadius(8)
+            }
+            Button(action: { /* Delete logic */ }) {
+                Image(systemName: "trash")
+                    .foregroundColor(.red)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.gElevated)
+                    .cornerRadius(8)
+            }
+        }
+        .foregroundColor(.gTextPrimary)
+    }
+
     var lassoActions: some View {
         VStack(spacing: GSpacing.xs) {
-            let actions: [(String, String, () -> Void)] = [
-                ("Copy", "doc.on.doc", { viewModel.performLassoAction(#selector(UIResponder.copy(_:))) }),
-                ("Paste", "doc.on.clipboard", { viewModel.performLassoAction(#selector(UIResponder.paste(_:))) }),
-                ("Duplicate", "plus.square.on.square", { viewModel.performLassoAction(#selector(UIResponder.duplicate(_:))) }),
-                ("Delete", "trash", { viewModel.performLassoAction(#selector(UIResponder.delete(_:))) })
+            Button(action: { viewModel.performLassoAction(NSSelectorFromString("selectAll:")) }) {
+                Text("Select All")
+                    .font(.custom("PlusJakartaSans-Medium", size: 14))
+                    .foregroundColor(.gPrimary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: GRadius.sm)
+                            .stroke(Color.gPrimary, lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+
+            let actions: [(String, String, () -> Void, Bool)] = [
+                ("Cut", "scissors", { viewModel.performLassoAction(#selector(UIResponder.cut(_:))) }, false),
+                ("Copy", "doc.on.doc", { viewModel.performLassoAction(#selector(UIResponder.copy(_:))) }, false),
+                ("Paste", "doc.on.clipboard", { viewModel.performLassoAction(#selector(UIResponder.paste(_:))) }, true),
+                ("Duplicate", "plus.square.on.square", { viewModel.performLassoAction(NSSelectorFromString("duplicate:")) }, false),
+                ("Delete", "trash", { viewModel.performLassoAction(#selector(UIResponder.delete(_:))) }, false)
             ]
             
-            ForEach(actions, id: \.0) { action in
-                Button(action: action.2) {
-                    HStack {
-                        Image(systemName: action.1)
-                            .frame(width: 24)
-                        Text(action.0)
-                            .font(.gFootnote)
-                        Spacer()
+            // 3x2 Grid for Lasso Actions
+            VStack(spacing: 6) {
+                // Top row (3 items)
+                HStack(spacing: 6) {
+                    ForEach(0..<3, id: \.self) { i in
+                        lassoActionButton(action: actions[i])
                     }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(Color.gElevated.opacity(0.5))
-                    .cornerRadius(GRadius.sm)
-                    .foregroundColor(.gTextPrimary)
+                }
+                
+                // Bottom row (2 items)
+                HStack(spacing: 6) {
+                    ForEach(3..<5, id: \.self) { i in
+                        lassoActionButton(action: actions[i])
+                    }
+                    // Empty spacer slot to keep the 3-column width alignment
+                    Color.clear
+                        .frame(maxWidth: .infinity)
                 }
             }
-            Text("Tip: Make a selection with the lasso tool before using these actions.")
-                .font(.gMonoCaption)
-                .foregroundColor(.gTextSecondary)
+            
+            HStack(spacing: 6) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: 13))
+                Text("Make a selection with the lasso tool before using these actions")
+                    .font(.custom("PlusJakartaSans-Regular", size: 13))
+                    .italic()
+            }
+            .foregroundColor(.gTextTertiary)
+            .padding(.top, 4)
+                
+            if !viewModel.selectedElementIds.isEmpty || !viewModel.selectedStrokeIndices.isEmpty {
+                Divider()
+
+                Text("RESIZE SELECTION")
+                    .font(.caption.weight(.semibold))
+                    .foregroundColor(.secondary)
+                    .tracking(0.5)
+                    .padding(.top, 8)
+
+                // Scale slider — live preview via selectionScale
+                HStack {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                        .foregroundColor(.secondary)
+                        .frame(width: 20)
+                    Slider(
+                        value: $viewModel.selectionScale,
+                        in: 0.25...3.0,
+                        step: 0.05
+                    )
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .foregroundColor(.secondary)
+                        .frame(width: 20)
+                }
+
+                Text("\(Int(viewModel.selectionScale * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                // Apply button — commits the slider value
+                Button {
+                    viewModel.applySelectionResize(scale: viewModel.selectionScale)
+                    viewModel.isResizing = false
+                } label: {
+                    Text("Apply Resize")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
                 .padding(.top, 4)
+
+                // Resize handle button — enters interactive resize mode on canvas
+                Button {
+                    viewModel.isResizing = true
+                    viewModel.computeSelectionBoundingBox()
+                } label: {
+                    Label("Resize on Canvas", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.subheadline)
+                        .foregroundColor(.blue)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+            }
         }
+    }
+
+    private func lassoActionButton(action: (String, String, () -> Void, Bool)) -> some View {
+        Button(action: action.2) {
+            VStack(spacing: 4) {
+                Image(systemName: action.1)
+                    .font(.system(size: 20))
+                Text(action.0)
+                    .font(.system(size: 11))
+                    .foregroundColor(.gTextSecondary)
+            }
+            .foregroundColor(action.0 == "Delete" ? .red : .gTextPrimary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 56)
+            .background(Color.gElevated)
+            .cornerRadius(GRadius.sm)
+        }
+        .buttonStyle(.plain)
+        // Disable paste if no content (simulated check here, update with actual logic)
+        .disabled(action.3 && !UIPasteboard.general.hasStrings && !UIPasteboard.general.hasImages)
+        .opacity((action.3 && !UIPasteboard.general.hasStrings && !UIPasteboard.general.hasImages) ? 0.35 : 1.0)
     }
 
     // MARK: - Opacity Slider
@@ -332,15 +490,38 @@ struct PropertiesPanel: View {
 
 struct PropertySection<Content: View>: View {
     let title: String
+    var showCloseButton: Bool = false
+    var onClose: (() -> Void)? = nil
     @ViewBuilder let content: () -> Content
 
     var body: some View {
         VStack(alignment: .leading, spacing: GSpacing.xs) {
-            Text(title)
-                .font(.gCaption2.weight(.semibold))
-                .foregroundColor(.gTextSecondary)
-                .textCase(.uppercase)
-                .tracking(0.4)
+            HStack(alignment: .center) {
+                Text(title)
+                    .font(.custom("PlusJakartaSans-Medium", size: 11))
+                    .foregroundColor(.gTextTertiary)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                
+                if showCloseButton {
+                    Spacer()
+                    Button {
+                        onClose?()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundColor(.gTextSecondary)
+                            .frame(width: 28, height: 28)
+                            .background(Circle().fill(Color.gElevated))
+                            .contentShape(Circle())
+                    }
+                    .accessibilityLabel("Close properties panel")
+                    .accessibilityHint("Double tap to hide properties")
+                }
+            }
+            .padding(.top, GSpacing.md)
+            .padding(.bottom, 4)
+            
             content()
         }
     }
@@ -355,30 +536,25 @@ struct ColorSwatch: View {
         Button(action: onTap) {
             ZStack {
                 let isDark = color.hexString == "#000001" || color == .black
-                let isLight = color.hexString == "#FFFFFE" || color == .white
                 
                 if isDark {
-                    RoundedRectangle(cornerRadius: GRadius.xs - 1, style: .continuous)
+                    Circle()
                         .fill(color)
                         .frame(width: 22, height: 22)
                         .overlay(
-                            RoundedRectangle(cornerRadius: GRadius.xs - 1)
+                            Circle()
                                 .stroke(Color.gBorderStrong, lineWidth: 0.5)
                         )
                 } else {
-                    RoundedRectangle(cornerRadius: GRadius.xs - 1, style: .continuous)
+                    Circle()
                         .fill(color)
                         .frame(width: 22, height: 22)
                 }
 
                 if isSelected {
-                    RoundedRectangle(cornerRadius: GRadius.xs - 1, style: .continuous)
-                        .stroke(.white, lineWidth: 2)
-                        .frame(width: 22, height: 22)
-
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8, weight: .black))
-                        .foregroundColor(isLight || color == .yellow ? .black : .white)
+                    Circle()
+                        .stroke(Color.gPrimary, lineWidth: 2.5)
+                        .frame(width: 26, height: 26) // 22 width + 2pt padding on each side
                 }
             }
         }

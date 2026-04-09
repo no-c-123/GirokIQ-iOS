@@ -12,9 +12,9 @@ struct SidebarView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.colorScheme) private var colorScheme
 
-    @State private var showNewFolderAlert = false
-    @State private var newFolderName = ""
     @State private var showSettings = false
+    @State private var folderToRename: Folder?
+    @State private var renameFolderText = ""
 
     var body: some View {
         List(selection: $selectedFolderId) {
@@ -50,6 +50,20 @@ struct SidebarView: View {
                         .accessibilityLabel("\(folder.name) folder, \(viewModel.notebooksInFolder(folder.id).count) notebooks")
                         .accessibilityHint("Double tap to filter by this folder")
                         .accessibilityAddTraits(selectedFolderId == folder.id ? .isSelected : [])
+                        .contextMenu {
+                            Button {
+                                renameFolderText = folder.name
+                                folderToRename = folder
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                Task { await viewModel.deleteFolder(folder) }
+                            } label: {
+                                Label("Delete Folder", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
@@ -81,14 +95,6 @@ struct SidebarView: View {
             // MARK: - Actions
             Section {
                 Button {
-                    showNewFolderAlert = true
-                } label: {
-                    Label("New Folder", systemImage: "folder.badge.plus")
-                        .foregroundColor(.gPrimary)
-                }
-                .accessibilityHint("Double tap to create a new folder")
-
-                Button {
                     showSettings = true
                 } label: {
                     Label("Settings", systemImage: "gearshape")
@@ -99,18 +105,26 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("GirokIQ")
-        .alert("New Folder", isPresented: $showNewFolderAlert) {
-            TextField("Folder name", text: $newFolderName)
-            Button("Create") {
-                if let userId = authViewModel.currentUserId, !newFolderName.isEmpty {
-                    Task { await viewModel.createFolder(userId: userId, name: newFolderName) }
-                }
-                newFolderName = ""
-            }
-            Button("Cancel", role: .cancel) { newFolderName = "" }
-        }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .alert("Rename Folder", isPresented: Binding(
+            get: { folderToRename != nil },
+            set: { if !$0 { folderToRename = nil } }
+        )) {
+            TextField("Folder name", text: $renameFolderText)
+            Button("Rename") {
+                if let folder = folderToRename {
+                    let nameToSave = renameFolderText
+                    Task { await viewModel.renameFolder(folder, to: nameToSave) }
+                }
+                folderToRename = nil
+                renameFolderText = ""
+            }
+            Button("Cancel", role: .cancel) { 
+                folderToRename = nil
+                renameFolderText = ""
+            }
         }
     }
 
