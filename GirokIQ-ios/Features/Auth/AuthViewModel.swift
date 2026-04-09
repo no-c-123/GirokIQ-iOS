@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Combine
 import Supabase
 import AuthenticationServices
@@ -94,7 +95,7 @@ final class AuthViewModel: ObservableObject {
         isLoading = false
     }
 
-    // MARK: - Sign in with Apple
+    // MARK: - Sign in with Apple (Custom Button)
 
     func signInWithApple() async {
         isLoading = true
@@ -120,6 +121,75 @@ final class AuthViewModel: ObservableObject {
         }
 
         isLoading = false
+    }
+
+    // MARK: - Sign in with Apple (Native Button)
+
+    func handleAppleSignIn(result: Result<ASAuthorization, Error>, nonce: String) async {
+        isLoading = true
+        errorMessage = nil
+
+        do {
+            switch result {
+            case .success(let authorization):
+                guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+                      let tokenData = credential.identityToken,
+                      let identityToken = String(data: tokenData, encoding: .utf8) else {
+                    throw AppleSignInError.missingToken
+                }
+
+                let session = try await supabase.auth.signInWithIdToken(
+                    credentials: .init(
+                        provider: .apple,
+                        idToken: identityToken,
+                        nonce: nonce
+                    )
+                )
+                applyUser(session.user)
+                await performPostSignInSync()
+
+            case .failure(let error):
+                if let asError = error as? ASAuthorizationError, asError.code == .canceled {
+                    // User canceled — no error message needed
+                } else {
+                    throw error
+                }
+            }
+        } catch {
+            self.errorMessage = error.localizedDescription
+        }
+
+        isLoading = false
+    }
+
+    // MARK: - Helper to generate nonce
+
+    func generateNonce() -> String {
+        return randomNonceString()
+    }
+
+    func sha256(_ input: String) -> String {
+        let data = Data(input.utf8)
+        let hash = CryptoKit.SHA256.hash(data: data)
+        return hash.compactMap { String(format: "%02x", $0) }.joined()
+    }
+
+    private func randomNonceString(length: Int = 32) -> String {
+        precondition(length > 0)
+        let charset: [Character] =
+            Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        var remainingLength = length
+
+        while remainingLength > 0 {
+            var random: UInt8 = 0
+            _ = SecRandomCopyBytes(kSecRandomDefault, 1, &random)
+            if random < charset.count {
+                result.append(charset[Int(random)])
+                remainingLength -= 1
+            }
+        }
+        return result
     }
 
     // MARK: - Post-Sign-In Sync
@@ -151,7 +221,7 @@ final class AuthViewModel: ObservableObject {
 
 final class KeychainService {
     static let shared = KeychainService()
-    private let service = "com.girokiq.app"
+    private let service = "app.girokiq.app"
 
     func set(_ value: String, forKey key: String) {
         guard let data = value.data(using: .utf8) else { return }

@@ -1,4 +1,5 @@
 import SwiftUI
+import AuthenticationServices
 
 struct AuthView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
@@ -8,6 +9,7 @@ struct AuthView: View {
     @State private var password = ""
     @State private var displayName = ""
     @State private var showPassword = false
+    @State private var currentNonce = ""
 
     var body: some View {
         ZStack {
@@ -42,12 +44,12 @@ struct AuthView: View {
                     }
 
                     Text("GirokIQ")
-                        .font(.gLargeTitle)
+                        .font(.custom("InstrumentSerif-Regular", size: 36))
                         .foregroundColor(.gTextPrimary(for: colorScheme))
 
                     Text("Your intelligent canvas")
-                        .font(.gSubheadline)
-                        .foregroundColor(.gTextTertiary(for: colorScheme))
+                        .font(.custom("PlusJakartaSans-Regular", size: 15))
+                        .foregroundColor(.gTextSecondary(for: colorScheme))
                 }
                 .padding(.bottom, GSpacing.xxxl)
 
@@ -58,8 +60,6 @@ struct AuthView: View {
                         authTabButton("Sign In", isSelected: !isSignUp) { isSignUp = false }
                         authTabButton("Create Account", isSelected: isSignUp) { isSignUp = true }
                     }
-                    .background(Color.gElevated(for: colorScheme).opacity(0.5))
-                    .clipShape(RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous))
                     .padding(.bottom, GSpacing.xxs)
 
                     // Fields
@@ -115,28 +115,22 @@ struct AuthView: View {
                         }
                     } label: {
                         ZStack {
-                            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                                .fill(
-                                    LinearGradient(
-                                        colors: [.gPrimary, .gSecondary],
-                                        startPoint: .leading,
-                                        endPoint: .trailing
-                                    )
-                                )
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color(hex: "#C9A84C"))
 
                             if authViewModel.isLoading {
                                 ProgressView()
                                     .tint(.white)
                             } else {
                                 Text(isSignUp ? "Create Account" : "Sign In")
-                                    .font(.gCallout.weight(.semibold))
+                                    .font(.custom("PlusJakartaSans-Medium", size: 16))
                                     .foregroundColor(.white)
                             }
                         }
                         .frame(height: 50)
                     }
+                    .buttonStyle(.plain)
                     .disabled(authViewModel.isLoading || email.isEmpty || password.isEmpty)
-                    .opacity(email.isEmpty || password.isEmpty ? 0.6 : 1.0)
                     .animation(GAnimation.motionSafe(GAnimation.springFast), value: authViewModel.isLoading)
                     .accessibilityLabel(isSignUp ? "Create account" : "Sign in")
                     .accessibilityHint(authViewModel.isLoading ? "Loading" : "Double tap to \(isSignUp ? "create account" : "sign in")")
@@ -155,40 +149,29 @@ struct AuthView: View {
                     }
 
                     // Sign in with Apple
-                    Button {
+                    SignInWithAppleButton(.signIn) { request in
+                        let nonce = authViewModel.generateNonce()
+                        currentNonce = nonce
+                        request.requestedScopes = [.fullName, .email]
+                        request.nonce = authViewModel.sha256(nonce)
+                    } onCompletion: { result in
                         Task {
-                            await authViewModel.signInWithApple()
+                            await authViewModel.handleAppleSignIn(result: result, nonce: currentNonce)
                         }
-                    } label: {
-                        HStack(spacing: GSpacing.sm) {
-                            Image(systemName: "apple.logo")
-                                .font(.gBody.weight(.medium))
-                            Text("Sign in with Apple")
-                                .font(.gCallout.weight(.semibold))
-                        }
-                        .foregroundColor(.gTextPrimary(for: colorScheme))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                                .fill(Color.gElevated(for: colorScheme))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                                        .stroke(Color.gBorder(for: colorScheme), lineWidth: 1)
-                                )
-                        )
                     }
+                    .signInWithAppleButtonStyle(.white)
+                    .frame(height: 50)
                     .disabled(authViewModel.isLoading)
                     .accessibilityLabel("Sign in with Apple")
                     .accessibilityHint("Double tap to sign in using your Apple ID")
                 }
                 .padding(GSpacing.xl)
                 .background(
-                    RoundedRectangle(cornerRadius: GRadius.xl, style: .continuous)
-                        .fill(Color.gSurface(for: colorScheme))
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Color(light: .white, dark: Color(hex: "#1A1A18")))
                         .overlay(
-                            RoundedRectangle(cornerRadius: GRadius.xl, style: .continuous)
-                                .stroke(Color.gBorder(for: colorScheme), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
                         )
                 )
                 .padding(.horizontal, GSpacing.xl)
@@ -198,11 +181,11 @@ struct AuthView: View {
                 HStack(spacing: 4) {
                     Text("By continuing, you agree to our")
                         .foregroundColor(.gTextTertiary(for: colorScheme))
-                    Link("Terms", destination: URL(string: "https://girokiq.com/terms")!)
+                    Link("Terms", destination: URL(string: "https://GirokIQ.app/terms")!)
                         .foregroundColor(.gPrimary)
                     Text("&")
                         .foregroundColor(.gTextTertiary(for: colorScheme))
-                    Link("Privacy Policy", destination: URL(string: "https://girokiq.com/privacy")!)
+                    Link("Privacy Policy", destination: URL(string: "https://GirokIQ.app/privacy")!)
                         .foregroundColor(.gPrimary)
                 }
                 .font(.gCaption2)
@@ -217,18 +200,20 @@ struct AuthView: View {
     func authTabButton(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
-                .font(.gFootnote.weight(.medium))
-                .foregroundColor(isSelected ? .white : .gTextSecondary(for: colorScheme))
+                .font(isSelected ? .custom("PlusJakartaSans-Medium", size: 15) : .custom("PlusJakartaSans-Regular", size: 15))
+                .foregroundColor(isSelected ? .gTextPrimary(for: colorScheme) : .gTextSecondary(for: colorScheme))
+                .padding(.bottom, 8)
+                .overlay(alignment: .bottom) {
+                    if isSelected {
+                        Rectangle()
+                            .frame(height: 2)
+                            .foregroundColor(Color(hex: "#C9A84C"))
+                    }
+                }
+                .padding(.top, GSpacing.sm)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, GSpacing.xs)
-                .background(
-                    isSelected ?
-                    RoundedRectangle(cornerRadius: GRadius.xs, style: .continuous)
-                        .fill(Color.gPrimary) : nil
-                )
                 .animation(GAnimation.motionSafe(GAnimation.springFast), value: isSelected)
         }
-        .padding(GSpacing.xxs)
         .minTapTarget()
         .accessibilityLabel(title)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -246,6 +231,7 @@ struct AuthTextField: View {
     var trailingIcon: String? = nil
     var trailingAction: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: GSpacing.sm) {
@@ -257,11 +243,13 @@ struct AuthTextField: View {
             Group {
                 if isSecure {
                     SecureField(placeholder, text: $text)
+                        .focused($isFocused)
                 } else {
                     TextField(placeholder, text: $text)
                         .keyboardType(keyboardType)
                         .autocapitalization(.none)
                         .autocorrectionDisabled()
+                        .focused($isFocused)
                 }
             }
             .font(.gSubheadline)
@@ -281,11 +269,11 @@ struct AuthTextField: View {
         .padding(.horizontal, GSpacing.md)
         .padding(.vertical, 13)
         .background(
-            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                .fill(Color.gElevated(for: colorScheme).opacity(0.5))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.gElevated(for: colorScheme))
                 .overlay(
-                    RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                        .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(isFocused ? Color(hex: "#C9A84C") : Color.gBorder(for: colorScheme), lineWidth: isFocused ? 1 : 0.5)
                 )
         )
     }
