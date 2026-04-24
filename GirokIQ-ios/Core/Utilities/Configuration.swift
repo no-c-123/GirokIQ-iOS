@@ -35,4 +35,42 @@ enum Configuration {
         // Fallback for development — remove before production
         return "sb_publishable_423Dnw91Y5cLpTMC7wCuMA_3cAuqY-t"
     }
+
+    static var anthropicAPIKey: String {
+        guard let info = Bundle.main.infoDictionary else { return "" }
+
+        if let key = info["ANTHROPIC_API_KEY"] as? String, !key.isEmpty {
+            return key
+        }
+
+        if let anthropic = info["ANTHROPIC"] as? [String: Any],
+           let api = anthropic["API"] as? [String: Any],
+           let key = api["KEY"] as? String,
+           !key.isEmpty {
+            return key
+        }
+
+        func findAnthropicKey(in value: Any) -> String? {
+            if let s = value as? String, s.hasPrefix("sk-ant-"), !s.isEmpty {
+                return s
+            }
+            if let dict = value as? [String: Any] {
+                for (_, v) in dict {
+                    if let found = findAnthropicKey(in: v) { return found }
+                }
+            }
+            if let arr = value as? [Any] {
+                for v in arr {
+                    if let found = findAnthropicKey(in: v) { return found }
+                }
+            }
+            return nil
+        }
+
+        if let found = findAnthropicKey(in: info) {
+            return found
+        }
+
+        return ""
+    }
 }

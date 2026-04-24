@@ -145,37 +145,24 @@ struct SettingsView: View {
             Toggle("Enable AI Assistant", isOn: $viewModel.aiEnabled)
                 .accessibilityHint("Show the AI assistant button on the canvas toolbar")
 
-            if viewModel.hasAPIKey {
-                HStack {
-                    Text("API Key")
-                    Spacer()
-                    Text("••••••••")
+            HStack {
+                Text("Status")
+                Spacer()
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 7, height: 7)
+                    Text("Connected")
+                        .font(.gCaption)
                         .foregroundColor(.gTextSecondary(for: colorScheme))
                 }
-                Button("Remove API Key", role: .destructive) {
-                    viewModel.removeAPIKey()
-                }
-                .accessibilityHint("Double tap to remove the stored API key")
-            } else {
-                HStack {
-                    SecureField("Anthropic API Key", text: $viewModel.apiKeyText)
-                        .textFieldStyle(.plain)
-                        .font(.gSubheadline)
-                        .accessibilityLabel("API key input")
-                        .accessibilityHint("Enter your Anthropic API key")
-                    Button("Save") {
-                        viewModel.saveAPIKey()
-                    }
-                    .disabled(viewModel.apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .foregroundColor(.gPrimary)
-                    .accessibilityLabel("Save API key")
-                    .accessibilityHint("Double tap to save the entered API key to Keychain")
-                }
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("AI status: Connected")
         } header: {
             Text("AI Assistant")
         } footer: {
-            Text("Your API key is stored securely in the Keychain and never leaves this device.")
+            Text("AI features are built in — no setup required.")
         }
     }
 

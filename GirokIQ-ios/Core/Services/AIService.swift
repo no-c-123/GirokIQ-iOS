@@ -2,8 +2,8 @@ import Foundation
 
 // MARK: - AI Service
 
-/// Calls the Anthropic Messages API (or OpenAI-compatible endpoint) via direct URLSession.
-/// API key is stored in Keychain — never hardcoded.
+/// Calls the Anthropic Messages API via direct URLSession.
+/// API key is sourced from Configuration (xcconfig → Info.plist).
 final class AIService {
     private static let endpointURL: URL = {
         guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
@@ -12,22 +12,20 @@ final class AIService {
         return url
     }()
     private var endpoint: URL { Self.endpointURL }
-    private let model = "claude-sonnet-4-20250514"
-    private let keychain = KeychainService.shared
-    private let keychainKey = "anthropic_api_key"
+    private let defaultModel = "claude-sonnet-4-20250514"
+
+    private var resolvedAPIKey: String { Configuration.anthropicAPIKey }
 
     // MARK: - API Key Management
 
     var hasAPIKey: Bool {
-        keychain.get(keychainKey) != nil
+        !resolvedAPIKey.isEmpty
     }
 
     func setAPIKey(_ key: String) {
-        keychain.set(key, forKey: keychainKey)
     }
 
     func removeAPIKey() {
-        keychain.delete(keychainKey)
     }
 
     // MARK: - Chat Completion
@@ -37,11 +35,11 @@ final class AIService {
     func complete(
         systemPrompt: String,
         messages: [AIMessage],
-        imageData: Data? = nil
+        imageData: Data? = nil,
+        model: String? = nil
     ) async throws -> String {
-        guard let apiKey = keychain.get(keychainKey) else {
-            throw AIError.noAPIKey
-        }
+        let apiKey = resolvedAPIKey
+        guard !apiKey.isEmpty else { throw AIError.noAPIKey }
 
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -52,7 +50,8 @@ final class AIService {
         let body = buildRequestBody(
             systemPrompt: systemPrompt,
             messages: messages,
-            imageData: imageData
+            imageData: imageData,
+            model: model ?? defaultModel
         )
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -74,11 +73,13 @@ final class AIService {
     /// Stream a response from Claude for real-time display in the AI panel.
     func stream(
         systemPrompt: String,
-        messages: [AIMessage]
+        messages: [AIMessage],
+        model: String? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
-                guard let apiKey = self.keychain.get(self.keychainKey) else {
+                let apiKey = self.resolvedAPIKey
+                guard !apiKey.isEmpty else {
                     continuation.finish(throwing: AIError.noAPIKey)
                     return
                 }
@@ -92,7 +93,8 @@ final class AIService {
                 var body = self.buildRequestBody(
                     systemPrompt: systemPrompt,
                     messages: messages,
-                    imageData: nil
+                    imageData: nil,
+                    model: model ?? self.defaultModel
                 )
                 body["stream"] = true
                 request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -132,7 +134,8 @@ final class AIService {
     private func buildRequestBody(
         systemPrompt: String,
         messages: [AIMessage],
-        imageData: Data?
+        imageData: Data?,
+        model: String
     ) -> [String: Any] {
         var apiMessages: [[String: Any]] = messages.map { msg in
             if let data = msg.imageData ?? (msg.role == .user ? imageData : nil) {
@@ -193,7 +196,7 @@ enum AIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "No API key configured. Add your Anthropic API key in Settings."
+            return "AI service is not configured (missing ANTHROPIC_API_KEY). Please rebuild the app or contact support."
         case .invalidResponse:
             return "Invalid response from AI service."
         case .apiError(let code, let message):

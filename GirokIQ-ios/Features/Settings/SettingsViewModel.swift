@@ -26,8 +26,6 @@ final class SettingsViewModel: ObservableObject {
     // MARK: - AI
 
     @AppStorage("aiEnabled") var aiEnabled: Bool = true
-    @Published var apiKeyText: String = ""
-    @Published var hasAPIKey: Bool = false
 
     // MARK: - Security
 
@@ -38,7 +36,6 @@ final class SettingsViewModel: ObservableObject {
     @Published var storageUsed: Int64 = 0
     @Published var notebookCount: Int = 0
 
-    private let aiService = AIService()
     private let biometricAuth = BiometricAuthService()
 
     var canUseBiometrics: Bool { biometricAuth.canUseBiometrics() }
@@ -47,22 +44,6 @@ final class SettingsViewModel: ObservableObject {
     }
 
     init() {
-        hasAPIKey = aiService.hasAPIKey
-    }
-
-    // MARK: - AI Key Management
-
-    func saveAPIKey() {
-        let key = apiKeyText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { return }
-        aiService.setAPIKey(key)
-        apiKeyText = ""
-        hasAPIKey = true
-    }
-
-    func removeAPIKey() {
-        aiService.removeAPIKey()
-        hasAPIKey = false
     }
 
     // MARK: - Data Export
