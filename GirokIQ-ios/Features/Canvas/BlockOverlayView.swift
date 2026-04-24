@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// A transparent overlay that sits on top of PKCanvasView to render and manage 
 /// non-ink CanvasElements (Text, Images, etc.)
@@ -15,6 +16,10 @@ struct BlockOverlayView: View {
                     .contentShape(Rectangle())
                     .onTapGesture {
                         viewModel.selectedElementIds = []
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil
+                        )
                     }
 
                 // Lasso selection rect
@@ -120,6 +125,9 @@ struct BlockElementView: View {
     @FocusState private var isFocused: Bool
     @GestureState private var dragOffset: CGSize = .zero
     @GestureState private var resizeDelta: CGSize = .zero
+    @State private var removalTask: Task<Void, Never>? = nil
+    @State private var hasCommittedText: Bool = false
+    @State private var loadedImage: UIImage? = nil
 
     var isSelected: Bool {
         viewModel.selectedElementIds.contains(element.id)
@@ -131,7 +139,9 @@ struct BlockElementView: View {
         }
         .frame(
             width: max(60, CGFloat(element.width ?? 200) + (isSelected ? resizeDelta.width : 0)),
-            height: max(60, CGFloat(element.height ?? 50) + (isSelected ? resizeDelta.height : 0))
+            height: element.type == "text"
+                ? nil
+                : max(60, CGFloat(element.height ?? 200) + (isSelected ? resizeDelta.height : 0))
         )
         .overlay(selectionOverlay)
         .position(
@@ -144,6 +154,28 @@ struct BlockElementView: View {
             isFocused = element.type == "text"
         }
         .gesture(dragGesture)
+        .task(id: element.content) {
+            guard element.type == "image", let fileName = element.content,
+                  !fileName.isEmpty else { return }
+
+            if let cached = ImageCache.shared.retrieve(for: fileName) {
+                loadedImage = cached
+                return
+            }
+
+            let fileURL = FileManager.default
+                .urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(fileName)
+
+            let img = await Task.detached(priority: .userInitiated) {
+                UIImage(contentsOfFile: fileURL.path)
+            }.value
+
+            guard let img else { return }
+
+            ImageCache.shared.store(img, for: fileName)
+            loadedImage = img
+        }
     }
 
     // MARK: - Content
@@ -152,8 +184,13 @@ struct BlockElementView: View {
     var elementContent: some View {
         if element.type == "text" {
             TextField("", text: Binding(
-                get: { element.content ?? "" },
-                set: { element.content = $0 }
+                get: {
+                    let raw = element.content ?? ""
+                    return raw == "\u{200B}" ? "" : raw
+                },
+                set: { newVal in
+                    element.content = newVal.isEmpty ? "\u{200B}" : newVal
+                }
             ), axis: .vertical)
             .focused($isFocused)
             .font(.system(size: element.style?.fontSize != nil ? CGFloat(element.style!.fontSize!) : 24))
@@ -161,27 +198,37 @@ struct BlockElementView: View {
             .padding(8)
             .background(Color.clear)
             .onChange(of: isFocused) { _, focused in
-                if !focused && (element.content ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    viewModel.removeElement(id: element.id)
+                removalTask?.cancel()
+                guard !focused else { return }
+                let real = (element.content ?? "")
+                    .replacingOccurrences(of: "\u{200B}", with: "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if real.isEmpty {
+                    removalTask = Task {
+                        try? await Task.sleep(nanoseconds: 150_000_000)
+                        guard !Task.isCancelled else { return }
+                        viewModel.removeElement(id: element.id)
+                    }
+                } else {
+                    viewModel.updateElement(element)
+                    hasCommittedText = true
                 }
             }
             .onAppear {
-                if (element.content ?? "").isEmpty { isFocused = true }
+                let raw = element.content ?? ""
+                let isEmpty = raw.isEmpty || raw == "\u{200B}"
+                if isEmpty { isFocused = true }
             }
         } else if element.type == "image" {
-            if let content = element.content {
-                let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent(content)
-                if let uiImage = UIImage(contentsOfFile: fileURL.path) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .clipped()
-                } else {
-                    imageMissing
-                }
+            if let img = loadedImage {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .clipped()
             } else {
-                imageMissing
+                Rectangle()
+                    .fill(Color.gray.opacity(0.15))
+                    .overlay(ProgressView().tint(.white))
             }
         }
     }
@@ -226,17 +273,21 @@ struct BlockElementView: View {
                 let dw = value.translation.width / viewModel.canvasScale
                 let dh = value.translation.height / viewModel.canvasScale
                 let oldW = element.width ?? 200
-                let oldH = element.height ?? 50
-                
                 let newW = max(60, oldW + dw)
-                let newH = max(60, oldH + dh)
-                
-                // Shift center so the top-left remains fixed
-                element.positionX += (newW - oldW) / 2
-                element.positionY += (newH - oldH) / 2
-                
-                element.width = newW
-                element.height = newH
+                if element.type == "text" {
+                    element.positionX += (newW - oldW) / 2
+                    element.width = newW
+                } else {
+                    let oldH = element.height ?? 50
+                    let newH = max(60, oldH + dh)
+                    
+                    // Shift center so the top-left remains fixed
+                    element.positionX += (newW - oldW) / 2
+                    element.positionY += (newH - oldH) / 2
+                    
+                    element.width = newW
+                    element.height = newH
+                }
                 element.updatedAt = Date()
                 viewModel.updateElement(element)
             }

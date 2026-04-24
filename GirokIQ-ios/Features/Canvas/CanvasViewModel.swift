@@ -64,6 +64,7 @@ final class CanvasViewModel: ObservableObject {
     @Published var backgroundPattern: BackgroundPattern = .grid
     @Published var canvasOffset: CGSize = .zero
     @Published var canvasScale: CGFloat = 1.0
+    @Published var canvasViewSize: CGSize = UIScreen.main.bounds.size
     @Published var showProperties: Bool = true
     @Published var isLassoActive: Bool = false
     @Published var selectedStrokes: Set<UUID> = []
@@ -281,26 +282,30 @@ final class CanvasViewModel: ObservableObject {
                 print("Failed to save image locally: \(error)")
                 return
             }
+
+            ImageCache.shared.store(image, for: fileName)
             
             Task { @MainActor in
                 // Calculate center of the visible canvas based on offset and scale
-                let canvasSize = UIScreen.main.bounds.size
+                let viewSize = self.canvasViewSize
                 let center = CGPoint(
-                    x: (canvasSize.width / 2 + self.canvasOffset.width) / self.canvasScale,
-                    y: (canvasSize.height / 2 + self.canvasOffset.height) / self.canvasScale
+                    x: (viewSize.width / 2 + self.canvasOffset.width) / self.canvasScale,
+                    y: (viewSize.height / 2 + self.canvasOffset.height) / self.canvasScale
                 )
                 
                 // Initial block size
-                let blockWidth: Double = 300
-                let blockHeight: Double = Double(image.size.height / image.size.width) * blockWidth
+                let blockWidth: Double = min(300, Double(viewSize.width) * 0.6 / self.canvasScale)
+                let aspectRatio = image.size.width > 0
+                    ? Double(image.size.height / image.size.width) : 1.0
+                let blockHeight: Double = blockWidth * aspectRatio
                 
                 let newElement = CanvasElement(
                     pageId: self.currentPage.id,
                     userId: self.userId ?? UUID(),
                     type: "image",
                     content: fileName, // Store the local file name instead of base64
-                    positionX: Double(center.x - CGFloat(blockWidth / 2)),
-                    positionY: Double(center.y - CGFloat(blockHeight / 2)),
+                    positionX: Double(center.x),
+                    positionY: Double(center.y),
                     width: blockWidth,
                     height: blockHeight,
                     rotation: 0,
@@ -311,6 +316,7 @@ final class CanvasViewModel: ObservableObject {
                 self.selectedElementIds = [newElement.id]
                 self.objectWillChange.send()
                 self.scheduleElementSave()
+                self.selectTool(.pen)
             }
         }
     }
@@ -475,6 +481,7 @@ final class CanvasViewModel: ObservableObject {
             isLassoActive = false
             selectedStrokes.removeAll()
         }
+        selectedElementIds = []
         selectedTool = tool
 
         if tool == .image {

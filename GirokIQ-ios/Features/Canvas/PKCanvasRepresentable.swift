@@ -182,19 +182,13 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     // MARK: - Hit Testing
     
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        // We want touches to go to the block overlay if they hit a block (so users can drag/resize images)
         if let blockView = blockOverlayHostView?.view {
             let blockPoint = self.convert(point, to: blockView)
-            if let hit = blockView.hitTest(blockPoint, with: event) {
-                // If it hit a specific SwiftUI view inside the hosting controller (like an image block), let it handle it.
-                // We check if the hit view is NOT the root background of the hosting controller.
-                if hit != blockView && !String(describing: type(of: hit)).contains("HostingView") {
-                    return hit
-                }
+            if let hit = blockView.hitTest(blockPoint, with: event),
+               hit !== blockView {
+                return hit
             }
         }
-        
-        // Otherwise, let PKCanvasView (or its subviews) handle the touch (for drawing, panning, native lasso)
         return super.hitTest(point, with: event)
     }
 }
@@ -275,6 +269,9 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
     func updateUIView(_ hostView: CanvasHostView, context: Context) {
         let canvasView = hostView.canvasView
+        DispatchQueue.main.async {
+            viewModel.canvasViewSize = hostView.bounds.size
+        }
 
         // Only rebuild PKTool when tool-related properties actually changed
         let newTool = currentPKTool()
@@ -282,12 +279,11 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             canvasView.tool = newTool
         }
 
-        // Update drawing policy only when changed
         let isBlockTool = viewModel.selectedTool == .text || viewModel.selectedTool == .image
         if isBlockTool {
-            canvasView.drawingGestureRecognizer.isEnabled = false
-            canvasView.drawingPolicy = .anyInput // Let taps register on canvas
+            canvasView.isUserInteractionEnabled = false
         } else {
+            canvasView.isUserInteractionEnabled = true
             canvasView.drawingGestureRecognizer.isEnabled = true
             let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
             if canvasView.drawingPolicy != newPolicy {
@@ -514,31 +510,43 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         // MARK: - Tap Gesture for Blocks
 
         @objc func handleCanvasTap(_ gesture: UITapGestureRecognizer) {
-            guard let canvas = canvasView else { return }
-            let tool = viewModel.selectedTool
-            if tool == .text || tool == .image {
-                let location = gesture.location(in: canvas)
-                // Convert screen coordinates to internal canvas coordinates
-                let scale = canvas.zoomScale
-                let offset = canvas.contentOffset
-                let canvasX = (location.x + offset.x) / scale
-                let canvasY = (location.y + offset.y) / scale
-                
-                Task { @MainActor in
-                    let newElement = CanvasElement(
-                        pageId: self.viewModel.currentPage.id,
-                        userId: self.viewModel.userId ?? UUID(),
-                        type: tool == .text ? "text" : "image",
-                        content: tool == .text ? "" : nil, // Start empty
-                        positionX: Double(canvasX),
-                        positionY: Double(canvasY),
-                        width: tool == .text ? 200 : 300,  // Initial size matching GoodNotes
-                        height: tool == .text ? 50 : 200,  // Initial size
-                        style: tool == .text ? ElementStyle(fontSize: 24, textColor: "#000000") : nil
-                    )
-                    self.viewModel.addElement(newElement)
-                    HapticEngine.medium()
-                }
+            guard let canvas = canvasView,
+                  viewModel.selectedTool == .text else { return }
+
+            let location = gesture.location(in: canvas)
+            let scale = canvas.zoomScale
+            let offset = canvas.contentOffset
+            let canvasX = (location.x + offset.x) / scale
+            let canvasY = (location.y + offset.y) / scale
+            let tapPoint = CGPoint(x: canvasX, y: canvasY)
+
+            for element in viewModel.currentPage.elements where element.type == "text" {
+                let w = CGFloat(element.width ?? 200)
+                let h = CGFloat(element.height ?? 50)
+                let rect = CGRect(
+                    x: CGFloat(element.positionX) - w / 2,
+                    y: CGFloat(element.positionY) - h / 2,
+                    width: w,
+                    height: h
+                )
+                if rect.contains(tapPoint) { return }
+            }
+
+            Task { @MainActor in
+                let newElement = CanvasElement(
+                    pageId: self.viewModel.currentPage.id,
+                    userId: self.viewModel.userId ?? UUID(),
+                    type: "text",
+                    content: "\u{200B}",
+                    positionX: Double(tapPoint.x),
+                    positionY: Double(tapPoint.y),
+                    width: 200,
+                    height: nil,
+                    style: ElementStyle(fontSize: 24, textColor: "#FFFFFE")
+                )
+                self.viewModel.addElement(newElement)
+                self.viewModel.selectTool(.pen)
+                HapticEngine.medium()
             }
         }
 

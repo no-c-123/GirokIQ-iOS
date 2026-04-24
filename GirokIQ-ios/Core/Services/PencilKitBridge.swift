@@ -59,8 +59,10 @@ enum PencilKitBridge {
             return PKInkingTool(.marker, color: color, width: width)
         case .eraser:
             return PKEraserTool(eraserType)
-        case .lasso, .selection, .text, .image:
+        case .lasso, .selection:
             return PKLassoTool()
+        case .text, .image:
+            return PKInkingTool(.pen, color: .clear, width: 1)
         }
     }
 
