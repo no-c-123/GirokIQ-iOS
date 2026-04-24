@@ -29,7 +29,7 @@ final class AIChatViewModel: ObservableObject {
     Keep responses concise and actionable. Use markdown formatting when helpful.
     """
 
-    var hasAPIKey: Bool { aiService.hasAPIKey }
+    var hasAPIKey: Bool { true }
 
     // MARK: - Session Management
 

@@ -14,18 +14,12 @@ struct AIChatView: View {
             Divider().opacity(0.2)
 
             // Messages
-            if viewModel.hasAPIKey {
-                messageList
-            } else {
-                noAPIKeyView
-            }
+            messageList
 
             Divider().opacity(0.2)
 
             // Input bar
-            if viewModel.hasAPIKey {
-                inputBar
-            }
+            inputBar
         }
         .background(Color.gSurface(for: colorScheme))
     }
@@ -147,53 +141,6 @@ struct AIChatView: View {
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Error: \(text)")
-    }
-
-    // MARK: - No API Key
-
-    var noAPIKeyView: some View {
-        VStack(spacing: GSpacing.lg) {
-            Spacer()
-            
-            ZStack {
-                Circle()
-                    .fill(Color.gPrimaryMuted)
-                    .frame(width: 72, height: 72)
-                Image(systemName: "sparkles")
-                    .font(.system(size: 32, weight: .light))
-                    .foregroundColor(.gPrimary)
-            }
-
-            VStack(spacing: GSpacing.xs) {
-                Text("Meet your study assistant")
-                    .font(.custom("InstrumentSerif-Regular", size: 22))
-                    .foregroundColor(.gTextPrimary(for: colorScheme))
-                
-                Text("Summarize notes, explain concepts, generate practice questions — all from your canvas.")
-                    .font(.custom("PlusJakartaSans-Regular", size: 14))
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: 240)
-            }
-
-            Button {
-                // Settings flow needs to be wired here
-            } label: {
-                Text("Set Up in Settings")
-                    .font(.custom("PlusJakartaSans-Medium", size: 15))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                            .fill(Color.gPrimary)
-                    )
-            }
-            .padding(.top, GSpacing.sm)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Input Bar
