@@ -35,7 +35,12 @@ struct CanvasContainerView: View {
         .animation(GAnimation.motionSafe(), value: showAIPanel)
         .navigationBarHidden(true)
         .sheet(isPresented: $showPatternPicker) {
-            PatternPickerSheet(selectedPattern: $canvasVM.backgroundPattern)
+            PatternPickerSheet(
+                selectedPattern: $canvasVM.backgroundPattern,
+                onPatternChanged: { newPattern in
+                    canvasVM.updateNotebookPattern(newPattern)
+                }
+            )
         }
         // iPhone: sheet for AI
         .sheet(isPresented: Binding(
@@ -48,7 +53,7 @@ struct CanvasContainerView: View {
         }
         .task {
             if let userId = authViewModel.currentUserId {
-                await canvasVM.loadNotebook(notebookId: notebook.id, userId: userId)
+                await canvasVM.loadNotebook(notebook: notebook, userId: userId)
                 await aiVM.startSession(userId: userId, notebookId: notebook.id)
             }
         }
@@ -64,12 +69,19 @@ struct CanvasContainerView: View {
 
     var canvasArea: some View {
         ZStack(alignment: .top) {
-            // PencilKit drawing surface (background pattern is embedded inside scroll content)
-            PKCanvasRepresentable(
-                viewModel: canvasVM,
-                allowsFingerDrawing: !canvasVM.palmRejectionEnabled
-            )
-            .ignoresSafeArea()
+            // Route based on notebook canvas type
+            if notebook.canvasType == "fixed",
+               let dims = notebook.pageDimensions {
+                let pageSize = CGSize(width: dims.widthPt, height: dims.heightPt)
+                FixedCanvasView(viewModel: canvasVM, pageSize: pageSize)
+                    .ignoresSafeArea()
+            } else {
+                PKCanvasRepresentable(
+                    viewModel: canvasVM,
+                    allowsFingerDrawing: !canvasVM.palmRejectionEnabled
+                )
+                .ignoresSafeArea()
+            }
 
             // Top Toolbar (auto-hides during drawing)
             if canvasVM.isToolbarVisible {
