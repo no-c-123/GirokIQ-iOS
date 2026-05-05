@@ -58,9 +58,15 @@ extension UIColor {
 
 extension UIColor {
     // Backgrounds
-    static let gBackground    = UIColor(hex: "#0F0F0E")
-    static let gSurface       = UIColor(hex: "#1A1A1A")
-    static let gElevated      = UIColor(hex: "#262626")
+    static let gBackground = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(hex: "#0F0F0E") : UIColor(hex: "#F8F8FA")
+    }
+    static let gSurface = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(hex: "#1A1A1A") : UIColor(hex: "#FFFFFF")
+    }
+    static let gElevated = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(hex: "#262626") : UIColor(hex: "#F0F0F5")
+    }
 
     // Brand
     static let gPrimary       = UIColor(hex: "#C9A84C")
@@ -70,12 +76,20 @@ extension UIColor {
     static let gDestructive   = UIColor(hex: "#F87171")
 
     // Borders
-    static let gBorder        = UIColor(white: 0.15, alpha: 1)
-    static let gBorderStrong  = UIColor(white: 0.25, alpha: 1)
+    static let gBorder = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 0.15, alpha: 1) : UIColor(white: 0.85, alpha: 1)
+    }
+    static let gBorderStrong = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 0.25, alpha: 1) : UIColor(white: 0.75, alpha: 1)
+    }
 
     // Grid / Pattern
-    static let gGridLine      = UIColor(white: 1, alpha: 0.08)
-    static let gDot           = UIColor(white: 1, alpha: 0.18)
+    static let gGridLine = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.08) : UIColor(white: 0, alpha: 0.08)
+    }
+    static let gDot = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 1, alpha: 0.18) : UIColor(white: 0, alpha: 0.18)
+    }
 
     // Selection highlight
     static let gSelectionHalo = UIColor(hex: "#6366F1").withAlphaComponent(0.35)

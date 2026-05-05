@@ -42,48 +42,6 @@ extension Color {
     static let gBorderStrong = Color(light: Color(white: 0.75), dark: Color(white: 0.25))
 }
 
-// MARK: - Resolved Color Helpers (for contexts without asset catalog)
-
-extension Color {
-
-    /// Returns the appropriate background color for the given color scheme
-    static func gBackground(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#0F0F0E") : Color(hex: "#F8F8FA")
-    }
-
-    static func gSurface(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#1A1A1A") : Color(hex: "#FFFFFF")
-    }
-
-    static func gElevated(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#262626") : Color(hex: "#F0F0F5")
-    }
-
-    static func gOverlay(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(hex: "#2C2C35") : Color(hex: "#E8E8ED")
-    }
-
-    static func gTextPrimary(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? .white : Color(hex: "#0D0D0F")
-    }
-
-    static func gTextSecondary(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(white: 0.6) : Color(white: 0.4)
-    }
-
-    static func gTextTertiary(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(white: 0.35) : Color(white: 0.55)
-    }
-
-    static func gBorder(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(white: 0.15) : Color(white: 0.85)
-    }
-
-    static func gBorderStrong(for scheme: ColorScheme) -> Color {
-        scheme == .dark ? Color(white: 0.25) : Color(white: 0.75)
-    }
-}
-
 // MARK: - Notebook Cover Colors
 
 extension Color {

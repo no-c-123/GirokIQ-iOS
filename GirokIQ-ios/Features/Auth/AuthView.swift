@@ -14,7 +14,7 @@ struct AuthView: View {
     var body: some View {
         ZStack {
             // Background
-            Color.gBackground(for: colorScheme).ignoresSafeArea()
+            Color.gBackground.ignoresSafeArea()
 
             // Subtle grid pattern overlay
             GridPatternBackground()
@@ -45,11 +45,11 @@ struct AuthView: View {
 
                     Text("GirokIQ")
                         .font(.custom("InstrumentSerif-Regular", size: 36))
-                        .foregroundColor(.gTextPrimary(for: colorScheme))
+                        .foregroundColor(.gTextPrimary)
 
                     Text("Your intelligent canvas")
                         .font(.custom("PlusJakartaSans-Regular", size: 15))
-                        .foregroundColor(.gTextSecondary(for: colorScheme))
+                        .foregroundColor(.gTextSecondary)
                 }
                 .padding(.bottom, GSpacing.xxxl)
 
@@ -116,7 +116,7 @@ struct AuthView: View {
                     } label: {
                         ZStack {
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color(hex: "#C9A84C"))
+                                .fill(Color.gPrimary)
 
                             if authViewModel.isLoading {
                                 ProgressView()
@@ -138,13 +138,13 @@ struct AuthView: View {
                     // "or" divider
                     HStack(spacing: GSpacing.sm) {
                         Rectangle()
-                            .fill(Color.gBorder(for: colorScheme))
+                            .fill(Color.gBorder)
                             .frame(height: 0.5)
                         Text("or")
                             .font(.gCaption)
-                            .foregroundColor(.gTextTertiary(for: colorScheme))
+                            .foregroundColor(.gTextTertiary)
                         Rectangle()
-                            .fill(Color.gBorder(for: colorScheme))
+                            .fill(Color.gBorder)
                             .frame(height: 0.5)
                     }
 
@@ -168,10 +168,10 @@ struct AuthView: View {
                 .padding(GSpacing.xl)
                 .background(
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .fill(Color(light: .white, dark: Color(hex: "#1A1A18")))
+                        .fill(Color.gSurface)
                         .overlay(
                             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
+                                .stroke(Color.gBorder, lineWidth: 0.5)
                         )
                 )
                 .padding(.horizontal, GSpacing.xl)
@@ -180,11 +180,11 @@ struct AuthView: View {
 
                 HStack(spacing: 4) {
                     Text("By continuing, you agree to our")
-                        .foregroundColor(.gTextTertiary(for: colorScheme))
+                        .foregroundColor(.gTextTertiary)
                     Link("Terms", destination: URL(string: "https://GirokIQ.app/terms")!)
                         .foregroundColor(.gPrimary)
                     Text("&")
-                        .foregroundColor(.gTextTertiary(for: colorScheme))
+                        .foregroundColor(.gTextTertiary)
                     Link("Privacy Policy", destination: URL(string: "https://GirokIQ.app/privacy")!)
                         .foregroundColor(.gPrimary)
                 }
@@ -201,13 +201,13 @@ struct AuthView: View {
         Button(action: action) {
             Text(title)
                 .font(isSelected ? .custom("PlusJakartaSans-Medium", size: 15) : .custom("PlusJakartaSans-Regular", size: 15))
-                .foregroundColor(isSelected ? .gTextPrimary(for: colorScheme) : .gTextSecondary(for: colorScheme))
+                .foregroundColor(isSelected ? .gTextPrimary : .gTextSecondary)
                 .padding(.bottom, 8)
                 .overlay(alignment: .bottom) {
                     if isSelected {
                         Rectangle()
                             .frame(height: 2)
-                            .foregroundColor(Color(hex: "#C9A84C"))
+                            .foregroundColor(Color.gPrimary)
                     }
                 }
                 .padding(.top, GSpacing.sm)
@@ -237,7 +237,7 @@ struct AuthTextField: View {
         HStack(spacing: GSpacing.sm) {
             Image(systemName: systemIcon)
                 .font(.gSubheadline)
-                .foregroundColor(.gTextSecondary(for: colorScheme))
+                .foregroundColor(.gTextSecondary)
                 .frame(width: 20)
 
             Group {
@@ -253,13 +253,13 @@ struct AuthTextField: View {
                 }
             }
             .font(.gSubheadline)
-            .foregroundColor(.gTextPrimary(for: colorScheme))
+            .foregroundColor(.gTextPrimary)
 
             if let icon = trailingIcon, let action = trailingAction {
                 Button(action: action) {
                     Image(systemName: icon)
                         .font(.gFootnote)
-                        .foregroundColor(.gTextSecondary(for: colorScheme))
+                        .foregroundColor(.gTextSecondary)
                 }
                 .minTapTarget()
                 .accessibilityLabel(isSecure ? "Show password" : "Hide password")
@@ -270,10 +270,10 @@ struct AuthTextField: View {
         .padding(.vertical, 13)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.gElevated(for: colorScheme))
+                .fill(Color.gElevated)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(isFocused ? Color(hex: "#C9A84C") : Color.gBorder(for: colorScheme), lineWidth: isFocused ? 1 : 0.5)
+                        .stroke(isFocused ? Color.gPrimary : Color.gBorder, lineWidth: isFocused ? 1 : 0.5)
                 )
         )
     }

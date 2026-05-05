@@ -8,7 +8,7 @@ final class SettingsViewModel: ObservableObject {
 
     // MARK: - Appearance
 
-    @AppStorage("appearance") var appearance: AppearanceMode = .system
+    @AppStorage("appTheme") var appearance: AppTheme = .dark
     @AppStorage("reducedMotion") var reducedMotion: Bool = false
 
     // MARK: - Canvas Defaults
@@ -64,30 +64,6 @@ final class SettingsViewModel: ObservableObject {
         } catch {
             print("[Settings] Failed to export data: \(error)")
             return nil
-        }
-    }
-
-    // MARK: - Types
-
-    enum AppearanceMode: String, CaseIterable {
-        case system
-        case light
-        case dark
-
-        var displayName: String {
-            switch self {
-            case .system: return "System"
-            case .light: return "Light"
-            case .dark: return "Dark"
-            }
-        }
-
-        var colorScheme: ColorScheme? {
-            switch self {
-            case .system: return nil
-            case .light: return .light
-            case .dark: return .dark
-            }
         }
     }
 }

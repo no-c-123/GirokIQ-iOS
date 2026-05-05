@@ -12,7 +12,7 @@ struct GirokIQ_iosApp: App {
                 .environmentObject(deps.auth)
                 .environmentObject(deps.theme)
                 .environmentObject(deps)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(deps.theme.colorSchemeOverride)
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
@@ -77,7 +77,7 @@ struct LockOverlayView: View {
     var body: some View {
         ZStack {
             // Blurred background
-            Color.gBackground(for: colorScheme)
+            Color.gBackground
                 .ignoresSafeArea()
 
             VStack(spacing: GSpacing.lg) {
@@ -87,11 +87,11 @@ struct LockOverlayView: View {
 
                 Text("GirokIQ is Locked")
                     .font(.gTitle2)
-                    .foregroundColor(.gTextPrimary(for: colorScheme))
+                    .foregroundColor(.gTextPrimary)
 
                 Text("Authenticate to continue")
                     .font(.gSubheadline)
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .foregroundColor(.gTextSecondary)
 
                 Button {
                     Task {

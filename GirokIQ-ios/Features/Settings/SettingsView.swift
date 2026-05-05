@@ -65,10 +65,10 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(authViewModel.displayName)
                             .font(.gSubheadline.weight(.semibold))
-                            .foregroundColor(.gTextPrimary(for: colorScheme))
+                            .foregroundColor(.gTextPrimary)
                         Text(email)
                             .font(.gCaption)
-                            .foregroundColor(.gTextSecondary(for: colorScheme))
+                            .foregroundColor(.gTextSecondary)
                     }
                 }
             }
@@ -94,8 +94,8 @@ struct SettingsView: View {
     var appearanceSection: some View {
         Section {
             Picker("Theme", selection: $viewModel.appearance) {
-                ForEach(SettingsViewModel.AppearanceMode.allCases, id: \.self) { mode in
-                    Text(mode.displayName).tag(mode)
+                ForEach(AppTheme.allCases, id: \.self) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
 
@@ -127,7 +127,7 @@ struct SettingsView: View {
                 Text("Default Stroke Width")
                 Spacer()
                 Text("\(viewModel.defaultStrokeWidth, specifier: "%.1f")pt")
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .foregroundColor(.gTextSecondary)
             }
             Slider(value: $viewModel.defaultStrokeWidth, in: 0.5...20, step: 0.5)
                 .tint(.gPrimary)
@@ -154,7 +154,7 @@ struct SettingsView: View {
                         .frame(width: 7, height: 7)
                     Text("Connected")
                         .font(.gCaption)
-                        .foregroundColor(.gTextSecondary(for: colorScheme))
+                        .foregroundColor(.gTextSecondary)
                 }
             }
             .accessibilityElement(children: .combine)
@@ -199,13 +199,13 @@ struct SettingsView: View {
                 Text("Version")
                 Spacer()
                 Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .foregroundColor(.gTextSecondary)
             }
             HStack {
                 Text("Build")
                 Spacer()
                 Text(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .foregroundColor(.gTextSecondary)
             }
             Link("Privacy Policy", destination: URL(string: "https://girokiq.app/privacy")!)
                 .foregroundColor(.gPrimary)

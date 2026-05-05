@@ -38,7 +38,7 @@ struct HomeView: View {
 
     var body: some View {
         let content = ZStack {
-            themeManager.backgroundColor.ignoresSafeArea()
+            Color.gBackground.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 homeToolbar
@@ -207,7 +207,7 @@ struct HomeView: View {
             HStack(spacing: GSpacing.xs) {
                 Text("GirokIQ")
                     .font(.custom("InstrumentSerif-Regular", size: 24))
-                    .foregroundColor(themeManager.textPrimary)
+                    .foregroundColor(Color.gTextPrimary)
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("GirokIQ")
@@ -293,7 +293,7 @@ struct HomeView: View {
         }
         .padding(.horizontal, GSpacing.lg)
         .padding(.vertical, GSpacing.md)
-        .background(themeManager.surfaceColor)
+        .background(Color.gSurface)
         .overlay(alignment: .bottom) {
             Divider().opacity(0.2)
         }
