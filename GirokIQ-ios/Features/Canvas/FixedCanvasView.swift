@@ -355,6 +355,17 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
             contentView.backgroundColor = .clear
             contentView.isOpaque = false
         }
+        
+        // PKCanvasView is itself a UIScrollView. Disable its own scrolling/zooming
+        // so that pinch and pan gestures reach the outer scrollView (which handles
+        // zoom and panning for the whole page). Without this, PKCanvasView swallows
+        // all pinch gestures and the page appears completely locked.
+        canvasView.isScrollEnabled = false
+        canvasView.bounces = false
+        canvasView.bouncesZoom = false
+        canvasView.pinchGestureRecognizer?.isEnabled = false
+        canvasView.panGestureRecognizer.isEnabled = false
+
         pageContainerView.addSubview(canvasView)
 
         if let viewModel = viewModel {
