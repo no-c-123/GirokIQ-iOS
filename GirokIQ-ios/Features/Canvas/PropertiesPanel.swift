@@ -379,13 +379,13 @@ struct PropertiesPanel: View {
                     .tracking(0.5)
                     .padding(.top, 8)
 
-                // Scale slider — live preview via selectionScale
+                // Slider drives pendingResizeScale — separate from the on-canvas drag handle
                 HStack {
                     Image(systemName: "arrow.down.right.and.arrow.up.left")
                         .foregroundColor(.secondary)
                         .frame(width: 20)
                     Slider(
-                        value: $viewModel.selectionScale,
+                        value: $viewModel.pendingResizeScale,
                         in: 0.25...3.0,
                         step: 0.05
                     )
@@ -394,15 +394,14 @@ struct PropertiesPanel: View {
                         .frame(width: 20)
                 }
 
-                Text("\(Int(viewModel.selectionScale * 100))%")
+                Text("\(Int(viewModel.pendingResizeScale * 100))%")
                     .font(.caption.monospacedDigit())
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
 
-                // Apply button — commits the slider value
+                // Apply commits pendingResizeScale
                 Button {
-                    viewModel.applySelectionResize(scale: viewModel.selectionScale)
-                    viewModel.isResizing = false
+                    viewModel.applySelectionResize(scale: viewModel.pendingResizeScale)
                 } label: {
                     Text("Apply Resize")
                         .font(.subheadline.weight(.semibold))
@@ -413,20 +412,6 @@ struct PropertiesPanel: View {
                 }
                 .buttonStyle(.plain)
                 .padding(.top, 4)
-
-                // Resize handle button — enters interactive resize mode on canvas
-                Button {
-                    viewModel.isResizing = true
-                    viewModel.computeSelectionBoundingBox()
-                } label: {
-                    Label("Resize on Canvas", systemImage: "arrow.up.left.and.arrow.down.right")
-                        .font(.subheadline)
-                        .foregroundColor(.blue)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
             }
         }
     }

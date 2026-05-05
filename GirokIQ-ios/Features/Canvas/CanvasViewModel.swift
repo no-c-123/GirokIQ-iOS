@@ -64,7 +64,11 @@ final class CanvasViewModel: ObservableObject {
     @Published var backgroundPattern: BackgroundPattern = .grid
     @Published var canvasOffset: CGSize = .zero
     @Published var canvasScale: CGFloat = 1.0
-    @Published var canvasViewSize: CGSize = UIScreen.main.bounds.size
+    // Initial value is .zero — the correct size is written by PKCanvasRepresentable's 
+    // updateUIView on the first render pass, before any user interaction can occur. 
+    // Using UIScreen.main.bounds.size here was both deprecated (iOS 16+) and wrong 
+    // in Split View / Stage Manager contexts. 
+    @Published var canvasViewSize: CGSize = .zero
     @Published var showProperties: Bool = true
     @Published var isLassoActive: Bool = false
     @Published var selectedStrokes: Set<UUID> = []
@@ -90,6 +94,7 @@ final class CanvasViewModel: ObservableObject {
         }
     }
 
+    private(set) var notebook: Notebook?
     var notebookId: UUID?
     var userId: UUID?
 
@@ -117,6 +122,7 @@ final class CanvasViewModel: ObservableObject {
     private let service = SupabaseService.shared
     private var autoSaveTask: Task<Void, Never>?
     private var toolbarHideTask: Task<Void, Never>?
+    private var thumbnailTask: Task<Void, Never>?
 
     var currentPage: DrawingPage {
         get { pages[currentPageIndex] }
@@ -125,9 +131,17 @@ final class CanvasViewModel: ObservableObject {
 
     // MARK: - Loading
 
-    func loadNotebook(notebookId: UUID, userId: UUID) async {
+    func loadNotebook(notebook: Notebook, userId: UUID) async {
+        let notebookId = notebook.id
+        self.notebook = notebook
         self.notebookId = notebookId
         self.userId = userId
+        
+        // Restore the notebook-level background pattern so the canvas opens
+        // with the correct pattern instead of always falling back to .grid.
+        if let pattern = BackgroundPattern(rawValue: notebook.backgroundPattern) {
+            self.backgroundPattern = pattern
+        }
         
         do {
             let fetchedPages = try await LocalDatabase.shared.fetchPages(notebookId: notebookId)
@@ -173,6 +187,28 @@ final class CanvasViewModel: ObservableObject {
     }
 
     // MARK: - Undo / Redo (forwarded to PKCanvasView)
+
+    func updateNotebookPattern(_ pattern: BackgroundPattern) {
+        backgroundPattern = pattern
+
+        // Update all existing pages' pattern in memory
+        for index in pages.indices {
+            pages[index].backgroundPattern = pattern
+        }
+
+        // Persist the notebook-level setting
+        guard var nb = notebook else { return }
+        nb.backgroundPattern = pattern.rawValue
+        self.notebook = nb
+
+        Task {
+            do {
+                try await service.updateNotebook(nb)
+            } catch {
+                print("[Canvas] Failed to persist pattern change: \(error)")
+            }
+        }
+    }
 
     func undo() {
         pkUndoManager?.undo()
@@ -242,11 +278,14 @@ final class CanvasViewModel: ObservableObject {
     /// Computed once when selection is committed. Used as the resize origin.
     @Published var selectionBoundingBox: CGRect? = nil
     
-    /// Current scale factor applied to the selection during an active resize gesture.
-    /// Drive UI live from this value.
+    /// Scale applied by the on-canvas drag handle during an active gesture (resets to 1.0 after commit).
     @Published var selectionScale: CGFloat = 1.0
     
-    /// Whether a resize is actively in progress (drives handle visibility)
+    /// Scale driven by the Properties Panel slider — separate from the drag handle scale.
+    /// Resets to 1.0 after Apply is tapped.
+    @Published var pendingResizeScale: CGFloat = 1.0
+    
+    /// Whether the on-canvas resize handle overlay is visible.
     @Published var isResizing: Bool = false
     
     /// The rect drawn by the user for lasso selection (in canvas space)
@@ -265,15 +304,28 @@ final class CanvasViewModel: ObservableObject {
         let manager = PHImageManager.default()
         let options = PHImageRequestOptions()
         options.isSynchronous = false
-        options.deliveryMode = .highQualityFormat
+        // fastFormat delivers a good-quality version quickly, then the
+        // opportunistic second callback delivers the full quality version.
+        // We use the first result that arrives and ignore subsequent callbacks.
+        options.deliveryMode = .opportunistic
         options.isNetworkAccessAllowed = true
 
-        manager.requestImage(for: asset, targetSize: PHImageManagerMaximumSize, contentMode: .default, options: options) { [weak self] image, info in
+        // 2048×2048 is visually lossless at any canvas display size while
+        // being ~6× smaller in memory than a full-resolution 48 MP photo.
+        let targetSize = CGSize(width: 2048, height: 2048)
+        var didHandle = false
+
+        manager.requestImage(for: asset, targetSize: targetSize, contentMode: .aspectFit, options: options) { [weak self] image, info in
             guard let self = self, let image = image else { return }
+            // opportunistic mode calls back twice (degraded then full).
+            // Only process the first result that looks complete.
+            let isDegraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+            guard !isDegraded, !didHandle else { return }
+            didHandle = true
             
             // Generate a unique filename and save to local Documents directory
             let fileName = UUID().uuidString + ".jpg"
-            guard let data = image.jpegData(compressionQuality: 0.8) else { return }
+            guard let data = image.jpegData(compressionQuality: 0.85) else { return }
             let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
             
             do {
@@ -392,6 +444,9 @@ final class CanvasViewModel: ObservableObject {
         let combined = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
         selectionBoundingBox = combined
         selectionScale = 1.0
+        pendingResizeScale = 1.0
+        // Automatically enter resize mode whenever a selection bounding box exists
+        isResizing = true
     }
 
     func applySelectionResize(scale: CGFloat) {
@@ -423,10 +478,16 @@ final class CanvasViewModel: ObservableObject {
         for i in selectedStrokeIndices.sorted() where i < newStrokes.count {
             let stroke = newStrokes[i]
 
-            // Build a CGAffineTransform: translate to origin, scale, translate back
-            let transform = CGAffineTransform(translationX: -origin.x, y: -origin.y)
-                .scaledBy(x: scale, y: scale)
-                .translatedBy(x: origin.x / scale, y: origin.y / scale)
+            // Scale around the bounding box origin (fixed anchor point).
+            // Three steps applied in order:
+            //   1. Translate so the anchor is at (0,0)
+            //   2. Scale
+            //   3. Translate back by the original anchor amount (not divided by scale)
+            // Built with concatenating so each step is in its own unambiguous space.
+            let toOrigin = CGAffineTransform(translationX: -origin.x, y: -origin.y)
+            let scaleTransform = CGAffineTransform(scaleX: scale, y: scale)
+            let fromOrigin = CGAffineTransform(translationX: origin.x, y: origin.y)
+            let transform = toOrigin.concatenating(scaleTransform).concatenating(fromOrigin)
 
             // Reconstruct the PKStroke path using transformed points
             var newPoints: [PKStrokePoint] = []
@@ -457,7 +518,9 @@ final class CanvasViewModel: ObservableObject {
             width: bbox.width  * scale,
             height: bbox.height * scale
         )
-        selectionScale = 1.0  // reset — next gesture starts from 1.0 again
+        selectionScale = 1.0
+        pendingResizeScale = 1.0
+        isResizing = false
 
         // 4. Notify PencilKit to redraw and save
         forceDrawingUpdate = true
@@ -538,8 +601,9 @@ final class CanvasViewModel: ObservableObject {
         refreshUndoState()
         scheduleAutoSave()
 
-        // Regenerate cached thumbnail for the page strip (async, non-blocking)
-        regenerateThumbnail(for: currentPageIndex)
+        // Regenerate cached thumbnail for the page strip — debounced so rapid
+        // stroke updates don't spawn hundreds of concurrent render tasks.
+        scheduleThumbnailRegeneration(for: currentPageIndex)
 
         // Only auto-hide toolbar when drawing with Apple Pencil.
         // Finger interactions should keep the toolbar visible.
@@ -550,8 +614,20 @@ final class CanvasViewModel: ObservableObject {
 
     // MARK: - Thumbnail Cache
 
-    /// Regenerate the thumbnail for the current page on a background thread.
-    /// Called after drawing changes are committed (debounced via auto-save).
+    /// Debounced entry point called during active drawing.
+    /// Waits 0.8s after the last stroke before actually rendering.
+    private func scheduleThumbnailRegeneration(for pageIndex: Int) {
+        thumbnailTask?.cancel()
+        thumbnailTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(0.8))
+            guard !Task.isCancelled else { return }
+            self?.regenerateThumbnail(for: pageIndex)
+        }
+    }
+
+    /// Regenerate the thumbnail for a page on a background thread.
+    /// Call directly when an immediate render is needed (e.g. on initial load).
+    /// During drawing, use scheduleThumbnailRegeneration instead.
     func regenerateThumbnail(for pageIndex: Int) {
         let page = pages[pageIndex]
         let pageId = page.id
@@ -560,12 +636,13 @@ final class CanvasViewModel: ObservableObject {
             pageThumbnails[pageId] = nil
             return
         }
-        // Generate thumbnail off the main thread to avoid blocking scroll/animation
+        // Capture screen scale on main thread before going off-thread
+        let scale = UIScreen.main.scale
         Task.detached(priority: .utility) { [weak self] in
             let bounds = drawing.bounds.isEmpty
                 ? CGRect(origin: .zero, size: CGSize(width: 56, height: 74))
                 : drawing.bounds
-            let image = drawing.image(from: bounds, scale: 1.0)
+            let image = drawing.image(from: bounds, scale: scale)
             await MainActor.run { [weak self] in
                 self?.pageThumbnails[pageId] = image
             }

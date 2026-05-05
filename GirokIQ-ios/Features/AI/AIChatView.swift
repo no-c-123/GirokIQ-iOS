@@ -21,7 +21,7 @@ struct AIChatView: View {
             // Input bar
             inputBar
         }
-        .background(Color.gSurface(for: colorScheme))
+        .background(Color.gSurface)
     }
 
     // MARK: - Header
@@ -34,7 +34,7 @@ struct AIChatView: View {
             
             Text("AI Assistant")
                 .font(.custom("InstrumentSerif-Regular", size: 20))
-                .foregroundColor(.gTextPrimary(for: colorScheme))
+                .foregroundColor(.gTextPrimary)
             Spacer()
         }
         .padding(.horizontal, GSpacing.md)
@@ -92,7 +92,7 @@ struct AIChatView: View {
                 .foregroundColor(.gPrimary.opacity(0.5))
             Text("Ask me anything about your canvas")
                 .font(.gSubheadline)
-                .foregroundColor(.gTextTertiary(for: colorScheme))
+                .foregroundColor(.gTextTertiary)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
@@ -110,7 +110,7 @@ struct AIChatView: View {
 
             Text(viewModel.streamingText)
                 .font(.gSubheadline)
-                .foregroundColor(.gTextPrimary(for: colorScheme))
+                .foregroundColor(.gTextPrimary)
                 .textSelection(.enabled)
 
             Spacer()
@@ -118,7 +118,7 @@ struct AIChatView: View {
         .padding(GSpacing.sm)
         .background(
             RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                .fill(Color.gElevated(for: colorScheme))
+                .fill(Color.gElevated)
         )
         .accessibilityElement(children: .combine)
         .accessibilityLabel("AI is responding: \(viewModel.streamingText)")
@@ -149,7 +149,7 @@ struct AIChatView: View {
         HStack(spacing: GSpacing.xs) {
             TextField("Ask something…", text: $viewModel.inputText, axis: .vertical)
                 .font(.gSubheadline)
-                .foregroundColor(.gTextPrimary(for: colorScheme))
+                .foregroundColor(.gTextPrimary)
                 .textFieldStyle(.plain)
                 .lineLimit(1...4)
                 .accessibilityLabel("Message input")
@@ -158,10 +158,10 @@ struct AIChatView: View {
                 .padding(.vertical, GSpacing.xs)
                 .background(
                     RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                        .fill(Color.gElevated(for: colorScheme))
+                        .fill(Color.gElevated)
                         .overlay(
                             RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                                .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
+                                .stroke(Color.gBorder, lineWidth: 0.5)
                         )
                 )
 
@@ -183,7 +183,7 @@ struct AIChatView: View {
                         .font(.gIconLarge)
                         .foregroundColor(
                             viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                            ? .gTextTertiary(for: colorScheme)
+                            ? .gTextTertiary
                             : .gPrimary
                         )
                 }
@@ -221,22 +221,22 @@ struct MessageBubble: View {
                     HStack(spacing: GSpacing.xxs) {
                         Image(systemName: "photo")
                             .font(.gCaption2)
-                            .foregroundColor(.gTextTertiary(for: colorScheme))
+                            .foregroundColor(.gTextTertiary)
                         Text("Canvas snapshot attached")
                             .font(.gCaption2)
-                            .foregroundColor(.gTextTertiary(for: colorScheme))
+                            .foregroundColor(.gTextTertiary)
                     }
                 }
 
                 Text(message.content)
                     .font(.gSubheadline)
-                    .foregroundColor(.gTextPrimary(for: colorScheme))
+                    .foregroundColor(.gTextPrimary)
                     .textSelection(.enabled)
             }
             .padding(GSpacing.sm)
             .background(
                 RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                    .fill(isUser ? Color.gPrimary.opacity(0.15) : Color.gElevated(for: colorScheme))
+                    .fill(isUser ? Color.gPrimary.opacity(0.15) : Color.gElevated)
             )
 
             if !isUser { Spacer(minLength: 40) }

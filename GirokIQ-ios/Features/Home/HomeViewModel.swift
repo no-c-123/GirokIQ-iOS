@@ -99,8 +99,22 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Notebook CRUD
 
-    func createNotebook(userId: UUID, name: String) async -> Notebook? {
-        let notebook = Notebook(userId: userId, name: name)
+    func createNotebook(
+        userId: UUID,
+        name: String,
+        canvasType: String = "infinite",
+        pageDimensions: PageDimensions? = nil,
+        backgroundPattern: BackgroundPattern = .blank,
+        backgroundColorHex: String = "#0F0F0E"
+    ) async -> Notebook? {
+        let notebook = Notebook(
+            userId: userId,
+            name: name,
+            canvasType: canvasType,
+            pageDimensions: pageDimensions,
+            backgroundPattern: backgroundPattern.rawValue,
+            backgroundColorHex: backgroundColorHex
+        )
         
         // Save locally first so pages can safely reference it via Foreign Key
         do {

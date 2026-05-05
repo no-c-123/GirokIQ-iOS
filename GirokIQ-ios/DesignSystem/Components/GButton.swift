@@ -97,7 +97,7 @@ struct GTextField: View {
             if let icon = systemIcon {
                 Image(systemName: icon)
                     .font(.gSubheadline)
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .foregroundColor(.gTextSecondary)
                     .frame(width: 20)
             }
 
@@ -112,16 +112,16 @@ struct GTextField: View {
                 }
             }
             .font(.gSubheadline)
-            .foregroundColor(.gTextPrimary(for: colorScheme))
+            .foregroundColor(.gTextPrimary)
         }
         .padding(.horizontal, GSpacing.md)
         .padding(.vertical, 13)
         .background(
             RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                .fill(Color.gElevated(for: colorScheme).opacity(0.5))
+                .fill(Color.gElevated.opacity(0.5))
                 .overlay(
                     RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                        .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
+                        .stroke(Color.gBorder, lineWidth: 0.5)
                 )
         )
     }
@@ -139,10 +139,10 @@ struct GCard<Content: View>: View {
         content()
             .background(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(Color.gSurface(for: colorScheme))
+                    .fill(Color.gSurface)
                     .overlay(
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .stroke(Color.gBorder(for: colorScheme), lineWidth: 0.5)
+                            .stroke(Color.gBorder, lineWidth: 0.5)
                     )
             )
     }

@@ -16,6 +16,13 @@ final class BackgroundPatternView: UIView {
         }
     }
 
+    var pageBackgroundColor: UIColor = .gBackground {
+        didSet {
+            guard oldValue != pageBackgroundColor else { return }
+            layer.setNeedsDisplay()
+        }
+    }
+
     override class var layerClass: AnyClass { CATiledLayer.self }
 
     // Safe: layerClass is CATiledLayer.self, so this cast always succeeds
@@ -40,7 +47,7 @@ final class BackgroundPatternView: UIView {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
 
         // Fill tile background
-        ctx.setFillColor(UIColor.gBackground.cgColor)
+        ctx.setFillColor(pageBackgroundColor.cgColor)
         ctx.fill(rect)
 
         let spacing: CGFloat = 28

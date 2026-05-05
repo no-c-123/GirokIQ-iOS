@@ -336,9 +336,7 @@ struct BlockElementView: View {
                                 .foregroundColor(.white)
                         }
                         .offset(x: 13, y: 13)
-                        .gesture(resizeGesture)
-                        // Prevent parent dragGesture from stealing this touch
-                        .simultaneousGesture(TapGesture())
+                        .highPriorityGesture(resizeGesture)
                         .zIndex(10)
                     }
                 }

@@ -96,13 +96,14 @@ struct PageStripView: View {
 
 struct PatternPickerSheet: View {
     @Binding var selectedPattern: BackgroundPattern
+    var onPatternChanged: ((BackgroundPattern) -> Void)? = nil
     @Environment(\.dismiss) var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.gBackground(for: colorScheme).ignoresSafeArea()
+                Color.gBackground.ignoresSafeArea()
 
                 LazyVGrid(
                     columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())],
@@ -122,7 +123,7 @@ struct PatternPickerSheet: View {
                         .foregroundColor(.gPrimary)
                 }
             }
-            .toolbarBackground(Color.gSurface(for: colorScheme), for: .navigationBar)
+            .toolbarBackground(Color.gSurface, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
         }
     }
@@ -133,13 +134,14 @@ struct PatternPickerSheet: View {
         let isSelected = selectedPattern == pattern
         return Button {
             selectedPattern = pattern
+            onPatternChanged?(pattern)
             dismiss()
         } label: {
             VStack(spacing: GSpacing.xs) {
                 patternTile(for: pattern, isSelected: isSelected)
                 Text(pattern.displayName)
                     .font(.gCaption)
-                    .foregroundColor(.gTextSecondary(for: colorScheme))
+                    .foregroundColor(.gTextSecondary)
             }
         }
         .minTapTarget()
@@ -151,19 +153,19 @@ struct PatternPickerSheet: View {
     private func patternTile(for pattern: BackgroundPattern, isSelected: Bool) -> some View {
         ZStack {
             RoundedRectangle(cornerRadius: GRadius.sm)
-                .fill(Color.gSurface(for: colorScheme))
+                .fill(Color.gSurface)
                 .frame(height: 80)
                 .overlay(
                     RoundedRectangle(cornerRadius: GRadius.sm)
                         .stroke(
-                            isSelected ? Color.gPrimary : Color.gBorder(for: colorScheme),
+                            isSelected ? Color.gPrimary : Color.gBorder,
                             lineWidth: isSelected ? 2 : 0.5
                         )
                 )
 
             Image(systemName: pattern.icon)
                 .font(.gEmojiSmall)
-                .foregroundColor(isSelected ? .gPrimary : .gTextSecondary(for: colorScheme))
+                .foregroundColor(isSelected ? .gPrimary : .gTextSecondary)
         }
     }
 }

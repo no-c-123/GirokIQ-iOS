@@ -24,7 +24,7 @@ struct SidebarView: View {
                     selectedFolderId = nil
                 } label: {
                     Label("All Notebooks", systemImage: "book.closed")
-                        .foregroundColor(selectedFolderId == nil ? .gPrimary : .gTextPrimary(for: colorScheme))
+                        .foregroundColor(selectedFolderId == nil ? .gPrimary : .gTextPrimary)
                 }
                 .accessibilityLabel("All Notebooks")
                 .accessibilityHint("Double tap to show all notebooks")
@@ -43,9 +43,9 @@ struct SidebarView: View {
                                 Spacer()
                                 Text("\(viewModel.notebooksInFolder(folder.id).count)")
                                     .font(.gCaption)
-                                    .foregroundColor(.gTextTertiary(for: colorScheme))
+                                    .foregroundColor(.gTextTertiary)
                             }
-                            .foregroundColor(selectedFolderId == folder.id ? .gPrimary : .gTextPrimary(for: colorScheme))
+                            .foregroundColor(selectedFolderId == folder.id ? .gPrimary : .gTextPrimary)
                         }
                         .accessibilityLabel("\(folder.name) folder, \(viewModel.notebooksInFolder(folder.id).count) notebooks")
                         .accessibilityHint("Double tap to filter by this folder")
@@ -79,11 +79,11 @@ struct SidebarView: View {
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(notebook.name)
                                     .font(.gSubheadline)
-                                    .foregroundColor(.gTextPrimary(for: colorScheme))
+                                    .foregroundColor(.gTextPrimary)
                                     .lineLimit(1)
                                 Text(notebook.updatedAt.formatted(.relative(presentation: .named)))
                                     .font(.gCaption2)
-                                    .foregroundColor(.gTextTertiary(for: colorScheme))
+                                    .foregroundColor(.gTextTertiary)
                             }
                         }
                     }
@@ -98,7 +98,7 @@ struct SidebarView: View {
                     showSettings = true
                 } label: {
                     Label("Settings", systemImage: "gearshape")
-                        .foregroundColor(.gTextPrimary(for: colorScheme))
+                        .foregroundColor(.gTextPrimary)
                 }
                 .accessibilityHint("Double tap to open app settings")
             }

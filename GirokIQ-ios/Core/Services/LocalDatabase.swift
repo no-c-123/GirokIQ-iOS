@@ -16,20 +16,32 @@ enum SyncStatus: String, Codable {
 final class LocalDatabase {
     static let shared = LocalDatabase()
 
-    private let dbQueue: DatabaseQueue
+    private var dbQueue: DatabaseQueue
 
     private init() {
-        let path = try! FileManager.default
-            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("girokiq.sqlite")
-            .path
-        dbQueue = try! DatabaseQueue(path: path)
-        try! migrator.migrate(dbQueue)
+        do {
+            let path = try FileManager.default
+                .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                .appendingPathComponent("girokiq.sqlite")
+                .path
+            let queue = try DatabaseQueue(path: path)
+            try Self.migrator.migrate(queue)
+            dbQueue = queue
+            print("[LocalDatabase] Opened successfully at \(path)")
+        } catch {
+            print("[LocalDatabase] CRITICAL: Failed to open or migrate database: \(error)")
+            print("[LocalDatabase] Falling back to in-memory database. Data will not persist this session.")
+            // In-memory DatabaseQueue cannot fail to open
+            let fallback = try! DatabaseQueue()
+            // Migrations must run so table schema exists for subsequent queries
+            try? Self.migrator.migrate(fallback)
+            dbQueue = fallback
+        }
     }
 
     // MARK: - Migrations
 
-    private var migrator: DatabaseMigrator {
+    private static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1") { db in
@@ -205,6 +217,14 @@ extension Notebook: FetchableRecord, PersistableRecord {
             folderId = nil
         }
         name = row["name"]
+        canvasType = row["canvas_type"] ?? "infinite"
+        if let dimsData: Data = row["page_dimensions"] {
+            pageDimensions = try? JSONDecoder().decode(PageDimensions.self, from: dimsData)
+        } else {
+            pageDimensions = nil
+        }
+        backgroundPattern = row["background_pattern"] ?? "blank"
+        backgroundColorHex = row["background_color_hex"] ?? "#0F0F0E"
         createdAt = row["created_at"]
         updatedAt = row["updated_at"]
     }
@@ -214,6 +234,14 @@ extension Notebook: FetchableRecord, PersistableRecord {
         container["user_id"] = userId.uuidString
         container["folder_id"] = folderId?.uuidString
         container["name"] = name
+        container["canvas_type"] = canvasType
+        if let pageDimensions = pageDimensions, let data = try? JSONEncoder().encode(pageDimensions) {
+            container["page_dimensions"] = data
+        } else {
+            container["page_dimensions"] = nil
+        }
+        container["background_pattern"] = backgroundPattern
+        container["background_color_hex"] = backgroundColorHex
         container["created_at"] = createdAt
         container["updated_at"] = updatedAt
     }
