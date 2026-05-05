@@ -74,15 +74,24 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     // MARK: - Private
 
     private let backgroundScrollView = UIScrollView()
-    private let canvasContentSize = CGSize(width: 50_000, height: 50_000)
+    private let canvasContentSize: CGSize
     private var viewModel: CanvasViewModel?
 
     // MARK: - Init
 
     init(frame: CGRect = .zero, viewModel: CanvasViewModel? = nil) {
         self.viewModel = viewModel
+        
+        let size: CGSize
+        if let nb = viewModel?.notebook, nb.canvasType == "fixed", let dims = nb.pageDimensions {
+            size = CGSize(width: dims.widthPt, height: dims.heightPt)
+        } else {
+            size = CGSize(width: 50_000, height: 50_000)
+        }
+        self.canvasContentSize = size
+        
         backgroundPatternView = BackgroundPatternView(
-            frame: CGRect(origin: .zero, size: CGSize(width: 50_000, height: 50_000))
+            frame: CGRect(origin: .zero, size: size)
         )
         super.init(frame: frame)
         setupViews()
@@ -133,6 +142,19 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
 
+        // Configure fixed canvas aesthetics
+        if viewModel?.notebook?.canvasType == "fixed" {
+            self.backgroundColor = UIColor.systemGray5
+            backgroundPatternView.layer.shadowColor = UIColor.black.cgColor
+            backgroundPatternView.layer.shadowOpacity = 0.15
+            backgroundPatternView.layer.shadowRadius = 8
+            backgroundPatternView.layer.shadowOffset = CGSize(width: 0, height: 4)
+            backgroundPatternView.layer.shadowPath = UIBezierPath(rect: CGRect(origin: .zero, size: canvasContentSize)).cgPath
+            backgroundPatternView.clipsToBounds = false
+        } else {
+            self.backgroundColor = .clear
+        }
+
         // Make PencilKit's internal content view transparent so background shows through
         if let contentView = canvasView.subviews.first {
             contentView.backgroundColor = .clear
@@ -161,6 +183,7 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
             canvasView.contentOffset = initialOffset
             backgroundScrollView.contentOffset = initialOffset
         }
+        updateCenteringInsets()
     }
 
     // MARK: - UIScrollViewDelegate (for backgroundScrollView only)
@@ -177,6 +200,17 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     func syncBackground() {
         backgroundScrollView.contentOffset = canvasView.contentOffset
         backgroundScrollView.zoomScale = canvasView.zoomScale
+        updateCenteringInsets()
+    }
+    
+    private func updateCenteringInsets() {
+        if viewModel?.notebook?.canvasType == "fixed" {
+            let offsetX = max(0, (bounds.width - canvasContentSize.width * canvasView.zoomScale) / 2)
+            let offsetY = max(0, (bounds.height - canvasContentSize.height * canvasView.zoomScale) / 2)
+            let insets = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
+            canvasView.contentInset = insets
+            backgroundScrollView.contentInset = insets
+        }
     }
 
     // MARK: - Hit Testing
@@ -217,6 +251,12 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
         // Configure background pattern
         hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
+        if let hex = viewModel.notebook?.backgroundColorHex {
+            let color = UIColor(hex: hex)
+            // If the saved hex is the default dark gray "#0F0F0E", map it to the adaptive gBackground token
+            // so that it turns white in light mode. Otherwise use the specific color.
+            hostView.backgroundPatternView.pageBackgroundColor = hex.uppercased() == "#0F0F0E" ? .gBackground : color
+        }
 
         context.coordinator.hostView = hostView
         context.coordinator.canvasView = canvasView
@@ -294,6 +334,12 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         // Sync background pattern when it changes
         if hostView.backgroundPatternView.pattern != viewModel.backgroundPattern {
             hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
+        }
+        if let hex = viewModel.notebook?.backgroundColorHex {
+            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
+            if hostView.backgroundPatternView.pageBackgroundColor != color {
+                hostView.backgroundPatternView.pageBackgroundColor = color
+            }
         }
 
         // Sync drawing data when page changes (detect by comparing index or ID)
@@ -458,12 +504,13 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             guard viewModel.selectedTool == .lasso, let canvas = canvasView else { return }
             let screenLocation = gesture.location(in: canvas)
             
-            // Convert screen location to canvas coordinate space
-            let scale = viewModel.canvasScale
-            let offset = viewModel.canvasOffset
+            // Use live canvas scroll/zoom state — not the viewModel copies which 
+            // may be one render cycle behind during an active gesture. 
+            let scale = canvas.zoomScale
+            let offset = canvas.contentOffset
             let canvasLocation = CGPoint(
-                x: (screenLocation.x + offset.width) / scale,
-                y: (screenLocation.y + offset.height) / scale
+                x: (screenLocation.x + offset.x) / scale,
+                y: (screenLocation.y + offset.y) / scale
             )
             
             switch gesture.state {
@@ -481,8 +528,8 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                     viewModel.pendingLassoRect = rect
                 }
             case .ended, .cancelled:
-                if let rect = viewModel.pendingLassoRect {
-                    // Check intersection with elements and set them in viewModel
+                if let rect = viewModel.pendingLassoRect, let canvas = canvasView {
+                    // Detect element hits
                     let hits = viewModel.currentPage.elements.filter { el in
                         let w = el.width ?? 200
                         let h = el.height ?? 200
@@ -496,9 +543,12 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                     }
                     viewModel.selectedElementIds = Set(hits.map(\.id))
                     
-                    // The drawingDidChange delegate will handle strokes.
-                    // But if there are no strokes, drawingDidChange might NOT fire!
-                    // We must manually trigger bounding box computation just in case.
+                    // Detect stroke hits using live canvas state 
+                    let drawing = canvas.drawing
+                    let strokeHits = drawing.strokes.indices.filter { i in
+                        drawing.strokes[i].renderBounds.intersects(rect)
+                    }
+                    viewModel.selectedStrokeIndices = Set(strokeHits)
                     viewModel.computeSelectionBoundingBox()
                 }
                 lassoStartPoint = nil

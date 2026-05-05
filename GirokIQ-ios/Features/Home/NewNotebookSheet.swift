@@ -5,6 +5,42 @@ enum CanvasType: String, CaseIterable {
     case infinite, fixed
 }
 
+enum DimensionPreset: String, CaseIterable, Identifiable {
+    case a4     = "A4"
+    case letter = "Letter"
+    case a5     = "A5"
+    case custom = "Custom"
+
+    var id: String { rawValue }
+
+    var pageDimensions: PageDimensions? {
+        switch self {
+        case .a4:     return .a4
+        case .letter: return .letter
+        case .a5:     return .a5
+        case .custom: return nil   // caller computes from mm fields
+        }
+    }
+
+    var displayWidth: String {
+        switch self {
+        case .a4:     return "210"
+        case .letter: return "216"
+        case .a5:     return "148"
+        case .custom: return ""
+        }
+    }
+
+    var displayHeight: String {
+        switch self {
+        case .a4:     return "297"
+        case .letter: return "279"
+        case .a5:     return "210"
+        case .custom: return ""
+        }
+    }
+}
+
 struct NotebookTemplate: Identifiable {
     let id = UUID()
     let name: String
@@ -27,14 +63,21 @@ struct NewNotebookSheet: View {
     @AppStorage("newNotebook_pattern") private var selectedPattern: BackgroundPattern = .blank
     @AppStorage("newNotebook_bgColorHex") private var selectedBgColorHex: String = "#0F0F0E"
     
+    // Fixed template: selected preset and optional custom override
+    @State private var selectedPreset: DimensionPreset = .a4
+    @State private var isCustomDimensions: Bool = false
+    @State private var customWidthMM: String = "210"   // A4 width in mm
+    @State private var customHeightMM: String = "297"  // A4 height in mm
+    
     let backgroundColors: [(name: String, hex: String)] = [
+        ("Default", "#0F0F0E"),
         ("Warm White", "#FDFBF7"),
         ("Cream", "#F5F0E6"),
         ("Light Gray", "#E5E5E5"),
         ("Kraft Brown", "#D4B895"),
         ("Charcoal", "#333333"),
         ("Midnight Blue", "#1A233A"),
-        ("Black", "#0F0F0E")
+        ("Black", "#000000")
     ]
     
     let prebuiltTemplates = [
@@ -48,10 +91,21 @@ struct NewNotebookSheet: View {
         NotebookTemplate(name: "Math Grid", sizeName: "A4", icon: "squareshape.split.3x3")
     ]
 
+    private var resolvedDimensions: PageDimensions {
+        if canvasType == .infinite { return .a4 }  // unused for infinite
+        if selectedPreset != .custom, let dims = selectedPreset.pageDimensions {
+            return dims
+        }
+        // Custom: convert mm → points (1mm = 2.8346pt)
+        let w = (Double(customWidthMM) ?? 210) * 2.8346
+        let h = (Double(customHeightMM) ?? 297) * 2.8346
+        return PageDimensions(widthPt: w, heightPt: h)
+    }
+
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
-                Color(hex: "#0F0F0E").ignoresSafeArea()
+                Color.gBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 32) {
@@ -60,6 +114,11 @@ struct NewNotebookSheet: View {
                         nameSection
                         
                         canvasTypeSection
+                        
+                        if canvasType == .fixed {
+                            dimensionsSection
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
                         
                         patternSection
                         
@@ -83,12 +142,12 @@ struct NewNotebookSheet: View {
                     } label: {
                         Text("Create Notebook")
                             .font(.custom("PlusJakartaSans-SemiBold", size: 16))
-                            .foregroundColor(Color(hex: "#0F0F0E"))
+                            .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 54)
                             .background(
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(Color(hex: "#C9A84C"))
+                                    .fill(Color.gPrimary)
                             )
                     }
                     .padding(.horizontal, 24)
@@ -96,7 +155,7 @@ struct NewNotebookSheet: View {
                     .padding(.top, 16)
                     .background(
                         LinearGradient(
-                            colors: [Color(hex: "#0F0F0E").opacity(0), Color(hex: "#0F0F0E")],
+                            colors: [Color.gBackground.opacity(0), Color.gBackground],
                             startPoint: .top,
                             endPoint: .bottom
                         )
@@ -112,8 +171,7 @@ struct NewNotebookSheet: View {
                         .font(.custom("PlusJakartaSans-Medium", size: 15))
                 }
             }
-            .toolbarBackground(Color(hex: "#0F0F0E"), for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarBackground(Color.gBackground, for: .navigationBar)
             .onAppear {
                 isNameFocused = true
             }
@@ -128,7 +186,7 @@ struct NewNotebookSheet: View {
             ZStack {
                 // Background Color
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color(hex: selectedBgColorHex))
+                    .fill(selectedBgColorHex.uppercased() == "#0F0F0E" ? Color.gBackground : Color(hex: selectedBgColorHex))
                 
                 // Paper Texture Overlay
                 Image(systemName: "circle.grid.cross")
@@ -166,9 +224,9 @@ struct NewNotebookSheet: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Untitled Notebook", text: $name)
                 .font(.custom("PlusJakartaSans-Medium", size: 15))
-                .foregroundColor(.white)
+                .foregroundColor(.gTextPrimary)
                 .padding(16)
-                .background(Color(hex: "#1A1A1A"))
+                .background(Color.gSurface)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .focused($isNameFocused)
         }
@@ -206,15 +264,15 @@ struct NewNotebookSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 24))
-                    .foregroundColor(isSelected ? Color(hex: "#C9A84C") : .white)
+                    .foregroundColor(isSelected ? Color.gPrimary : .gTextPrimary)
                 
                 Text(title)
                     .font(.custom("PlusJakartaSans-Medium", size: 15))
-                    .foregroundColor(.white)
+                    .foregroundColor(.gTextPrimary)
                 
                 Text(subtitle)
                     .font(.custom("PlusJakartaSans-Medium", size: 12))
-                    .foregroundColor(Color.white.opacity(0.5))
+                    .foregroundColor(.gTextSecondary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 
@@ -222,15 +280,89 @@ struct NewNotebookSheet: View {
             }
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: "#1A1A1A"))
+            .background(Color.gSurface)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(isSelected ? Color(hex: "#C9A84C") : Color.clear, lineWidth: 2)
+                    .stroke(isSelected ? Color.gPrimary : Color.clear, lineWidth: 2)
             )
         }
     }
     
+    private var dimensionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("PAGE SIZE")
+
+            // Preset pills
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(DimensionPreset.allCases) { preset in
+                        let isSelected = selectedPreset == preset
+                        Button {
+                            selectedPreset = preset
+                            if preset != .custom {
+                                customWidthMM = preset.displayWidth
+                                customHeightMM = preset.displayHeight
+                            }
+                        } label: {
+                            Text(preset.rawValue)
+                                .font(.custom("PlusJakartaSans-Medium", size: 13))
+                                .foregroundColor(isSelected ? Color.gBackground : .gTextPrimary)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 8)
+                                .background(
+                                    Capsule()
+                                        .fill(isSelected ? Color.gPrimary : Color.gSurface)
+                                )
+                        }
+                    }
+                }
+                .padding(.horizontal, 24)
+            }
+
+            // Custom input fields — shown when preset == .custom
+            if selectedPreset == .custom {
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Width (mm)")
+                            .font(.custom("PlusJakartaSans-Medium", size: 11))
+                            .foregroundColor(.gTextSecondary)
+                        TextField("210", text: $customWidthMM)
+                            .keyboardType(.decimalPad)
+                            .font(.custom("PlusJakartaSans-Medium", size: 15))
+                            .foregroundColor(.gTextPrimary)
+                            .padding(12)
+                            .background(Color.gSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Height (mm)")
+                            .font(.custom("PlusJakartaSans-Medium", size: 11))
+                            .foregroundColor(.gTextSecondary)
+                        TextField("297", text: $customHeightMM)
+                            .keyboardType(.decimalPad)
+                            .font(.custom("PlusJakartaSans-Medium", size: 15))
+                            .foregroundColor(.gTextPrimary)
+                            .padding(12)
+                            .background(Color.gSurface)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+                .padding(.horizontal, 24)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
+            // Helper text
+            Text(selectedPreset == .custom
+                 ? "Enter dimensions in millimetres."
+                 : "\(selectedPreset.rawValue): \(selectedPreset.displayWidth) × \(selectedPreset.displayHeight) mm")
+                .font(.custom("PlusJakartaSans-Medium", size: 12))
+                .foregroundColor(.gTextSecondary)
+                .padding(.horizontal, 24)
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: selectedPreset)
+    }
+
     private var patternSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             sectionHeader("PAPER PATTERN")
@@ -244,16 +376,16 @@ struct NewNotebookSheet: View {
                         } label: {
                             ZStack {
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color(hex: "#1A1A1A"))
+                                    .fill(Color.gSurface)
                                 
                                 Image(systemName: pattern.icon)
                                     .font(.system(size: 24, weight: .light))
-                                    .foregroundColor(isSelected ? Color(hex: "#C9A84C") : .white.opacity(0.7))
+                                    .foregroundColor(isSelected ? Color.gPrimary : .gTextSecondary)
                             }
                             .frame(width: 52, height: 52)
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(isSelected ? Color(hex: "#C9A84C") : Color.clear, lineWidth: 2)
+                                    .stroke(isSelected ? Color.gPrimary : Color.clear, lineWidth: 2)
                             )
                         }
                     }
@@ -276,16 +408,16 @@ struct NewNotebookSheet: View {
                         } label: {
                             ZStack {
                                 Circle()
-                                    .fill(Color(hex: bg.hex))
+                                    .fill(bg.hex.uppercased() == "#0F0F0E" ? Color.gBackground : Color(hex: bg.hex))
                                     .frame(width: 36, height: 36)
                                     .overlay(
-                                        Circle().stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                        Circle().stroke(Color.gBorderStrong, lineWidth: 1)
                                     )
                                 
                                 if isSelected {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 14, weight: .bold))
-                                        .foregroundColor(Color(hex: "#C9A84C"))
+                                        .foregroundColor(Color.gPrimary)
                                 }
                             }
                         }
@@ -308,10 +440,10 @@ struct NewNotebookSheet: View {
                     Text("Switch to Infinite Canvas")
                         .font(.custom("PlusJakartaSans-Medium", size: 13))
                 }
-                .foregroundColor(Color(hex: "#C9A84C"))
+                .foregroundColor(Color.gPrimary)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 8)
-                .background(Color(hex: "#C9A84C").opacity(0.1))
+                .background(Color.gPrimary.opacity(0.1))
                 .clipShape(Capsule())
             }
             .padding(.horizontal, 24)
@@ -329,23 +461,23 @@ struct NewNotebookSheet: View {
                     VStack {
                         ZStack {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(Color.white.opacity(0.2), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
-                                .background(Color.white.opacity(0.02))
+                                .stroke(Color.gBorderStrong, style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
+                                .background(Color.gSurface)
                             
                             Image(systemName: "plus")
                                 .font(.system(size: 24))
-                                .foregroundColor(.white.opacity(0.5))
+                                .foregroundColor(.gTextSecondary)
                         }
                         .frame(height: 150)
                         
                         Text("Import Template")
                             .font(.custom("PlusJakartaSans-Medium", size: 13))
-                            .foregroundColor(.white)
+                            .foregroundColor(.gTextPrimary)
                             .padding(.top, 4)
                         
                         Text("PDF or Image")
                             .font(.custom("PlusJakartaSans-Medium", size: 11))
-                            .foregroundColor(Color.white.opacity(0.4))
+                            .foregroundColor(.gTextSecondary)
                     }
                 }
             }
@@ -353,7 +485,7 @@ struct NewNotebookSheet: View {
             
             Text("Canvas size is set by the template's dimensions.")
                 .font(.custom("PlusJakartaSans-Medium", size: 12))
-                .foregroundColor(Color.white.opacity(0.4))
+                .foregroundColor(.gTextSecondary)
                 .padding(.horizontal, 24)
                 .padding(.top, 8)
         }
@@ -366,22 +498,22 @@ struct NewNotebookSheet: View {
             VStack {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(hex: "#1A1A1A"))
+                        .fill(Color.gSurface)
                     
                     Image(systemName: template.icon)
                         .font(.system(size: 32, weight: .light))
-                        .foregroundColor(.white.opacity(0.8))
+                        .foregroundColor(.gTextSecondary)
                 }
                 .frame(height: 150)
                 
                 Text(template.name)
                     .font(.custom("PlusJakartaSans-Medium", size: 13))
-                    .foregroundColor(.white)
+                    .foregroundColor(.gTextPrimary)
                     .padding(.top, 4)
                 
                 Text(template.sizeName)
                     .font(.custom("PlusJakartaSans-Medium", size: 11))
-                    .foregroundColor(Color.white.opacity(0.4))
+                    .foregroundColor(.gTextSecondary)
             }
         }
     }
@@ -389,14 +521,17 @@ struct NewNotebookSheet: View {
     private func sectionHeader(_ text: String) -> some View {
         Text(text)
             .font(.custom("PlusJakartaSans-Medium", size: 12))
-            .foregroundColor(Color.white.opacity(0.4))
+            .foregroundColor(.gTextSecondary)
             .padding(.horizontal, 24)
     }
     
     // MARK: - Helpers
     
     private func isDarkColor(hex: String) -> Bool {
-        let darkColors = ["#333333", "#1A233A", "#0F0F0E"]
+        if hex.uppercased() == "#0F0F0E" {
+            return colorScheme == .dark
+        }
+        let darkColors = ["#333333", "#1A233A", "#000000"]
         return darkColors.contains(hex.uppercased())
     }
     
@@ -405,7 +540,11 @@ struct NewNotebookSheet: View {
             guard let userId = authViewModel.currentUserId else { return }
             _ = await viewModel.createNotebook(
                 userId: userId,
-                name: name.isEmpty ? "Untitled Notebook" : name
+                name: name.isEmpty ? "Untitled Notebook" : name,
+                canvasType: canvasType.rawValue,
+                pageDimensions: canvasType == .fixed ? resolvedDimensions : nil,
+                backgroundPattern: selectedPattern,
+                backgroundColorHex: selectedBgColorHex
             )
             dismiss()
         }
