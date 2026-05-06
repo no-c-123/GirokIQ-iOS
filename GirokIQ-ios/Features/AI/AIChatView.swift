@@ -1,9 +1,11 @@
 import SwiftUI
+import PencilKit
 
 // MARK: - AI Chat View
 
 struct AIChatView: View {
     @ObservedObject var viewModel: AIChatViewModel
+    var drawing: PKDrawing?
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -13,13 +15,17 @@ struct AIChatView: View {
 
             Divider().opacity(0.2)
 
-            // Messages
-            messageList
+            if viewModel.showHistory {
+                historyList
+            } else {
+                // Messages
+                messageList
 
-            Divider().opacity(0.2)
+                Divider().opacity(0.2)
 
-            // Input bar
-            inputBar
+                // Input bar
+                inputBar
+            }
         }
         .background(Color.gSurface)
     }
@@ -35,13 +41,80 @@ struct AIChatView: View {
             Text("AI Assistant")
                 .font(.custom("InstrumentSerif-Regular", size: 20))
                 .foregroundColor(.gTextPrimary)
+            
             Spacer()
+            
+            Button {
+                withAnimation {
+                    viewModel.showHistory.toggle()
+                }
+            } label: {
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 16))
+                    .foregroundColor(viewModel.showHistory ? .gPrimary : .gTextTertiary)
+            }
+            .accessibilityLabel("Chat History")
         }
         .padding(.horizontal, GSpacing.md)
         .padding(.top, GSpacing.md)
         .padding(.bottom, GSpacing.xs)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("AI Assistant")
+    }
+
+    // MARK: - History List
+    
+    var historyList: some View {
+        ScrollView {
+            LazyVStack(spacing: GSpacing.sm) {
+                Button {
+                    Task { await viewModel.startNewChat() }
+                } label: {
+                    HStack {
+                        Image(systemName: "plus.message")
+                        Text("New Chat")
+                        Spacer()
+                    }
+                    .font(.gSubheadline)
+                    .foregroundColor(.gPrimary)
+                    .padding(GSpacing.md)
+                    .background(
+                        RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                            .fill(Color.gPrimary.opacity(0.1))
+                    )
+                }
+                
+                ForEach(viewModel.chatHistory) { chat in
+                    Button {
+                        Task { await viewModel.selectChat(chat) }
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(chat.title)
+                                    .font(.gSubheadline)
+                                    .foregroundColor(.gTextPrimary)
+                                    .lineLimit(1)
+                                Text(chat.createdAt.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.gCaption)
+                                    .foregroundColor(.gTextTertiary)
+                            }
+                            Spacer()
+                            if viewModel.chat?.id == chat.id {
+                                Image(systemName: "checkmark")
+                                    .foregroundColor(.gPrimary)
+                                    .font(.system(size: 14, weight: .bold))
+                            }
+                        }
+                        .padding(GSpacing.md)
+                        .background(
+                            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                                .fill(Color.gElevated)
+                        )
+                    }
+                }
+            }
+            .padding(GSpacing.md)
+        }
     }
 
     // MARK: - Message List
@@ -94,11 +167,39 @@ struct AIChatView: View {
                 .font(.gSubheadline)
                 .foregroundColor(.gTextTertiary)
                 .multilineTextAlignment(.center)
+                .padding(.bottom, GSpacing.sm)
+            
+            VStack(spacing: GSpacing.xs) {
+                quickActionChip("Summarize this page")
+                quickActionChip("Suggest a title for my notes")
+                quickActionChip("What should I add next?")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, GSpacing.xl)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Ask me anything about your canvas")
+    }
+
+    private func quickActionChip(_ text: String) -> some View {
+        Button {
+            if let drawing = drawing, !drawing.strokes.isEmpty {
+                Task { await viewModel.sendWithVision(text: text, drawing: drawing) }
+            } else {
+                viewModel.inputText = text
+                Task { await viewModel.sendMessage() }
+            }
+        } label: {
+            Text(text)
+                .font(.gSubheadline)
+                .foregroundColor(.gPrimary)
+                .padding(.horizontal, GSpacing.md)
+                .padding(.vertical, GSpacing.sm)
+                .background(
+                    RoundedRectangle(cornerRadius: GRadius.md)
+                        .fill(Color.gPrimary.opacity(0.1))
+                )
+        }
     }
 
     var streamingBubble: some View {
@@ -108,7 +209,7 @@ struct AIChatView: View {
                 .foregroundColor(.gPrimary)
                 .frame(width: 20, height: 20)
 
-            Text(viewModel.streamingText)
+            Text(viewModel.streamingText.markdownAttributed)
                 .font(.gSubheadline)
                 .foregroundColor(.gTextPrimary)
                 .textSelection(.enabled)
@@ -147,6 +248,24 @@ struct AIChatView: View {
 
     var inputBar: some View {
         HStack(spacing: GSpacing.xs) {
+            if let drawing = drawing, !drawing.strokes.isEmpty {
+                Button {
+                    Task {
+                        await viewModel.sendWithVision(
+                            text: viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines),
+                            drawing: drawing
+                        )
+                    }
+                } label: {
+                    Image(systemName: "viewfinder.circle")
+                        .font(.gIconLarge)
+                        .foregroundColor(.gPrimary)
+                }
+                .disabled(viewModel.isStreaming)
+                .accessibilityLabel("Send with vision")
+                .accessibilityHint("Send your canvas drawing to the AI")
+            }
+
             TextField("Ask something…", text: $viewModel.inputText, axis: .vertical)
                 .font(.gSubheadline)
                 .foregroundColor(.gTextPrimary)
@@ -197,6 +316,17 @@ struct AIChatView: View {
     }
 }
 
+// MARK: - Extensions
+
+extension String {
+    var markdownAttributed: AttributedString {
+        (try? AttributedString(markdown: self, options: .init(
+            allowsExtendedAttributes: true,
+            interpretedSyntax: .inlineOnlyPreservingWhitespace
+        ))) ?? AttributedString(self)
+    }
+}
+
 // MARK: - Message Bubble
 
 struct MessageBubble: View {
@@ -228,7 +358,7 @@ struct MessageBubble: View {
                     }
                 }
 
-                Text(message.content)
+                Text(message.content.markdownAttributed)
                     .font(.gSubheadline)
                     .foregroundColor(.gTextPrimary)
                     .textSelection(.enabled)

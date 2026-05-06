@@ -21,7 +21,7 @@ struct CanvasContainerView: View {
 
             // iPad: side panel for AI
             if sizeClass == .regular && showAIPanel {
-                AIChatView(viewModel: aiVM)
+                AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing)
                     .frame(width: UIScreen.main.bounds.width * 0.38)
                     .background(Color.gSurface)
                     .overlay(alignment: .leading) {
@@ -47,13 +47,18 @@ struct CanvasContainerView: View {
             get: { sizeClass == .compact && showAIPanel },
             set: { if !$0 { showAIPanel = false } }
         )) {
-            AIChatView(viewModel: aiVM)
+            AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .task {
             if let userId = authViewModel.currentUserId {
                 await canvasVM.loadNotebook(notebook: notebook, userId: userId)
+                
+                aiVM.contextProvider = { [weak canvasVM] in
+                    canvasVM?.canvasContextSummary() ?? ""
+                }
+                
                 await aiVM.startSession(userId: userId, notebookId: notebook.id)
             }
         }

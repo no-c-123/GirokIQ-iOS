@@ -74,6 +74,7 @@ final class AIService {
     func stream(
         systemPrompt: String,
         messages: [AIMessage],
+        imageData: Data? = nil,
         model: String? = nil
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
@@ -93,7 +94,7 @@ final class AIService {
                 var body = self.buildRequestBody(
                     systemPrompt: systemPrompt,
                     messages: messages,
-                    imageData: nil,
+                    imageData: imageData,
                     model: model ?? self.defaultModel
                 )
                 body["stream"] = true

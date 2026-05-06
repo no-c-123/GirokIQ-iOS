@@ -14,8 +14,8 @@ struct AIMessage: Codable, Identifiable {
         case system
     }
 
-    init(role: Role, content: String, imageData: Data? = nil) {
-        self.id = UUID()
+    init(id: UUID = UUID(), role: Role, content: String, imageData: Data? = nil) {
+        self.id = id
         self.role = role
         self.content = content
         self.imageData = imageData

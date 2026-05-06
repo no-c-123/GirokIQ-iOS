@@ -129,6 +129,33 @@ final class CanvasViewModel: ObservableObject {
         set { pages[currentPageIndex] = newValue }
     }
 
+    var currentDrawing: PKDrawing {
+        pages[currentPageIndex].pkDrawing
+    }
+
+    // MARK: - Context Summary
+
+    func canvasContextSummary() -> String {
+        var summary = ""
+        if let title = notebook?.name {
+            summary += "Notebook Title: \(title)\n\n"
+        }
+        
+        for page in pages {
+            let textElements = page.elements.filter { $0.type == "text" }
+            if !textElements.isEmpty {
+                summary += "Page: \(page.title)\n"
+                for element in textElements {
+                    if let content = element.content, !content.isEmpty {
+                        summary += "- \(content)\n"
+                    }
+                }
+                summary += "\n"
+            }
+        }
+        return summary
+    }
+
     // MARK: - Loading
 
     func loadNotebook(notebook: Notebook, userId: UUID) async {

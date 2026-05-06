@@ -36,7 +36,19 @@ enum PencilKitBridge {
         from drawing: PKDrawing,
         size: CGSize = CGSize(width: 1024, height: 768)
     ) -> Data? {
-        let image = renderImage(from: drawing, size: size)
+        // If drawing has strokes, render their actual bounding box
+        // expanded with padding so nothing gets clipped.
+        // Fall back to the fixed size only for empty drawings.
+        let bounds: CGRect
+        if drawing.strokes.isEmpty {
+            bounds = CGRect(origin: .zero, size: size)
+        } else {
+            let strokeBounds = drawing.bounds
+            let padding: CGFloat = 40
+            bounds = strokeBounds.insetBy(dx: -padding, dy: -padding)
+        }
+        
+        let image = drawing.image(from: bounds, scale: 2.0)
         return image.pngData()
     }
 
