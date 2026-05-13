@@ -6,6 +6,8 @@ import PencilKit
 struct AIChatView: View {
     @ObservedObject var viewModel: AIChatViewModel
     var drawing: PKDrawing?
+    @Binding var pendingCaptureData: Data?
+    var onRequestRegionCapture: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -22,6 +24,12 @@ struct AIChatView: View {
                 messageList
 
                 Divider().opacity(0.2)
+
+                // Capture preview bar
+                if let data = pendingCaptureData, let uiImage = UIImage(data: data) {
+                    capturePreviewBar(image: uiImage, onDismiss: { pendingCaptureData = nil })
+                    Divider().opacity(0.2)
+                }
 
                 // Input bar
                 inputBar
@@ -266,6 +274,20 @@ struct AIChatView: View {
                 .accessibilityHint("Send your canvas drawing to the AI")
             }
 
+            // Region capture button
+            if let onRequest = onRequestRegionCapture {
+                Button {
+                    onRequest()
+                } label: {
+                    Image(systemName: "rectangle.dashed.and.paperclip")
+                        .font(.gIconLarge)
+                        .foregroundColor(.gPrimary)
+                }
+                .disabled(viewModel.isStreaming)
+                .accessibilityLabel("Select canvas region")
+                .accessibilityHint("Drag to select a region of the canvas to send to AI")
+            }
+
             TextField("Ask something…", text: $viewModel.inputText, axis: .vertical)
                 .font(.gSubheadline)
                 .foregroundColor(.gTextPrimary)
@@ -296,7 +318,18 @@ struct AIChatView: View {
                 .accessibilityHint("Double tap to stop AI response")
             } else {
                 Button {
-                    Task { await viewModel.sendMessage() }
+                    if let data = pendingCaptureData {
+                        // Send with the captured region image
+                        Task {
+                            await viewModel.sendWithVisionData(
+                                text: viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines),
+                                imageData: data
+                            )
+                            pendingCaptureData = nil
+                        }
+                    } else {
+                        Task { await viewModel.sendMessage() }
+                    }
                 } label: {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.gIconLarge)
@@ -313,6 +346,43 @@ struct AIChatView: View {
         }
         .padding(.horizontal, GSpacing.md)
         .padding(.vertical, GSpacing.sm)
+    }
+
+    private func capturePreviewBar(image: UIImage, onDismiss: @escaping () -> Void) -> some View {
+        HStack(spacing: GSpacing.sm) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipped()
+                .cornerRadius(GRadius.xs)
+                .overlay(
+                    RoundedRectangle(cornerRadius: GRadius.xs)
+                        .stroke(Color.gPrimary.opacity(0.4), lineWidth: 1)
+                )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Canvas region selected")
+                    .font(.gCaption)
+                    .foregroundColor(.gTextPrimary)
+                Text("Ask anything about this area")
+                    .font(.gCaption2)
+                    .foregroundColor(.gTextTertiary)
+            }
+
+            Spacer()
+
+            Button {
+                onDismiss()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.gTextTertiary)
+            }
+        }
+        .padding(.horizontal, GSpacing.md)
+        .padding(.vertical, GSpacing.sm)
+        .background(Color.gElevated)
     }
 }
 

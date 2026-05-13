@@ -174,6 +174,13 @@ final class SupabaseService {
             .value
     }
 
+    func updateChat(_ chat: Chat) async throws {
+        try await supabase.from("chats")
+            .update(chat)
+            .eq("id", value: chat.id.uuidString)
+            .execute()
+    }
+
     // MARK: - Messages
 
     func fetchMessages(chatId: UUID) async throws -> [Message] {

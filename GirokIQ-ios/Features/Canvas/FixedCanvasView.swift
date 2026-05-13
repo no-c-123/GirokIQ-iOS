@@ -3,11 +3,12 @@ import PencilKit
 
 struct FixedCanvasView: View {
     @ObservedObject var viewModel: CanvasViewModel
+    let pageIndex: Int
     let pageSize: CGSize
 
     var body: some View {
-        FixedCanvasRepresentable(viewModel: viewModel, pageSize: pageSize)
-            .ignoresSafeArea()
+        FixedCanvasRepresentable(viewModel: viewModel, pageIndex: pageIndex, pageSize: pageSize)
+            .ignoresSafeArea(edges: [.horizontal, .bottom])
     }
 }
 
@@ -15,17 +16,21 @@ struct FixedCanvasView: View {
 
 struct FixedCanvasRepresentable: UIViewRepresentable {
     @ObservedObject var viewModel: CanvasViewModel
+    let pageIndex: Int
     let pageSize: CGSize
     
     var allowsFingerDrawing: Bool {
         !viewModel.palmRejectionEnabled
     }
+    
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(viewModel: viewModel)
+        Coordinator(viewModel: viewModel, pageIndex: pageIndex)
     }
 
     func makeUIView(context: Context) -> FixedCanvasHostView {
+        let page = viewModel.pages[pageIndex]
         let hostView = FixedCanvasHostView(pageSize: pageSize, viewModel: viewModel)
         let canvasView = hostView.canvasView
 
@@ -33,18 +38,54 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         canvasView.drawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
 
         // Configure background pattern
-        hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
+        hostView.backgroundPatternView.pattern = page.backgroundPattern
         if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
-            hostView.backgroundPatternView.pageBackgroundColor = color
+            hostView.backgroundPatternView.pageBackgroundColor = Self.resolveBackgroundColor(hex: hex)
         }
+        
+        hostView.backgroundPatternView.overrideUserInterfaceStyle = colorScheme == .dark ? .dark : .light
 
         context.coordinator.hostView = hostView
         context.coordinator.canvasView = canvasView
 
+        hostView.canvasView.onSelectionChanged = { [weak viewModel, weak hostView] viewRect in
+            guard let vm = viewModel, let host = hostView, vm.currentPageIndex == pageIndex else { return }
+            Task { @MainActor in
+                if let rect = viewRect, rect.width > 4, rect.height > 4 {
+                    // Anchor the menu above the selection bounding box center
+                    let anchor = CGPoint(x: rect.midX, y: rect.minY - 16)
+                    vm.presentEditMenu(at: anchor)
+                    
+                    // Convert view rect to canvas rect to populate selectionBoundingBox
+                    let scale = host.canvasView.zoomScale
+                    let offset = host.canvasView.contentOffset
+                    let canvasRect = CGRect(
+                        x: (rect.minX + offset.x) / scale,
+                        y: (rect.minY + offset.y) / scale,
+                        width: rect.width / scale,
+                        height: rect.height / scale
+                    )
+                    vm.selectionBoundingBox = canvasRect
+                    
+                    // Populate selectedStrokeIndices by finding strokes inside the rect
+                    let drawing = host.canvasView.drawing
+                    let selected = drawing.strokes.indices.filter { i in
+                        drawing.strokes[i].renderBounds.intersects(canvasRect)
+                    }
+                    vm.selectedStrokeIndices = Set(selected)
+                } else {
+                    if !vm.selectedStrokeIndices.isEmpty {
+                        vm.dismissEditMenu()
+                        vm.selectionBoundingBox = nil
+                        vm.selectedStrokeIndices = []
+                    }
+                }
+            }
+        }
+
         // Load existing drawing data from the current page
-        context.coordinator.currentPageId = viewModel.currentPage.id
-        if let data = viewModel.currentPage.drawingData,
+        context.coordinator.currentPageId = page.id
+        if let data = page.drawingData,
            let drawing = PencilKitBridge.deserialize(data) {
             context.coordinator.setDrawing(drawing, on: canvasView)
         }
@@ -69,10 +110,15 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         let menuBlocker = MenuBlockerGestureRecognizer(canvas: canvasView)
         canvasView.addGestureRecognizer(menuBlocker)
 
-        // Forward UndoManager to viewModel
-        Task { @MainActor in
-            viewModel.pkUndoManager = canvasView.undoManager
-            viewModel.refreshUndoState()
+        // Remove any pre-existing UIEditMenuInteractions just in case
+        canvasView.interactions.removeAll(where: { $0 is UIEditMenuInteraction })
+
+        // Forward UndoManager to viewModel if this is the active page
+        if viewModel.currentPageIndex == pageIndex {
+            Task { @MainActor in
+                viewModel.pkUndoManager = canvasView.undoManager
+                viewModel.refreshUndoState()
+            }
         }
 
         // Tap gesture for text and image placement
@@ -83,9 +129,22 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ hostView: FixedCanvasHostView, context: Context) {
+        let isCurrentPage = viewModel.currentPageIndex == pageIndex
+        let page = viewModel.pages[pageIndex]
+
+        // Sync SwiftUI colorScheme into UIKit trait collection so dynamic UIColors resolve correctly
+        let targetStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        if hostView.backgroundPatternView.overrideUserInterfaceStyle != targetStyle {
+            hostView.backgroundPatternView.overrideUserInterfaceStyle = targetStyle
+            hostView.backgroundPatternView.layer.setNeedsDisplay()
+        }
+
         let canvasView = hostView.canvasView
-        DispatchQueue.main.async {
-            viewModel.canvasViewSize = hostView.bounds.size
+        
+        if isCurrentPage {
+            DispatchQueue.main.async {
+                viewModel.canvasViewSize = hostView.bounds.size
+            }
         }
 
         let newTool = currentPKTool()
@@ -107,38 +166,40 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         }
 
         // Sync background pattern
-        if hostView.backgroundPatternView.pattern != viewModel.backgroundPattern {
-            hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
+        if hostView.backgroundPatternView.pattern != page.backgroundPattern {
+            hostView.backgroundPatternView.pattern = page.backgroundPattern
         }
         if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
+            let color = Self.resolveBackgroundColor(hex: hex)
             if hostView.backgroundPatternView.pageBackgroundColor != color {
                 hostView.backgroundPatternView.pageBackgroundColor = color
+                hostView.pageBackgroundView.backgroundColor = color
             }
         }
 
-        // Sync drawing data when page changes
-        if context.coordinator.currentPageIndex != viewModel.currentPageIndex || context.coordinator.currentPageId != viewModel.currentPage.id || viewModel.forceDrawingUpdate {
-            context.coordinator.currentPageIndex = viewModel.currentPageIndex
-            context.coordinator.currentPageId = viewModel.currentPage.id
-            let pageDrawing = viewModel.currentPage.pkDrawing
+        // Handle programmatic drawing updates
+        if isCurrentPage && viewModel.forceDrawingUpdate {
+            let pageDrawing = page.pkDrawing
             
-            if viewModel.forceDrawingUpdate {
-                if let undoManager = canvasView.undoManager {
-                    let oldDrawing = canvasView.drawing
-                    undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
-                        coordinator.setDrawing(oldDrawing, on: canvasView)
-                    }
+            // If it's a programmatic shape update, inject it using the UndoManager to preserve undo/redo stack
+            if let undoManager = canvasView.undoManager, !viewModel.isLiveResizing {
+                let oldDrawing = viewModel.undoDrawing ?? canvasView.drawing
+                undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
+                    coordinator.setDrawing(oldDrawing, on: canvasView)
                 }
-                context.coordinator.setDrawing(pageDrawing, on: canvasView)
-                
                 DispatchQueue.main.async {
-                    viewModel.forceDrawingUpdate = false
+                    viewModel.undoDrawing = nil
                 }
-            } else {
-                context.coordinator.setDrawing(pageDrawing, on: canvasView)
             }
+            context.coordinator.setDrawing(pageDrawing, on: canvasView)
             
+            DispatchQueue.main.async {
+                viewModel.forceDrawingUpdate = false
+            }
+        }
+        
+        // Always sync UndoManager to viewModel when this page becomes active
+        if isCurrentPage && viewModel.pkUndoManager !== canvasView.undoManager {
             Task { @MainActor in
                 viewModel.pkUndoManager = canvasView.undoManager
                 viewModel.refreshUndoState()
@@ -168,10 +229,24 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         )
     }
 
+    /// Maps a stored hex to a UIColor, using adaptive tokens for "Default"-class colors.
+    /// "#0F0F0E" is the legacy default (dark), and "#F8F8FA" is the light-mode gBackground value.
+    /// Both should resolve to the adaptive .gBackground token so they respond to dark/light mode.
+    private static func resolveBackgroundColor(hex: String) -> UIColor {
+        let normalized = hex.uppercased()
+        switch normalized {
+        case "#0F0F0E", "#F8F8FA":
+            return .gBackground   // adaptive: off-white in light, near-black in dark
+        default:
+            return UIColor(hex: hex)  // user-chosen static color — keep as-is
+        }
+    }
+
     // MARK: - Coordinator
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
         var viewModel: CanvasViewModel
+        let pageIndex: Int
         weak var canvasView: GirokCanvasView?
         weak var hostView: FixedCanvasHostView?
         var currentPageIndex: Int = 0
@@ -180,9 +255,10 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         private var isUpdatingDrawing = false
         private var lastStrokeFromPencil = true
         
-        init(viewModel: CanvasViewModel) {
+        init(viewModel: CanvasViewModel, pageIndex: Int) {
             self.viewModel = viewModel
-            self.currentPageIndex = viewModel.currentPageIndex
+            self.pageIndex = pageIndex
+            self.currentPageIndex = pageIndex
         }
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
@@ -196,7 +272,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
 
             let fromPencil = lastStrokeFromPencil
             Task { @MainActor in
-                self.viewModel.drawingDidChange(canvasView.drawing, fromPencil: fromPencil)
+                self.viewModel.drawingDidChange(canvasView.drawing, pageIndex: self.pageIndex, fromPencil: fromPencil)
             }
         }
         
@@ -273,7 +349,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             
             if let undoManager = canvas.undoManager, undoManager.isUndoing || undoManager.isRedoing {
                 Task { @MainActor in
-                    self.viewModel.drawingDidChange(drawing, fromPencil: self.lastStrokeFromPencil)
+                    self.viewModel.drawingDidChange(drawing, pageIndex: self.pageIndex, fromPencil: self.lastStrokeFromPencil)
                 }
             }
         }
@@ -337,7 +413,7 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         scrollView.addSubview(pageContainerView)
 
         pageBackgroundView.frame = CGRect(origin: .zero, size: pageSize)
-        pageBackgroundView.backgroundColor = .white
+        pageBackgroundView.backgroundColor = .gBackground
         pageBackgroundView.layer.shadowColor = UIColor.black.cgColor
         pageBackgroundView.layer.shadowOpacity = 0.18
         pageBackgroundView.layer.shadowRadius = 12
@@ -347,13 +423,26 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         backgroundPatternView.clipsToBounds = true
         pageBackgroundView.addSubview(backgroundPatternView)
 
+        if let viewModel = viewModel {
+            let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel, canvasView: scrollView))
+            blockHost.view.backgroundColor = .clear
+            blockHost.view.isUserInteractionEnabled = true
+            blockHost.view.frame = CGRect(origin: .zero, size: pageSize)
+            pageContainerView.addSubview(blockHost.view)
+            self.blockOverlayHostView = blockHost
+        }
+
         canvasView.frame = CGRect(origin: .zero, size: pageSize)
         canvasView.contentSize = pageSize
         canvasView.backgroundColor = .clear
         canvasView.isOpaque = false
+        // Fixed Canvas drawing quality improvement:
+        // Set contentScaleFactor explicitly to prevent pixelation when zoomed.
+        canvasView.contentScaleFactor = UIScreen.main.scale
         if let contentView = canvasView.subviews.first {
             contentView.backgroundColor = .clear
             contentView.isOpaque = false
+            contentView.contentScaleFactor = UIScreen.main.scale
         }
         
         // PKCanvasView is itself a UIScrollView. Disable its own scrolling/zooming
@@ -367,16 +456,6 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         canvasView.panGestureRecognizer.isEnabled = false
 
         pageContainerView.addSubview(canvasView)
-
-        if let viewModel = viewModel {
-            let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel))
-            blockHost.view.backgroundColor = .clear
-            blockHost.view.isUserInteractionEnabled = true
-            blockHost.view.frame = bounds
-            blockHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            addSubview(blockHost.view)
-            self.blockOverlayHostView = blockHost
-        }
     }
 
     override func layoutSubviews() {
@@ -387,6 +466,13 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         let fitZoom = (bounds.width - 80) / pageSize.width
         scrollView.zoomScale = max(scrollView.minimumZoomScale, min(fitZoom, scrollView.maximumZoomScale))
         centerPage()
+        
+        let newScale = UIScreen.main.scale * scrollView.zoomScale
+        canvasView.contentScaleFactor = newScale
+        if let contentView = canvasView.subviews.first {
+            contentView.contentScaleFactor = newScale
+        }
+        
         didSetInitialZoom = true
     }
 
@@ -406,6 +492,15 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         centerPage()
         Task { @MainActor in
             self.viewModel?.canvasScale = scrollView.zoomScale
+        }
+        
+        // Dynamically update the internal contentScaleFactor of the PKCanvasView to match the zoom scale.
+        // This forces PencilKit to re-rasterize the vector strokes at the correct resolution instead of 
+        // blowing up a low-res bitmap, fixing the blurry strokes on the fixed canvas.
+        let newScale = UIScreen.main.scale * scrollView.zoomScale
+        canvasView.contentScaleFactor = newScale
+        if let contentView = canvasView.subviews.first {
+            contentView.contentScaleFactor = newScale
         }
     }
 

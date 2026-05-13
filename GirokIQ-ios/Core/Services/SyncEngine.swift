@@ -71,7 +71,9 @@ final class SyncEngine: ObservableObject {
                         let webStrokes = try await remote.fetchWebStrokes(pageId: page.id)
                         if !webStrokes.isEmpty {
                             let drawing = PencilKitBridge.convertWebStrokes(webStrokes)
-                            let data = PencilKitBridge.serialize(drawing)
+                            let data = await MainActor.run {
+                                PencilKitBridge.serialize(drawing)
+                            }
                             try await local.savePageDrawing(data, pageId: page.id, syncStatus: .synced)
                         }
                     }

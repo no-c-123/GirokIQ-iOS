@@ -41,13 +41,22 @@ final class BackgroundPatternView: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previousTraitCollection) {
+            layer.setNeedsDisplay()
+        }
+    }
+
     // MARK: - Drawing
 
     override func draw(_ rect: CGRect) {
         guard let ctx = UIGraphicsGetCurrentContext() else { return }
+        
+        let traits = UITraitCollection.current
 
         // Fill tile background
-        ctx.setFillColor(pageBackgroundColor.cgColor)
+        ctx.setFillColor(pageBackgroundColor.resolvedColor(with: traits).cgColor)
         ctx.fill(rect)
 
         let spacing: CGFloat = 28
@@ -56,20 +65,20 @@ final class BackgroundPatternView: UIView {
         case .blank:
             break
         case .grid:
-            drawGrid(in: rect, context: ctx, spacing: spacing)
+            drawGrid(in: rect, context: ctx, spacing: spacing, traits: traits)
         case .dots:
-            drawDots(in: rect, context: ctx, spacing: spacing)
+            drawDots(in: rect, context: ctx, spacing: spacing, traits: traits)
         case .lines:
-            drawLines(in: rect, context: ctx, spacing: spacing)
+            drawLines(in: rect, context: ctx, spacing: spacing, traits: traits)
         case .isometric:
-            drawIsometric(in: rect, context: ctx, spacing: spacing)
+            drawIsometric(in: rect, context: ctx, spacing: spacing, traits: traits)
         }
     }
 
     // MARK: - Pattern Renderers
 
-    private func drawGrid(in rect: CGRect, context ctx: CGContext, spacing: CGFloat) {
-        ctx.setStrokeColor(UIColor.gGridLine.cgColor)
+    private func drawGrid(in rect: CGRect, context ctx: CGContext, spacing: CGFloat, traits: UITraitCollection) {
+        ctx.setStrokeColor(UIColor.gGridLine.resolvedColor(with: traits).cgColor)
         ctx.setLineWidth(0.5)
 
         let startX = floor(rect.minX / spacing) * spacing
@@ -90,8 +99,8 @@ final class BackgroundPatternView: UIView {
         ctx.strokePath()
     }
 
-    private func drawDots(in rect: CGRect, context ctx: CGContext, spacing: CGFloat) {
-        ctx.setFillColor(UIColor.gDot.cgColor)
+    private func drawDots(in rect: CGRect, context ctx: CGContext, spacing: CGFloat, traits: UITraitCollection) {
+        ctx.setFillColor(UIColor.gDot.resolvedColor(with: traits).cgColor)
         let startX = floor(rect.minX / spacing) * spacing
         let startY = floor(rect.minY / spacing) * spacing
 
@@ -106,8 +115,8 @@ final class BackgroundPatternView: UIView {
         }
     }
 
-    private func drawLines(in rect: CGRect, context ctx: CGContext, spacing: CGFloat) {
-        ctx.setStrokeColor(UIColor.gGridLine.cgColor)
+    private func drawLines(in rect: CGRect, context ctx: CGContext, spacing: CGFloat, traits: UITraitCollection) {
+        ctx.setStrokeColor(UIColor.gGridLine.resolvedColor(with: traits).cgColor)
         ctx.setLineWidth(0.5)
         let startY = floor(rect.minY / spacing) * spacing
 
@@ -120,8 +129,8 @@ final class BackgroundPatternView: UIView {
         ctx.strokePath()
     }
 
-    private func drawIsometric(in rect: CGRect, context ctx: CGContext, spacing: CGFloat) {
-        ctx.setStrokeColor(UIColor.gGridLine.cgColor)
+    private func drawIsometric(in rect: CGRect, context ctx: CGContext, spacing: CGFloat, traits: UITraitCollection) {
+        ctx.setStrokeColor(UIColor.gGridLine.resolvedColor(with: traits).cgColor)
         ctx.setLineWidth(0.5)
         let h = spacing * 0.866
         let startY = floor(rect.minY / h) * h - rect.height

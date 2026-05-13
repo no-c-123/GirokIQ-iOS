@@ -138,8 +138,11 @@ final class AIService {
         imageData: Data?,
         model: String
     ) -> [String: Any] {
-        var apiMessages: [[String: Any]] = messages.map { msg in
-            if let data = msg.imageData ?? (msg.role == .user ? imageData : nil) {
+        let lastUserIndex = messages.indices.last(where: { messages[$0].role == .user })
+        var apiMessages: [[String: Any]] = messages.enumerated().map { index, msg in
+            let isLastUser = index == lastUserIndex
+            let attachedImage = isLastUser ? (msg.imageData ?? imageData) : msg.imageData
+            if let data = attachedImage {
                 return [
                     "role": msg.role.rawValue,
                     "content": [

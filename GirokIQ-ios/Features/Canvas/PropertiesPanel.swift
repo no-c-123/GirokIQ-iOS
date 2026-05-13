@@ -9,6 +9,35 @@ struct PropertiesPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             scrollContent
+            
+            Divider().opacity(0.15)
+            
+            HStack(spacing: 0) {
+                Button { viewModel.undo() } label: {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.gIconMedium)
+                        .foregroundColor(!viewModel.canUndo ? Color.gTextTertiary : Color.gTextSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .disabled(!viewModel.canUndo)
+                .accessibilityLabel("Undo")
+                .keyboardShortcut("z", modifiers: .command)
+
+                Divider()
+                    .frame(width: 0.5, height: 24)
+                    .background(Color.gBorder.opacity(0.3))
+
+                Button { viewModel.redo() } label: {
+                    Image(systemName: "arrow.uturn.forward")
+                        .font(.gIconMedium)
+                        .foregroundColor(!viewModel.canRedo ? Color.gTextTertiary : Color.gTextSecondary)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                }
+                .disabled(!viewModel.canRedo)
+                .accessibilityLabel("Redo")
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
+            .buttonStyle(.plain)
         }
         .frame(width: 200)
         .background(
@@ -349,15 +378,14 @@ struct PropertiesPanel: View {
                     }
                 }
                 
-                // Bottom row (2 items)
-                HStack(spacing: 6) {
-                    ForEach(3..<5, id: \.self) { i in
-                        lassoActionButton(action: actions[i])
-                    }
-                    // Empty spacer slot to keep the 3-column width alignment
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                }
+                // Bottom row: Duplicate | Delete | Screenshot 
+                HStack(spacing: 6) { 
+                    ForEach(3..<5, id: \.self) { i in 
+                        lassoActionButton(action: actions[i]) 
+                    } 
+                    // Screenshot fills the previously-empty third slot 
+                    lassoScreenshotButton 
+                } 
             }
             
             HStack(spacing: 6) {
@@ -369,50 +397,6 @@ struct PropertiesPanel: View {
             }
             .foregroundColor(.gTextTertiary)
             .padding(.top, 4)
-                
-            if !viewModel.selectedElementIds.isEmpty || !viewModel.selectedStrokeIndices.isEmpty {
-                Divider()
-
-                Text("RESIZE SELECTION")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-                    .tracking(0.5)
-                    .padding(.top, 8)
-
-                // Slider drives pendingResizeScale — separate from the on-canvas drag handle
-                HStack {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .foregroundColor(.secondary)
-                        .frame(width: 20)
-                    Slider(
-                        value: $viewModel.pendingResizeScale,
-                        in: 0.25...3.0,
-                        step: 0.05
-                    )
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .foregroundColor(.secondary)
-                        .frame(width: 20)
-                }
-
-                Text("\(Int(viewModel.pendingResizeScale * 100))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                // Apply commits pendingResizeScale
-                Button {
-                    viewModel.applySelectionResize(scale: viewModel.pendingResizeScale)
-                } label: {
-                    Text("Apply Resize")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
-            }
         }
     }
 
@@ -436,6 +420,66 @@ struct PropertiesPanel: View {
         .disabled(action.3 && !UIPasteboard.general.hasStrings && !UIPasteboard.general.hasImages)
         .opacity((action.3 && !UIPasteboard.general.hasStrings && !UIPasteboard.general.hasImages) ? 0.35 : 1.0)
     }
+
+    /// Screenshot tile — same size/shape as the other lasso action buttons, gold-tinted 
+    /// to make it visually distinct and easy to find. 
+    private var lassoScreenshotButton: some View { 
+        Button(action: { presentScreenshotShareSheet() }) { 
+            VStack(spacing: 4) { 
+                Image(systemName: "camera.viewfinder") 
+                    .font(.system(size: 20)) 
+                Text("Screenshot") 
+                    .font(.system(size: 11)) 
+                    .foregroundColor(.gTextSecondary) 
+            } 
+            .foregroundColor(Color(hex: "#C9A84C"))   // Gold — visually distinct from others 
+            .frame(maxWidth: .infinity) 
+            .frame(height: 56) 
+            .background(Color.gElevated) 
+            .cornerRadius(GRadius.sm) 
+            .overlay( 
+                RoundedRectangle(cornerRadius: GRadius.sm) 
+                    .stroke(Color(hex: "#C9A84C").opacity(0.35), lineWidth: 1) 
+            ) 
+        } 
+        .buttonStyle(.plain) 
+    } 
+
+    private func presentScreenshotShareSheet() { 
+        guard 
+            let data = viewModel.renderSelectionToPNG(), 
+            let image = UIImage(data: data) 
+        else { return } 
+
+        let ac = UIActivityViewController( 
+            activityItems: [image], 
+            applicationActivities: nil 
+        ) 
+
+        guard 
+            let windowScene = UIApplication.shared.connectedScenes 
+                .compactMap({ $0 as? UIWindowScene }).first, 
+            let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController 
+        else { return } 
+
+        var topVC = rootVC 
+        while let presented = topVC.presentedViewController { 
+            topVC = presented 
+        } 
+
+        if let popover = ac.popoverPresentationController { 
+            popover.sourceView = topVC.view 
+            popover.sourceRect = CGRect( 
+                x: topVC.view.bounds.midX, 
+                y: topVC.view.bounds.midY, 
+                width: 0, 
+                height: 0 
+            ) 
+            popover.permittedArrowDirections = [] 
+        } 
+
+        topVC.present(ac, animated: true) 
+    } 
 
     // MARK: - Opacity Slider
 

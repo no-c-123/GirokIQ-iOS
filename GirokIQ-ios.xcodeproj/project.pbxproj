@@ -311,7 +311,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "GirokIQ-ios/Info.plist";
 				INFOPLIST_KEY_ANTHROPIC_API_KEY = "$(ANTHROPIC_API_KEY)";
+				INFOPLIST_KEY_CFBundleDisplayName = GirokIQ;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "GirokIQ needs access to your photo library to let you insert images into your canvas.";
 				INFOPLIST_KEY_SUPABASE_ANON_KEY = "$(SUPABASE_ANON_KEY)";
 				INFOPLIST_KEY_SUPABASE_URL = "$(SUPABASE_URL)";
 				INFOPLIST_KEY_UIAppFonts = "InstrumentSerif-Regular.ttf";
@@ -337,7 +339,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Debug;
 		};
@@ -355,7 +357,9 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "GirokIQ-ios/Info.plist";
 				INFOPLIST_KEY_ANTHROPIC_API_KEY = "$(ANTHROPIC_API_KEY)";
+				INFOPLIST_KEY_CFBundleDisplayName = GirokIQ;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "GirokIQ needs access to your photo library to let you insert images into your canvas.";
 				INFOPLIST_KEY_SUPABASE_ANON_KEY = "$(SUPABASE_ANON_KEY)";
 				INFOPLIST_KEY_SUPABASE_URL = "$(SUPABASE_URL)";
 				INFOPLIST_KEY_UIAppFonts = "InstrumentSerif-Regular.ttf";
@@ -381,7 +385,7 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 			};
 			name = Release;
 		};

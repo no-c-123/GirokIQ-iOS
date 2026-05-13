@@ -45,16 +45,20 @@ final class LocalDatabase {
         var migrator = DatabaseMigrator()
 
         migrator.registerMigration("v1") { db in
-            try db.create(table: "notebook") { t in
+            try db.create(table: "notebook", ifNotExists: true) { t in
                 t.column("id", .text).notNull().primaryKey()
                 t.column("user_id", .text).notNull()
                 t.column("folder_id", .text)
                 t.column("name", .text).notNull().defaults(to: "Untitled")
+                t.column("canvas_type", .text).notNull().defaults(to: "infinite")
+                t.column("page_dimensions", .blob)
+                t.column("background_pattern", .text).notNull().defaults(to: "blank")
+                t.column("background_color_hex", .text).notNull().defaults(to: "#0F0F0E")
                 t.column("created_at", .datetime).notNull()
                 t.column("updated_at", .datetime).notNull()
             }
 
-            try db.create(table: "folder") { t in
+            try db.create(table: "folder", ifNotExists: true) { t in
                 t.column("id", .text).notNull().primaryKey()
                 t.column("user_id", .text).notNull()
                 t.column("parent_id", .text)
@@ -63,7 +67,7 @@ final class LocalDatabase {
                 t.column("updated_at", .datetime).notNull()
             }
 
-            try db.create(table: "page") { t in
+            try db.create(table: "page", ifNotExists: true) { t in
                 t.column("id", .text).notNull().primaryKey()
                 t.column("user_id", .text).notNull()
                 t.column("notebook_id", .text).notNull().references("notebook", onDelete: .cascade)
@@ -76,16 +80,34 @@ final class LocalDatabase {
             }
             
             // Separate table for drawing binary blobs to keep 'page' table fast
-            try db.create(table: "page_drawing") { t in
+            try db.create(table: "page_drawing", ifNotExists: true) { t in
                 t.column("page_id", .text).notNull().primaryKey()
                 t.column("drawing_data", .blob).notNull()
             }
             
-            try db.create(table: "sync_change") { t in
+            try db.create(table: "sync_change", ifNotExists: true) { t in
                 t.column("id", .text).notNull()
                 t.column("table", .text).notNull()
                 t.column("status", .text).notNull()
                 t.primaryKey(["id", "table"])
+            }
+        }
+
+        migrator.registerMigration("v2") { db in
+            // Safely add columns that may be missing on older installs.
+            // Uses raw SQL with IF NOT EXISTS — GRDB's alter() has no such guard.
+            let existingColumns = try db.columns(in: "notebook").map(\.name)
+            if !existingColumns.contains("canvas_type") {
+                try db.execute(sql: "ALTER TABLE notebook ADD COLUMN canvas_type TEXT NOT NULL DEFAULT 'infinite'")
+            }
+            if !existingColumns.contains("page_dimensions") {
+                try db.execute(sql: "ALTER TABLE notebook ADD COLUMN page_dimensions BLOB")
+            }
+            if !existingColumns.contains("background_pattern") {
+                try db.execute(sql: "ALTER TABLE notebook ADD COLUMN background_pattern TEXT NOT NULL DEFAULT 'blank'")
+            }
+            if !existingColumns.contains("background_color_hex") {
+                try db.execute(sql: "ALTER TABLE notebook ADD COLUMN background_color_hex TEXT NOT NULL DEFAULT '#0F0F0E'")
             }
         }
 

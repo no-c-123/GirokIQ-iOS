@@ -2,13 +2,59 @@ import SwiftUI
 import PencilKit
 
 final class GirokCanvasView: PKCanvasView {
+    var onSelectionChanged: ((CGRect?) -> Void)?
+
+    override func addInteraction(_ interaction: UIInteraction) {
+        // Prevent PencilKit from adding its own edit menu interaction
+        // This allows us to use a completely custom SwiftUI overlay instead.
+        if interaction is UIEditMenuInteraction {
+            return
+        }
+        super.addInteraction(interaction)
+    }
+
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         let actionName = NSStringFromSelector(action)
-        // Disable "Select All" and "Insert Space" which appear when tapping empty canvas
-        if actionName == "selectAll:" || actionName == "_insertSpace:" || actionName == "insertSpace:" {
+        // Disable "Insert Space" since we don't support it in our custom menu
+        if actionName.contains("insertSpace") || actionName.contains("_insertSpace") {
             return false
         }
         return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        
+        // Strip UIEditMenuInteraction from any internal selection views to kill Apple's menu
+        stripEditMenu(from: self)
+        
+        let selectionRect = findSelectionViewFrame()
+        onSelectionChanged?(selectionRect)
+    }
+
+    private func stripEditMenu(from view: UIView) {
+        if view.interactions.contains(where: { $0 is UIEditMenuInteraction }) {
+            view.interactions.removeAll { $0 is UIEditMenuInteraction }
+        }
+        for subview in view.subviews {
+            stripEditMenu(from: subview)
+        }
+    }
+
+    private func findSelectionViewFrame() -> CGRect? {
+        func search(_ view: UIView) -> UIView? {
+            let name = String(describing: type(of: view))
+            if name.contains("Selection") && !name.contains("EditMenu") {
+                return view
+            }
+            for sub in view.subviews {
+                if let found = search(sub) { return found }
+            }
+            return nil
+        }
+        guard let selView = search(self) else { return nil }
+        // Convert to GirokCanvasView coordinates
+        return selView.convert(selView.bounds, to: self)
     }
 }
 
@@ -76,6 +122,7 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     private let backgroundScrollView = UIScrollView()
     private let canvasContentSize: CGSize
     private var viewModel: CanvasViewModel?
+    private var didSetInitialZoom = false
 
     // MARK: - Init
 
@@ -122,7 +169,7 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
 
         // index 1 — block overlay (images, text blocks)
         if let viewModel = viewModel {
-            let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel))
+            let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel, canvasView: canvasView))
             blockHost.view.backgroundColor = .clear
             blockHost.view.isUserInteractionEnabled = true
             blockHost.view.frame = bounds
@@ -197,17 +244,24 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
 
     /// Mirrors PKCanvasView's scroll position and zoom to the background scroll view.
     /// Two property assignments — no frame changes, no tile invalidation.
-    func syncBackground() {
-        backgroundScrollView.contentOffset = canvasView.contentOffset
-        backgroundScrollView.zoomScale = canvasView.zoomScale
-        updateCenteringInsets()
+    func syncBackground(isZooming: Bool = false) {
+        if backgroundScrollView.contentOffset != canvasView.contentOffset {
+            backgroundScrollView.contentOffset = canvasView.contentOffset
+        }
+        if backgroundScrollView.zoomScale != canvasView.zoomScale {
+            backgroundScrollView.zoomScale = canvasView.zoomScale
+        }
+        
+        if isZooming {
+            updateCenteringInsets()
+        }
     }
     
     private func updateCenteringInsets() {
         if viewModel?.notebook?.canvasType == "fixed" {
             let offsetX = max(0, (bounds.width - canvasContentSize.width * canvasView.zoomScale) / 2)
             let offsetY = max(0, (bounds.height - canvasContentSize.height * canvasView.zoomScale) / 2)
-            let insets = UIEdgeInsets(top: offsetY, left: offsetX, bottom: offsetY, right: offsetX)
+            let insets = UIEdgeInsets(top: offsetY + 40, left: offsetX + 40, bottom: 40, right: 40)
             canvasView.contentInset = insets
             backgroundScrollView.contentInset = insets
         }
@@ -234,15 +288,20 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
 /// PKCanvasView, completely outside PencilKit's internal view hierarchy.
 struct PKCanvasRepresentable: UIViewRepresentable {
     @ObservedObject var viewModel: CanvasViewModel
+    let pageIndex: Int
 
     /// Whether finger drawing is allowed (false = Apple Pencil only)
     var allowsFingerDrawing: Bool = false
+    
+    @Environment(\.colorScheme) private var colorScheme
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(viewModel: viewModel)
+        Coordinator(viewModel: viewModel, pageIndex: pageIndex)
     }
 
     func makeUIView(context: Context) -> CanvasHostView {
+        // Use the specific page from the viewModel
+        let page = viewModel.pages[pageIndex]
         let hostView = CanvasHostView(viewModel: viewModel)
         let canvasView = hostView.canvasView
 
@@ -250,20 +309,54 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         canvasView.drawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
 
         // Configure background pattern
-        hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
+        hostView.backgroundPatternView.pattern = page.backgroundPattern
         if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = UIColor(hex: hex)
-            // If the saved hex is the default dark gray "#0F0F0E", map it to the adaptive gBackground token
-            // so that it turns white in light mode. Otherwise use the specific color.
-            hostView.backgroundPatternView.pageBackgroundColor = hex.uppercased() == "#0F0F0E" ? .gBackground : color
+            hostView.backgroundPatternView.pageBackgroundColor = Self.resolveBackgroundColor(hex: hex)
         }
+        
+        hostView.backgroundPatternView.overrideUserInterfaceStyle = colorScheme == .dark ? .dark : .light
 
         context.coordinator.hostView = hostView
         context.coordinator.canvasView = canvasView
 
+        hostView.canvasView.onSelectionChanged = { [weak viewModel, weak hostView] viewRect in
+            guard let vm = viewModel, let host = hostView, vm.currentPageIndex == pageIndex else { return }
+            Task { @MainActor in
+                if let rect = viewRect, rect.width > 4, rect.height > 4 {
+                    // Anchor the menu above the selection bounding box center
+                    let anchor = CGPoint(x: rect.midX, y: rect.minY - 16)
+                    vm.presentEditMenu(at: anchor)
+                    
+                    // Convert view rect to canvas rect to populate selectionBoundingBox
+                    let scale = host.canvasView.zoomScale
+                    let offset = host.canvasView.contentOffset
+                    let canvasRect = CGRect(
+                        x: (rect.minX + offset.x) / scale,
+                        y: (rect.minY + offset.y) / scale,
+                        width: rect.width / scale,
+                        height: rect.height / scale
+                    )
+                    vm.selectionBoundingBox = canvasRect
+                    
+                    // Populate selectedStrokeIndices by finding strokes inside the rect
+                    let drawing = host.canvasView.drawing
+                    let selected = drawing.strokes.indices.filter { i in
+                        drawing.strokes[i].renderBounds.intersects(canvasRect)
+                    }
+                    vm.selectedStrokeIndices = Set(selected)
+                } else {
+                    if !vm.selectedStrokeIndices.isEmpty {
+                        vm.dismissEditMenu()
+                        vm.selectionBoundingBox = nil
+                        vm.selectedStrokeIndices = []
+                    }
+                }
+            }
+        }
+
         // Load existing drawing data from the current page
-        context.coordinator.currentPageId = viewModel.currentPage.id
-        if let data = viewModel.currentPage.drawingData,
+        context.coordinator.currentPageId = page.id
+        if let data = page.drawingData,
            let drawing = PencilKitBridge.deserialize(data) {
             context.coordinator.setDrawing(drawing, on: canvasView)
         }
@@ -288,16 +381,15 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         let menuBlocker = MenuBlockerGestureRecognizer(canvas: canvasView)
         canvasView.addGestureRecognizer(menuBlocker)
         
-        // Custom Pan Gesture to track Lasso rectangle in canvas space
-        let lassoTracker = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLassoPan(_:)))
-        lassoTracker.delegate = context.coordinator
-        lassoTracker.cancelsTouchesInView = false
-        canvasView.addGestureRecognizer(lassoTracker)
-
-        // Forward UndoManager to viewModel
-        Task { @MainActor in
-            viewModel.pkUndoManager = canvasView.undoManager
-            viewModel.refreshUndoState()
+        // Remove any pre-existing UIEditMenuInteractions just in case
+        canvasView.interactions.removeAll(where: { $0 is UIEditMenuInteraction })
+        
+        // Forward UndoManager to viewModel if this is the active page
+        if viewModel.currentPageIndex == pageIndex {
+            Task { @MainActor in
+                viewModel.pkUndoManager = canvasView.undoManager
+                viewModel.refreshUndoState()
+            }
         }
 
         // Tap gesture for text and image placement
@@ -308,9 +400,26 @@ struct PKCanvasRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ hostView: CanvasHostView, context: Context) {
+        let isCurrentPage = viewModel.currentPageIndex == pageIndex
+        let page = viewModel.pages[pageIndex]
+
+        // Sync SwiftUI colorScheme into UIKit trait collection so dynamic UIColors resolve correctly
+        let targetStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
+        if hostView.backgroundPatternView.overrideUserInterfaceStyle != targetStyle {
+            hostView.backgroundPatternView.overrideUserInterfaceStyle = targetStyle
+            hostView.backgroundPatternView.layer.setNeedsDisplay()
+        }
+
         let canvasView = hostView.canvasView
-        DispatchQueue.main.async {
-            viewModel.canvasViewSize = hostView.bounds.size
+        
+        // PERFORMANCE: Only update canvasViewSize if it actually changed and it's the current page
+        if isCurrentPage {
+            let newSize = hostView.bounds.size
+            if viewModel.canvasViewSize != newSize && newSize != .zero {
+                DispatchQueue.main.async {
+                    viewModel.canvasViewSize = newSize
+                }
+            }
         }
 
         // Only rebuild PKTool when tool-related properties actually changed
@@ -321,51 +430,54 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
         let isBlockTool = viewModel.selectedTool == .text || viewModel.selectedTool == .image
         if isBlockTool {
-            canvasView.isUserInteractionEnabled = false
+            if canvasView.isUserInteractionEnabled {
+                canvasView.isUserInteractionEnabled = false
+            }
         } else {
-            canvasView.isUserInteractionEnabled = true
-            canvasView.drawingGestureRecognizer.isEnabled = true
+            if !canvasView.isUserInteractionEnabled {
+                canvasView.isUserInteractionEnabled = true
+                canvasView.drawingGestureRecognizer.isEnabled = true
+            }
             let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
             if canvasView.drawingPolicy != newPolicy {
                 canvasView.drawingPolicy = newPolicy
             }
         }
 
-        // Sync background pattern when it changes
-        if hostView.backgroundPatternView.pattern != viewModel.backgroundPattern {
-            hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
+        // Sync background pattern when it changes for THIS page
+        if hostView.backgroundPatternView.pattern != page.backgroundPattern {
+            hostView.backgroundPatternView.pattern = page.backgroundPattern
         }
         if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
+            let color = Self.resolveBackgroundColor(hex: hex)
             if hostView.backgroundPatternView.pageBackgroundColor != color {
                 hostView.backgroundPatternView.pageBackgroundColor = color
             }
         }
 
-        // Sync drawing data when page changes (detect by comparing index or ID)
-        if context.coordinator.currentPageIndex != viewModel.currentPageIndex || context.coordinator.currentPageId != viewModel.currentPage.id || viewModel.forceDrawingUpdate {
-            context.coordinator.currentPageIndex = viewModel.currentPageIndex
-            context.coordinator.currentPageId = viewModel.currentPage.id
-            let pageDrawing = viewModel.currentPage.pkDrawing
+        // Handle programmatic drawing updates (e.g. from undo/redo or shape snapping)
+        if isCurrentPage && viewModel.forceDrawingUpdate {
+            let pageDrawing = page.pkDrawing
             
-            if viewModel.forceDrawingUpdate {
-                // If it's a programmatic shape update, inject it using the UndoManager to preserve undo/redo stack
-                if let undoManager = canvasView.undoManager {
-                    let oldDrawing = canvasView.drawing
-                    undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
-                        coordinator.setDrawing(oldDrawing, on: canvasView)
-                    }
+            // If it's a programmatic shape update, inject it using the UndoManager to preserve undo/redo stack
+            if let undoManager = canvasView.undoManager, !viewModel.isLiveResizing {
+                let oldDrawing = viewModel.undoDrawing ?? canvasView.drawing
+                undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
+                    coordinator.setDrawing(oldDrawing, on: canvasView)
                 }
-                context.coordinator.setDrawing(pageDrawing, on: canvasView)
-                
                 DispatchQueue.main.async {
-                    viewModel.forceDrawingUpdate = false
+                    viewModel.undoDrawing = nil
                 }
-            } else {
-                // Regular page change, just set drawing normally
-                context.coordinator.setDrawing(pageDrawing, on: canvasView)
             }
+            context.coordinator.setDrawing(pageDrawing, on: canvasView)
             
+            DispatchQueue.main.async {
+                viewModel.forceDrawingUpdate = false
+            }
+        }
+        
+        // Always sync UndoManager to viewModel when this page becomes active
+        if isCurrentPage && viewModel.pkUndoManager !== canvasView.undoManager {
             Task { @MainActor in
                 viewModel.pkUndoManager = canvasView.undoManager
                 viewModel.refreshUndoState()
@@ -385,6 +497,19 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         return false
     }
 
+    /// Maps a stored hex to a UIColor, using adaptive tokens for "Default"-class colors.
+    /// "#0F0F0E" is the legacy default (dark), and "#F8F8FA" is the light-mode gBackground value.
+    /// Both should resolve to the adaptive .gBackground token so they respond to dark/light mode.
+    private static func resolveBackgroundColor(hex: String) -> UIColor {
+        let normalized = hex.uppercased()
+        switch normalized {
+        case "#0F0F0E", "#F8F8FA":
+            return .gBackground   // adaptive: off-white in light, near-black in dark
+        default:
+            return UIColor(hex: hex)  // user-chosen static color — keep as-is
+        }
+    }
+
     // MARK: - Helpers
 
     private func currentPKTool() -> PKTool {
@@ -402,12 +527,11 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
     final class Coordinator: NSObject, PKCanvasViewDelegate, UIPencilInteractionDelegate, UIGestureRecognizerDelegate {
         var viewModel: CanvasViewModel
+        let pageIndex: Int
         weak var canvasView: PKCanvasView?
         weak var hostView: CanvasHostView?
         var currentPageIndex: Int = 0
         var currentPageId: UUID?
-
-        var lassoStartPoint: CGPoint? = nil
 
         /// Tracks whether we are currently performing a programmatic drawing update
         private var isUpdatingDrawing = false
@@ -415,9 +539,10 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         /// Tracks whether the current/most-recent stroke came from Apple Pencil
         private var lastStrokeFromPencil = true
         
-        init(viewModel: CanvasViewModel) {
+        init(viewModel: CanvasViewModel, pageIndex: Int) {
             self.viewModel = viewModel
-            self.currentPageIndex = viewModel.currentPageIndex
+            self.pageIndex = pageIndex
+            self.currentPageIndex = pageIndex
         }
 
         // MARK: PKCanvasViewDelegate
@@ -435,40 +560,21 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isUpdatingDrawing else { return }
 
-            // If lasso tool is active, try to determine which strokes are selected
-            // by checking which strokes' renderBounds intersect the lasso region
-            if viewModel.selectedTool == .lasso, let lassoRect = viewModel.pendingLassoRect {
-                let drawing = canvasView.drawing
-                let selected = drawing.strokes.indices.filter { i in
-                    drawing.strokes[i].renderBounds.intersects(lassoRect)
-                }
-                Task { @MainActor in
-                    self.viewModel.selectedStrokeIndices = Set(selected)
-                    self.viewModel.computeSelectionBoundingBox()
-                }
-            }
-
             let fromPencil = lastStrokeFromPencil
 
             Task { @MainActor in
-                self.viewModel.drawingDidChange(canvasView.drawing, fromPencil: fromPencil)
+                self.viewModel.drawingDidChange(canvasView.drawing, pageIndex: self.pageIndex, fromPencil: fromPencil)
             }
         }
         
         // MARK: UIScrollViewDelegate (via PKCanvasViewDelegate)
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            hostView?.syncBackground()
-            Task { @MainActor in
-                self.viewModel.canvasOffset = CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y)
-            }
+            hostView?.syncBackground(isZooming: false)
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
-            hostView?.syncBackground()
-            Task { @MainActor in
-                self.viewModel.canvasScale = scrollView.zoomScale
-            }
+            hostView?.syncBackground(isZooming: true)
         }
 
         /// Called by the finger-touch gesture recognizer installed on the canvas
@@ -491,69 +597,6 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                 let newTool: DrawingTool = self.viewModel.selectedTool == .eraser ? .pen : .eraser
                 self.viewModel.selectTool(newTool)
                 HapticEngine.light()
-            }
-        }
-
-        // MARK: - Lasso Pan Gesture
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            return true
-        }
-
-        @objc func handleLassoPan(_ gesture: UIPanGestureRecognizer) {
-            guard viewModel.selectedTool == .lasso, let canvas = canvasView else { return }
-            let screenLocation = gesture.location(in: canvas)
-            
-            // Use live canvas scroll/zoom state — not the viewModel copies which 
-            // may be one render cycle behind during an active gesture. 
-            let scale = canvas.zoomScale
-            let offset = canvas.contentOffset
-            let canvasLocation = CGPoint(
-                x: (screenLocation.x + offset.x) / scale,
-                y: (screenLocation.y + offset.y) / scale
-            )
-            
-            switch gesture.state {
-            case .began:
-                lassoStartPoint = canvasLocation
-                viewModel.pendingLassoRect = nil
-            case .changed:
-                if let start = lassoStartPoint {
-                    let rect = CGRect(
-                        x: min(start.x, canvasLocation.x),
-                        y: min(start.y, canvasLocation.y),
-                        width: abs(canvasLocation.x - start.x),
-                        height: abs(canvasLocation.y - start.y)
-                    )
-                    viewModel.pendingLassoRect = rect
-                }
-            case .ended, .cancelled:
-                if let rect = viewModel.pendingLassoRect, let canvas = canvasView {
-                    // Detect element hits
-                    let hits = viewModel.currentPage.elements.filter { el in
-                        let w = el.width ?? 200
-                        let h = el.height ?? 200
-                        let elRect = CGRect(
-                            x: el.positionX - w / 2,
-                            y: el.positionY - h / 2,
-                            width: w,
-                            height: h
-                        )
-                        return rect.intersects(elRect)
-                    }
-                    viewModel.selectedElementIds = Set(hits.map(\.id))
-                    
-                    // Detect stroke hits using live canvas state 
-                    let drawing = canvas.drawing
-                    let strokeHits = drawing.strokes.indices.filter { i in
-                        drawing.strokes[i].renderBounds.intersects(rect)
-                    }
-                    viewModel.selectedStrokeIndices = Set(strokeHits)
-                    viewModel.computeSelectionBoundingBox()
-                }
-                lassoStartPoint = nil
-            default:
-                break
             }
         }
 
@@ -622,7 +665,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             // Force a viewModel sync if this was triggered by an undo/redo
             if let undoManager = canvas.undoManager, undoManager.isUndoing || undoManager.isRedoing {
                 Task { @MainActor in
-                    self.viewModel.drawingDidChange(drawing, fromPencil: self.lastStrokeFromPencil)
+                    self.viewModel.drawingDidChange(drawing, pageIndex: self.pageIndex, fromPencil: self.lastStrokeFromPencil)
                 }
             }
         }

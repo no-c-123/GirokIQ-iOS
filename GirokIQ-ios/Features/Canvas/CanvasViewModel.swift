@@ -62,8 +62,8 @@ final class CanvasViewModel: ObservableObject {
         didSet { UserDefaults.standard.set(eraserType == .vector ? "vector" : "bitmap", forKey: "savedEraserType") }
     }
     @Published var backgroundPattern: BackgroundPattern = .grid
-    @Published var canvasOffset: CGSize = .zero
-    @Published var canvasScale: CGFloat = 1.0
+    var canvasOffset: CGSize = .zero
+    var canvasScale: CGFloat = 1.0
     // Initial value is .zero — the correct size is written by PKCanvasRepresentable's 
     // updateUIView on the first render pass, before any user interaction can occur. 
     // Using UIScreen.main.bounds.size here was both deprecated (iOS 16+) and wrong 
@@ -123,6 +123,7 @@ final class CanvasViewModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private var toolbarHideTask: Task<Void, Never>?
     private var thumbnailTask: Task<Void, Never>?
+    private var drawingDataSyncTask: Task<Void, Never>?
 
     var currentPage: DrawingPage {
         get { pages[currentPageIndex] }
@@ -248,8 +249,12 @@ final class CanvasViewModel: ObservableObject {
     }
 
     func refreshUndoState() {
-        canUndo = pkUndoManager?.canUndo ?? false
-        canRedo = pkUndoManager?.canRedo ?? false
+        let newCanUndo = pkUndoManager?.canUndo ?? false
+        let newCanRedo = pkUndoManager?.canRedo ?? false
+        
+        // Only update if the value changed to avoid redundant SwiftUI re-renders
+        if canUndo != newCanUndo { canUndo = newCanUndo }
+        if canRedo != newCanRedo { canRedo = newCanRedo }
     }
 
     // MARK: - Lasso Actions (forwarded to PKCanvasView via UIResponder)
@@ -294,6 +299,8 @@ final class CanvasViewModel: ObservableObject {
 
     // MARK: - Lasso Selection State
     
+    @Published var isResizingSelection: Bool = false
+    
     /// IDs of CanvasElements currently inside the lasso selection
     @Published var selectedElementIds: Set<UUID> = []
     
@@ -301,22 +308,20 @@ final class CanvasViewModel: ObservableObject {
     /// These are identified by index into pkDrawing.strokes
     @Published var selectedStrokeIndices: Set<Int> = []
     
+    @Published var showEditMenu: Bool = false
+    @Published var editMenuScreenPosition: CGPoint = .zero  // screen-space anchor point
+
+    func presentEditMenu(at screenPoint: CGPoint) {
+        editMenuScreenPosition = screenPoint
+        showEditMenu = true
+    }
+
+    func dismissEditMenu() {
+        showEditMenu = false
+    }
+    
     /// The frozen combined bounding box of ALL selected content (strokes + elements) in canvas space.
-    /// Computed once when selection is committed. Used as the resize origin.
     @Published var selectionBoundingBox: CGRect? = nil
-    
-    /// Scale applied by the on-canvas drag handle during an active gesture (resets to 1.0 after commit).
-    @Published var selectionScale: CGFloat = 1.0
-    
-    /// Scale driven by the Properties Panel slider — separate from the drag handle scale.
-    /// Resets to 1.0 after Apply is tapped.
-    @Published var pendingResizeScale: CGFloat = 1.0
-    
-    /// Whether the on-canvas resize handle overlay is visible.
-    @Published var isResizing: Bool = false
-    
-    /// The rect drawn by the user for lasso selection (in canvas space)
-    @Published var pendingLassoRect: CGRect? = nil
     
     private var elementSaveTask: Task<Void, Never>?
     
@@ -470,92 +475,113 @@ final class CanvasViewModel: ObservableObject {
         // Union all rects into one combined bounding box
         let combined = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
         selectionBoundingBox = combined
-        selectionScale = 1.0
-        pendingResizeScale = 1.0
-        // Automatically enter resize mode whenever a selection bounding box exists
-        isResizing = true
     }
-
-    func applySelectionResize(scale: CGFloat) {
-        guard let bbox = selectionBoundingBox, scale > 0 else { return }
-        let origin = bbox.origin  // top-left of combined bounding box — the fixed resize anchor
-
-        // 1. Resize CanvasElements
-        for i in pages[currentPageIndex].elements.indices {
-            let el = pages[currentPageIndex].elements[i]
-            guard selectedElementIds.contains(el.id) else { continue }
-
-            // Translate position relative to bbox origin, scale, translate back
-            let newX = origin.x + (el.positionX - origin.x) * scale
-            let newY = origin.y + (el.positionY - origin.y) * scale
-            let newW = (el.width  ?? 200) * scale
-            let newH = (el.height ?? 200) * scale
-
-            pages[currentPageIndex].elements[i].positionX = newX
-            pages[currentPageIndex].elements[i].positionY = newY
-            pages[currentPageIndex].elements[i].width  = max(40, newW)
-            pages[currentPageIndex].elements[i].height = max(40, newH)
-            pages[currentPageIndex].elements[i].updatedAt = Date()
-        }
-
-        // 2. Resize PencilKit strokes
-        let drawing = currentPage.pkDrawing
-        var newStrokes = drawing.strokes
-
-        for i in selectedStrokeIndices.sorted() where i < newStrokes.count {
-            let stroke = newStrokes[i]
-
-            // Scale around the bounding box origin (fixed anchor point).
-            // Three steps applied in order:
-            //   1. Translate so the anchor is at (0,0)
-            //   2. Scale
-            //   3. Translate back by the original anchor amount (not divided by scale)
-            // Built with concatenating so each step is in its own unambiguous space.
-            let toOrigin = CGAffineTransform(translationX: -origin.x, y: -origin.y)
-            let scaleTransform = CGAffineTransform(scaleX: scale, y: scale)
-            let fromOrigin = CGAffineTransform(translationX: origin.x, y: origin.y)
-            let transform = toOrigin.concatenating(scaleTransform).concatenating(fromOrigin)
-
-            // Reconstruct the PKStroke path using transformed points
-            var newPoints: [PKStrokePoint] = []
-            for point in stroke.path {
-                let newLocation = point.location.applying(transform)
-                let newPoint = PKStrokePoint(
-                    location: newLocation,
-                    timeOffset: point.timeOffset,
-                    size: CGSize(width: point.size.width * scale, height: point.size.height * scale),
-                    opacity: point.opacity,
-                    force: point.force,
-                    azimuth: point.azimuth,
-                    altitude: point.altitude
-                )
-                newPoints.append(newPoint)
-            }
-            let newPath = PKStrokePath(controlPoints: newPoints, creationDate: stroke.path.creationDate)
-            newStrokes[i] = PKStroke(ink: stroke.ink, path: newPath)
-        }
-
-        let newDrawing = PKDrawing(strokes: newStrokes)
-        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
-
-        // 3. Update frozen bounding box to the new scaled size (for subsequent resizes)
-        selectionBoundingBox = CGRect(
-            x: origin.x,
-            y: origin.y,
-            width: bbox.width  * scale,
-            height: bbox.height * scale
-        )
-        selectionScale = 1.0
-        pendingResizeScale = 1.0
-        isResizing = false
-
-        // 4. Notify PencilKit to redraw and save
-        forceDrawingUpdate = true
-        objectWillChange.send()
+    
+    // MARK: - Live Resize State
+    
+    var isLiveResizing: Bool = false
+    var preResizeDrawing: PKDrawing?
+    var preResizeElements: [CanvasElement]?
+    var preResizeBoundingBox: CGRect?
+    var undoDrawing: PKDrawing?
+    
+    func beginLiveResize() {
+        isLiveResizing = true
+        preResizeDrawing = currentPage.pkDrawing
+        preResizeElements = currentPage.elements
+        preResizeBoundingBox = selectionBoundingBox
+    }
+    
+    func commitLiveResize() {
+        isLiveResizing = false
+        undoDrawing = preResizeDrawing // pass it to the view to register the correct undo state
+        preResizeDrawing = nil
+        preResizeElements = nil
+        preResizeBoundingBox = nil
+        computeSelectionBoundingBox()
         scheduleElementSave()
         scheduleAutoSave()
     }
     
+    func applySelectionResize(dw: CGFloat, dh: CGFloat, dx: CGFloat, dy: CGFloat) {
+        guard let bbox = preResizeBoundingBox ?? selectionBoundingBox, !bbox.isEmpty else { return }
+        
+        let oldW = bbox.width
+        let oldH = bbox.height
+        
+        let newW = max(60, oldW + dw)
+        let newH = max(60, oldH + dh)
+        
+        let scaleX = oldW > 0 ? newW / oldW : 1.0
+        let scaleY = oldH > 0 ? newH / oldH : 1.0
+        
+        let transform = CGAffineTransform(translationX: -bbox.minX, y: -bbox.minY)
+            .scaledBy(x: scaleX, y: scaleY)
+            .translatedBy(x: bbox.minX + dx, y: bbox.minY + dy)
+        
+        // 1. Update elements
+        let originalElements = preResizeElements ?? pages[currentPageIndex].elements
+        for i in pages[currentPageIndex].elements.indices {
+            let elId = pages[currentPageIndex].elements[i].id
+            if selectedElementIds.contains(elId), let orig = originalElements.first(where: { $0.id == elId }) {
+                // Apply transform to center point
+                let center = CGPoint(x: orig.positionX, y: orig.positionY)
+                let newCenter = center.applying(transform)
+                
+                pages[currentPageIndex].elements[i].positionX = newCenter.x
+                pages[currentPageIndex].elements[i].positionY = newCenter.y
+                
+                if let w = orig.width { pages[currentPageIndex].elements[i].width = w * scaleX }
+                if let h = orig.height { pages[currentPageIndex].elements[i].height = h * scaleY }
+                
+                pages[currentPageIndex].elements[i].updatedAt = Date()
+            }
+        }
+        
+        // 2. Update strokes
+        let originalDrawing = preResizeDrawing ?? pages[currentPageIndex].pkDrawing
+        var modifiedStrokes = originalDrawing.strokes
+        var hasStrokeChanges = false
+        
+        for (i, stroke) in modifiedStrokes.enumerated() {
+            if selectedStrokeIndices.contains(i) {
+                if let newStroke = PKDrawing(strokes: [stroke]).transformed(using: transform).strokes.first {
+                    modifiedStrokes[i] = newStroke
+                    hasStrokeChanges = true
+                }
+            }
+        }
+        
+        if hasStrokeChanges {
+            let newDrawing = PKDrawing(strokes: modifiedStrokes)
+            let data = PencilKitBridge.serialize(newDrawing)
+            pages[currentPageIndex].drawingData = data
+            self.forceDrawingUpdate = true
+        }
+        
+        if !selectedElementIds.isEmpty {
+            objectWillChange.send()
+        }
+        
+        // 3. Recompute bounding box
+        computeSelectionBoundingBox()
+    }
+    
+    // MARK: - Selection Screenshot 
+    
+    /// Renders the active lasso selection bounding box to PNG data. 
+    /// Uses the PKDrawing for v1 (CanvasElement overlay capture is a v2 TODO). 
+    /// Returns nil if no selection is active or the render fails. 
+    func renderSelectionToPNG() -> Data? { 
+        guard let bbox = selectionBoundingBox, !bbox.isEmpty else { return nil } 
+        let drawing = currentPage.pkDrawing 
+        // PKDrawing.image(from:scale:) operates in canvas coordinate space 
+        let image = drawing.image(from: bbox, scale: 2.0) 
+        return image.pngData() 
+        // TODO v2: use UIGraphicsImageRenderer to also composite BlockOverlayView 
+        // CanvasElements (image blocks, text blocks) that fall within bbox. 
+    }
+
     // MARK: - Tool Selection (with per-tool memory)
 
     func selectTool(_ tool: DrawingTool) {
@@ -570,8 +596,10 @@ final class CanvasViewModel: ObservableObject {
         } else {
             isLassoActive = false
             selectedStrokes.removeAll()
+            isResizingSelection = false
         }
         selectedElementIds = []
+        dismissEditMenu()
         selectedTool = tool
 
         if tool == .image {
@@ -600,12 +628,21 @@ final class CanvasViewModel: ObservableObject {
 
     /// Called by PKCanvasRepresentable when the drawing changes.
     /// `fromPencil` indicates whether the change came from Apple Pencil (true) or finger (false).
-    func drawingDidChange(_ drawing: PKDrawing, fromPencil: Bool = true) {
+    func drawingDidChange(_ drawing: PKDrawing, pageIndex: Int, fromPencil: Bool = true) {
+        // If the user modified the drawing (e.g., moved the native selection or erased something)
+        // while we had a selection active but weren't actively resizing it, clear our custom selection.
+        if pageIndex == currentPageIndex && !selectedStrokeIndices.isEmpty && !isResizingSelection && !forceDrawingUpdate {
+            selectedStrokeIndices.removeAll()
+            selectedElementIds.removeAll()
+            selectionBoundingBox = nil
+            dismissEditMenu()
+        }
+
         var modifiedDrawing = drawing
         
         // Shape snapping logic (post-processing method)
         if isShapeSnappingEnabled, let lastStroke = modifiedDrawing.strokes.last {
-            let currentStrokes = pages[currentPageIndex].pkDrawing.strokes
+            let currentStrokes = pages[pageIndex].pkDrawing.strokes
             // Only process if a new stroke was just added
             if modifiedDrawing.strokes.count > currentStrokes.count {
                 let pts = lastStroke.path.compactMap { $0.location }
@@ -618,23 +655,49 @@ final class CanvasViewModel: ObservableObject {
                     modifiedDrawing = PKDrawing(strokes: newStrokes)
                     
                     // Trigger a view update so the canvas redrawns with the snapped stroke
-                    self.forceDrawingUpdate = true
+                    if pageIndex == currentPageIndex {
+                        self.forceDrawingUpdate = true
+                    }
                 }
             }
         }
 
-        let data = PencilKitBridge.serialize(modifiedDrawing)
-        pages[currentPageIndex].drawingData = data
-        refreshUndoState()
-        scheduleAutoSave()
+        let pageId = pages[pageIndex].id
+        
+        // PERFORMANCE: Move serialization off the main thread and DEBOUNCE the ViewModel update.
+        // Updating `pages[pageIndex].drawingData` triggers a full SwiftUI re-render of the canvas
+        // and overlays because `pages` is @Published. We only need to sync this occasionally
+        // during active drawing to save battery and keep the UI responsive.
+        drawingDataSyncTask?.cancel()
+        drawingDataSyncTask = Task {
+            // Wait 1.0s after the last stroke before updating the ViewModel's state.
+            // PencilKit keeps its own internal state, so the user won't see any lag.
+            try? await Task.sleep(for: .seconds(1.0))
+            guard !Task.isCancelled else { return }
+            
+            // Serialize on the main actor since the compiler indicates it is isolated.
+            // The 1.0s debounce still provides significant performance gains by 
+            // avoiding serialization on every single stroke.
+            let data = PencilKitBridge.serialize(modifiedDrawing)
+            
+            if self.pages.indices.contains(pageIndex) && self.pages[pageIndex].id == pageId {
+                // This assignment triggers objectWillChange/objectDidSet
+                self.pages[pageIndex].drawingData = data
+            }
+        }
+        
+        if pageIndex == currentPageIndex {
+            refreshUndoState()
+        }
+        scheduleAutoSave(pageIndex: pageIndex)
 
         // Regenerate cached thumbnail for the page strip — debounced so rapid
         // stroke updates don't spawn hundreds of concurrent render tasks.
-        scheduleThumbnailRegeneration(for: currentPageIndex)
+        scheduleThumbnailRegeneration(for: pageIndex)
 
         // Only auto-hide toolbar when drawing with Apple Pencil.
         // Finger interactions should keep the toolbar visible.
-        if fromPencil {
+        if fromPencil && pageIndex == currentPageIndex {
             startToolbarHideTimer()
         }
     }
@@ -646,7 +709,7 @@ final class CanvasViewModel: ObservableObject {
     private func scheduleThumbnailRegeneration(for pageIndex: Int) {
         thumbnailTask?.cancel()
         thumbnailTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(0.8))
+            try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
             self?.regenerateThumbnail(for: pageIndex)
         }
@@ -663,8 +726,11 @@ final class CanvasViewModel: ObservableObject {
             pageThumbnails[pageId] = nil
             return
         }
-        // Capture screen scale on main thread before going off-thread
-        let scale = UIScreen.main.scale
+        
+        // PERFORMANCE: Use a lower scale for thumbnails. Screen scale (2.0-3.0) 
+        // is overkill for a small page strip and slow to render for heavy pages.
+        let scale: CGFloat = 1.0 
+        
         Task.detached(priority: .utility) { [weak self] in
             let bounds = drawing.bounds.isEmpty
                 ? CGRect(origin: .zero, size: CGSize(width: 56, height: 74))
@@ -706,14 +772,14 @@ final class CanvasViewModel: ObservableObject {
         startToolbarHideTimer()
     }
 
-    // MARK: - Auto-Save (1.5s debounce)
+    // MARK: - Auto-Save (3.0s debounce)
 
-    private func scheduleAutoSave() {
+    private func scheduleAutoSave(pageIndex: Int? = nil) {
         autoSaveTask?.cancel()
         autoSaveTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
+            try? await Task.sleep(for: .seconds(3.0))
             guard !Task.isCancelled else { return }
-            await self?.performAutoSave()
+            await self?.performAutoSave(pageIndex: pageIndex)
         }
     }
     
@@ -723,10 +789,10 @@ final class CanvasViewModel: ObservableObject {
         await performAutoSave()
     }
 
-    private func performAutoSave() async {
-        guard let drawingData = pages[currentPageIndex].drawingData else { return }
-        let pageId = pages[currentPageIndex].id
-        isSaving = true
+    private func performAutoSave(pageIndex: Int? = nil) async {
+        let index = pageIndex ?? currentPageIndex
+        guard pages.indices.contains(index), let drawingData = pages[index].drawingData else { return }
+        let pageId = pages[index].id
         // Save to local database on a background thread — never blocks the UI
         await Task.detached(priority: .utility) {
             do {
@@ -735,7 +801,6 @@ final class CanvasViewModel: ObservableObject {
                 print("Auto-save error: \(error)")
             }
         }.value
-        isSaving = false
     }
 
     // MARK: - Presence

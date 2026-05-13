@@ -6,10 +6,6 @@ struct CanvasToolbar: View {
     let notebook: Notebook
     @ObservedObject var viewModel: CanvasViewModel
     let onBack: () -> Void
-    let onShowPages: () -> Void
-    let onShowPatterns: () -> Void
-    var onShowAI: (() -> Void)?
-    var isAIPanelVisible: Bool = false
 
     var body: some View {
         ZStack {
@@ -38,109 +34,11 @@ struct CanvasToolbar: View {
                 .keyboardShortcut(.escape, modifiers: [])
 
                 Spacer()
-
-                // Right actions
-                HStack(spacing: 8) {
-                    Divider()
-                        .frame(width: 1, height: 24)
-                        .background(Color.gBorder.opacity(0.25))
-                        .padding(.horizontal, GSpacing.xxs)
-                        
-                    HStack(spacing: 2) {
-                        Button { viewModel.undo() } label: {
-                            Image(systemName: "arrow.uturn.backward")
-                                .canvasToolbarIcon()
-                        }
-                        .disabled(!viewModel.canUndo)
-                        .opacity(!viewModel.canUndo ? 0.4 : 1)
-                        .accessibilityLabel("Undo")
-                        .accessibilityHint(viewModel.canUndo ? "Double tap to undo last action" : "Nothing to undo")
-                        .keyboardShortcut("z", modifiers: .command)
-
-                        Button { viewModel.redo() } label: {
-                            Image(systemName: "arrow.uturn.forward")
-                                .canvasToolbarIcon()
-                        }
-                        .disabled(!viewModel.canRedo)
-                        .opacity(!viewModel.canRedo ? 0.4 : 1)
-                        .accessibilityLabel("Redo")
-                        .accessibilityHint(viewModel.canRedo ? "Double tap to redo last action" : "Nothing to redo")
-                        .keyboardShortcut("z", modifiers: [.command, .shift])
-                    }
-
-                    Button(action: onShowPages) {
-                        Image(systemName: "doc.on.doc")
-                            .canvasToolbarIcon()
-                    }
-                    .accessibilityLabel("Pages")
-                    .accessibilityHint("Double tap to show page strip")
-
-                    Button(action: onShowPatterns) {
-                        Image(systemName: "grid")
-                            .canvasToolbarIcon()
-                    }
-                    .accessibilityLabel("Background pattern")
-                    .accessibilityHint("Double tap to change background pattern")
-
-                    Button {
-                        withAnimation(GAnimation.springFast) {
-                            viewModel.showProperties.toggle()
-                        }
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                            .canvasToolbarIcon(active: viewModel.showProperties)
-                    }
-                    .accessibilityLabel("Properties panel")
-                    .accessibilityHint(viewModel.showProperties ? "Double tap to hide properties panel" : "Double tap to show properties panel")
-
-                    if let onShowAI {
-                        Button(action: onShowAI) {
-                            Image(systemName: "sparkles")
-                                .canvasToolbarIcon(active: isAIPanelVisible)
-                        }
-                        .accessibilityLabel("AI Assistant")
-                        .accessibilityHint(isAIPanelVisible ? "Double tap to hide AI panel" : "Double tap to show AI panel")
-                        .accessibilityAddTraits(isAIPanelVisible ? .isSelected : [])
-                    }
-
-                    // Presence badge — shown when notebook is also open on web
-                    if viewModel.isOpenOnWeb {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(Color.green)
-                                .frame(width: 6, height: 6)
-                            Text("Web")
-                                .font(.gCaption2.weight(.medium))
-                                .foregroundColor(.gTextSecondary)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .fill(Color.green.opacity(0.12))
-                                .overlay(Capsule().strokeBorder(Color.green.opacity(0.3), lineWidth: 0.5))
-                        )
-                        .transition(.scale.combined(with: .opacity))
-                        .accessibilityLabel("Also open on web")
-                    }
-
-                    if viewModel.isSaving {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 28, height: 28)
-                    } else {
-                        Image(systemName: "checkmark.icloud")
-                            .canvasToolbarIcon()
-                            .opacity(0.5)
-                            .accessibilityLabel("Synced")
-                    }
-                }
-                .padding(.trailing, GSpacing.xs)
             }
 
             // Center: Drawing tools (ZStack keeps it perfectly centered relative to the screen)
             HStack(spacing: 6) {
-                ForEach([DrawingTool.pen, .pencil, .marker, .eraser, .lasso, .text, .image], id: \.self) { tool in
+                ForEach([DrawingTool.pen, .pencil, .eraser, .lasso, .text, .image], id: \.self) { tool in
                     ToolbarToolButton(
                         tool: tool,
                         isSelected: viewModel.selectedTool == tool,
@@ -195,10 +93,21 @@ struct CanvasToolbar: View {
         .background(
             Color.gBackground.opacity(0.96)
                 .background(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .top)
         )
         .overlay(alignment: .bottom) {
             Divider().opacity(0.2)
         }
+        .background(
+            Group {
+                Button("") { viewModel.undo() }
+                    .keyboardShortcut("z", modifiers: .command)
+                Button("") { viewModel.redo() }
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
+            .opacity(0)
+            .accessibilityHidden(true)
+        )
     }
 }
 

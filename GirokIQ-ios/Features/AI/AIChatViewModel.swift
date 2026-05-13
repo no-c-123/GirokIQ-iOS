@@ -13,7 +13,6 @@ final class AIChatViewModel: ObservableObject {
     @Published var streamingText: String = ""
     @Published var errorMessage: String?
 
-    /// The persisted Chat row for this session
     @Published var chat: Chat?
     @Published var chatHistory: [Chat] = []
     @Published var showHistory: Bool = false
@@ -24,26 +23,21 @@ final class AIChatViewModel: ObservableObject {
 
     var notebookId: UUID?
     var userId: UUID?
-
     var contextProvider: (() -> String)?
 
+    // MARK: - System Prompt
+
     private var systemPrompt: String {
-        let basePrompt = """
+        let base = """
         You are GirokIQ Assistant, an AI embedded in a handwritten canvas note-taking app. \
-        When an image is attached, it is a screenshot of the user's canvas containing handwritten notes, diagrams, or drawings. \
-        Read all visible handwriting carefully and base your answer on it. \
-        Keep responses concise and actionable. Use markdown formatting when helpful.
+        When an image is attached, it is a screenshot of the user's canvas containing handwritten \
+        notes, diagrams, or drawings. Read all visible handwriting carefully and base your answer \
+        on it. Keep responses concise and actionable. Use markdown formatting when helpful.
         """
-        
         if let context = contextProvider?(), !context.isEmpty {
-            return """
-            \(basePrompt)
-            
-            Current Canvas Context:
-            \(context)
-            """
+            return "\(base)\n\nCurrent Canvas Context:\n\(context)"
         }
-        return basePrompt
+        return base
     }
 
     var hasAPIKey: Bool { true }
@@ -53,9 +47,9 @@ final class AIChatViewModel: ObservableObject {
     func startSession(userId: UUID, notebookId: UUID?) async {
         self.userId = userId
         self.notebookId = notebookId
-        
         await loadHistory()
 
+        // Resume the most recent chat for this notebook, or start a fresh one
         if let existing = chatHistory.first {
             await selectChat(existing)
         } else {
@@ -64,43 +58,38 @@ final class AIChatViewModel: ObservableObject {
     }
 
     func loadHistory() async {
-        guard let userId = userId else { return }
+        guard let userId else { return }
         do {
-            let allChats = try await supabaseService.fetchChats(userId: userId)
-            // Filter chats by notebookId if applicable
-            if let notebookId = notebookId {
-                chatHistory = allChats.filter { $0.notebookId == notebookId }
+            let all = try await supabaseService.fetchChats(userId: userId)
+            if let notebookId {
+                chatHistory = all.filter { $0.notebookId == notebookId }
             } else {
-                chatHistory = allChats
+                chatHistory = all
             }
         } catch {
-            print("[AIChatVM] Failed to fetch chat history: \(error)")
+            print("[AIChatVM] Failed to load history: \(error)")
         }
     }
 
     func selectChat(_ chat: Chat) async {
         self.chat = chat
-        self.showHistory = false
         self.messages = []
-        
+        self.showHistory = false
         do {
-            let fetchedMessages = try await supabaseService.fetchMessages(chatId: chat.id)
-            self.messages = fetchedMessages.map { msg in
-                AIMessage(
-                    role: msg.role == .user ? .user : .assistant,
-                    content: msg.content
-                )
+            let fetched = try await supabaseService.fetchMessages(chatId: chat.id)
+            self.messages = fetched.map {
+                AIMessage(role: $0.role == .user ? .user : .assistant, content: $0.content)
             }
         } catch {
-            print("[AIChatVM] Failed to fetch messages for chat: \(error)")
+            print("[AIChatVM] Failed to load messages: \(error)")
         }
     }
 
     func startNewChat() async {
-        guard let userId = userId else { return }
-        self.messages = []
-        self.showHistory = false
-        
+        guard let userId else { return }
+        messages = []
+        showHistory = false
+
         let newChat = Chat(
             id: UUID(),
             userId: userId,
@@ -128,12 +117,47 @@ final class AIChatViewModel: ObservableObject {
         inputText = ""
         errorMessage = nil
 
-        // Add user message
         let userMessage = AIMessage(role: .user, content: text)
         messages.append(userMessage)
         await persistMessage(userMessage)
 
-        // Stream assistant response
+        await streamResponse()
+    }
+
+    // MARK: - Send with Vision
+
+    func sendWithVision(text: String, drawing: PKDrawing) async {
+        guard !isStreaming else { return }
+
+        let imageData = PencilKitBridge.renderPNGData(from: drawing)
+        let content = text.isEmpty ? "What do you see on this canvas page?" : text
+        inputText = ""
+        errorMessage = nil
+
+        let userMessage = AIMessage(role: .user, content: content, imageData: imageData)
+        messages.append(userMessage)
+        await persistMessage(userMessage)
+
+        await streamResponse()
+    }
+
+    func sendWithVisionData(text: String, imageData: Data) async {
+        guard !isStreaming else { return }
+
+        let content = text.isEmpty ? "What do you see in this selected region?" : text
+        inputText = ""
+        errorMessage = nil
+
+        let userMessage = AIMessage(role: .user, content: content, imageData: imageData)
+        messages.append(userMessage)
+        await persistMessage(userMessage)
+
+        await streamResponse()
+    }
+
+    // MARK: - Shared Stream Response
+
+    private func streamResponse() async {
         isStreaming = true
         streamingText = ""
 
@@ -146,11 +170,15 @@ final class AIChatViewModel: ObservableObject {
                 for try await chunk in stream {
                     streamingText += chunk
                 }
-                // Finalize assistant message
                 let assistantMessage = AIMessage(role: .assistant, content: streamingText)
                 messages.append(assistantMessage)
                 await persistMessage(assistantMessage)
                 streamingText = ""
+
+                // Auto-generate title after first assistant reply
+                if messages.filter({ $0.role == .assistant }).count == 1 {
+                    await generateAndSaveTitle()
+                }
             } catch {
                 if !Task.isCancelled {
                     errorMessage = error.localizedDescription
@@ -160,46 +188,50 @@ final class AIChatViewModel: ObservableObject {
         }
     }
 
-    // MARK: - Send with Vision (canvas screenshot)
+    // MARK: - Auto Title Generation
 
-    func sendWithVision(text: String, drawing: PKDrawing) async {
-        guard !isStreaming else { return }
+    private func generateAndSaveTitle() async {
+        guard var currentChat = chat else { return }
 
-        let imageData = PencilKitBridge.renderPNGData(from: drawing)
-        print("[AI Vision] imageData size: \(imageData?.count ?? 0) bytes")
-        print("[AI Vision] drawing strokes count: \(drawing.strokes.count)")
-        
-        let content = text.isEmpty ? "What do you see on this canvas page?" : text
-        inputText = ""
-        errorMessage = nil
+        // Build a short prompt from the first exchange only
+        let firstUser = messages.first(where: { $0.role == .user })?.content ?? ""
+        let firstAssistant = messages.first(where: { $0.role == .assistant })?.content ?? ""
+        let excerpt = String((firstUser + " " + firstAssistant).prefix(300))
 
-        let userMessage = AIMessage(role: .user, content: content, imageData: imageData)
-        messages.append(userMessage)
-        await persistMessage(userMessage)
+        let titlePrompt = """
+        Based on this conversation excerpt, generate a short chat title (4-6 words max, \
+        no punctuation, no quotes). Reply with ONLY the title, nothing else.
 
-        isStreaming = true
-        streamingText = ""
+        Excerpt: \(excerpt)
+        """
 
-        streamTask = Task {
-            do {
-                let stream = aiService.stream(
-                    systemPrompt: systemPrompt,
-                    messages: messages
-                )
-                for try await chunk in stream {
-                    streamingText += chunk
-                }
-                // Finalize assistant message
-                let assistantMessage = AIMessage(role: .assistant, content: streamingText)
-                messages.append(assistantMessage)
-                await persistMessage(assistantMessage)
-                streamingText = ""
-            } catch {
-                if !Task.isCancelled {
-                    errorMessage = error.localizedDescription
-                }
+        do {
+            let title = try await aiService.complete(
+                systemPrompt: "You generate short, descriptive chat titles.",
+                messages: [AIMessage(role: .user, content: titlePrompt)]
+            )
+            let cleanTitle = title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\"", with: "")
+                .replacingOccurrences(of: "'", with: "")
+
+            guard !cleanTitle.isEmpty else { return }
+
+            // Update in memory
+            currentChat.title = cleanTitle
+            currentChat.updatedAt = Date()
+            self.chat = currentChat
+
+            // Update in chatHistory list so it reflects immediately in the history panel
+            if let idx = chatHistory.firstIndex(where: { $0.id == currentChat.id }) {
+                chatHistory[idx] = currentChat
             }
-            isStreaming = false
+
+            // Persist to Supabase
+            try await supabaseService.updateChat(currentChat)
+
+        } catch {
+            print("[AIChatVM] Title generation failed (non-critical): \(error)")
         }
     }
 
@@ -231,7 +263,7 @@ final class AIChatViewModel: ObservableObject {
         do {
             _ = try await supabaseService.insertMessage(message)
         } catch {
-            print("[AIChatVM] Failed to persist message, SyncEngine will retry: \(error)")
+            print("[AIChatVM] Failed to persist message: \(error)")
         }
     }
 }
