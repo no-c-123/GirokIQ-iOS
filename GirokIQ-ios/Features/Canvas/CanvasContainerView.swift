@@ -21,8 +21,11 @@ struct CanvasContainerView: View {
 
             // iPad: side panel for AI
             if sizeClass == .regular && showAIPanel {
-                AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing)
-                    .frame(width: UIScreen.main.bounds.width * 0.38)
+                AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing, onRegionCapture: {
+                    showAIPanel = false
+                    canvasVM.isRegionCaptureMode = true
+                })
+                    .frame(width: UIScreen.main.bounds.width * 0.3)
                     .background(Color.gSurface)
                     .overlay(alignment: .leading) {
                         Rectangle()
@@ -47,7 +50,10 @@ struct CanvasContainerView: View {
             get: { sizeClass == .compact && showAIPanel },
             set: { if !$0 { showAIPanel = false } }
         )) {
-            AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing)
+            AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing, onRegionCapture: {
+                showAIPanel = false
+                canvasVM.isRegionCaptureMode = true
+            })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -73,62 +79,86 @@ struct CanvasContainerView: View {
     // MARK: - Canvas Area
 
     var canvasArea: some View {
-        ZStack(alignment: .top) {
-            // Route based on notebook canvas type
-            if notebook.canvasType == "fixed",
-               let dims = notebook.pageDimensions {
-                let pageSize = CGSize(width: dims.widthPt, height: dims.heightPt)
-                FixedCanvasView(viewModel: canvasVM, pageSize: pageSize)
-                    .ignoresSafeArea()
-            } else {
-                PKCanvasRepresentable(
-                    viewModel: canvasVM,
-                    allowsFingerDrawing: !canvasVM.palmRejectionEnabled
-                )
-                .ignoresSafeArea()
-            }
-
-            // Top Toolbar (auto-hides during drawing)
-            if canvasVM.isToolbarVisible {
-                VStack(spacing: 0) {
+        GeometryReader { geo in
+            VStack(spacing: 0) {
+                // Top Toolbar (auto-hides during drawing)
+                if canvasVM.isToolbarVisible {
                     CanvasToolbar(
                         notebook: notebook,
                         viewModel: canvasVM,
-                        onBack: { dismiss() },
-                        onShowPages: { withAnimation { showPageStrip.toggle() } },
-                        onShowPatterns: { showPatternPicker = true },
-                        onShowAI: {
-                            withAnimation(GAnimation.spring) {
-                                showAIPanel.toggle()
-                            }
-                        },
-                        isAIPanelVisible: showAIPanel
+                        onBack: { dismiss() }
                     )
-
-                    if showPageStrip {
-                        PageStripView(canvasVM: canvasVM)
-                            .transition(.move(edge: .top).combined(with: .opacity))
-                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(2)
                 }
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
 
-            // Properties Panel
-            if canvasVM.showProperties && canvasVM.isToolbarVisible {
-                VStack {
-                    Spacer().frame(height: showPageStrip ? 172 : 64)
-                    HStack(alignment: .top) {
-                        PropertiesPanel(viewModel: canvasVM)
-                            .padding(.leading, 16)
-                            .padding(.top, 8)
+                ZStack(alignment: .leading) {
+                    // Main Drawing Surface
+                    ZStack {
+                        // Route based on notebook canvas type
+                        if notebook.canvasType == "fixed",
+                           let dims = notebook.pageDimensions {
+                            let pageSize = CGSize(width: dims.widthPt, height: dims.heightPt)
+                            FixedCanvasView(viewModel: canvasVM, pageSize: pageSize)
+                        } else {
+                            PKCanvasRepresentable(
+                                viewModel: canvasVM,
+                                allowsFingerDrawing: !canvasVM.palmRejectionEnabled
+                            )
+                        }
+                    }
+                    .ignoresSafeArea(edges: [.horizontal, .bottom])
+
+                    // Left-aligned controls
+                    HStack(spacing: 0) {
+                        // 1. Sidebar (always shown if toolbar is visible)
+                        if canvasVM.isToolbarVisible {
+                            CanvasSidebar(
+                                viewModel: canvasVM,
+                                onShowPages: { withAnimation { showPageStrip.toggle() } },
+                                onShowPatterns: { showPatternPicker = true },
+                                onShowAI: { withAnimation(GAnimation.spring) { showAIPanel.toggle() } },
+                                isAIPanelVisible: showAIPanel,
+                                onRegionCapture: {
+                                    showAIPanel = false
+                                    canvasVM.isRegionCaptureMode = true
+                                }
+                            )
+                            .padding(.leading, 12)
+                            .padding(.top, 16)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                        }
+
+                        // 2. Page Manager (vertical list)
+                        if showPageStrip && canvasVM.isToolbarVisible {
+                            PageStripView(canvasVM: canvasVM)
+                                .padding(.top, 16)
+                                .transition(.move(edge: .leading).combined(with: .opacity))
+                        }
+
+                        // 3. Properties Panel
+                        if canvasVM.showProperties && canvasVM.isToolbarVisible {
+                            PropertiesPanel(viewModel: canvasVM)
+                                .padding(.leading, 12)
+                                .padding(.top, 16)
+                                .transition(.opacity)
+                        }
+                        
                         Spacer()
                     }
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .zIndex(5)
+                    
+                    if canvasVM.isRegionCaptureMode {
+                        RegionCaptureOverlay(canvasVM: canvasVM, aiVM: aiVM, showAIPanel: $showAIPanel)
+                            .zIndex(10)
+                            .transition(.opacity)
+                    }
                 }
-                .transition(.opacity)
+                .zIndex(1)
             }
+            .tint(Color.gPrimary)
+            .background(Color.gBackground.ignoresSafeArea())
         }
-        .tint(Color.gPrimary)
-        // Finger touch detection is handled by TouchTypeRecognizer in PKCanvasRepresentable.
-        // It calls viewModel.showToolbar() when a finger touch is detected.
     }
 }

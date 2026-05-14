@@ -9,6 +9,7 @@ import PencilKit
 final class AIChatViewModel: ObservableObject {
     @Published var messages: [AIMessage] = []
     @Published var inputText: String = ""
+    @Published var attachedImageData: Data? = nil
     @Published var isStreaming: Bool = false
     @Published var streamingText: String = ""
     @Published var errorMessage: String?
@@ -123,13 +124,18 @@ final class AIChatViewModel: ObservableObject {
 
     func sendMessage() async {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isStreaming else { return }
+        guard !text.isEmpty || attachedImageData != nil else { return }
+        guard !isStreaming else { return }
+
+        let currentAttachedImage = attachedImageData
+        let content = text.isEmpty && currentAttachedImage != nil ? "What do you see in this image?" : text
 
         inputText = ""
+        attachedImageData = nil
         errorMessage = nil
 
         // Add user message
-        let userMessage = AIMessage(role: .user, content: text)
+        let userMessage = AIMessage(role: .user, content: content, imageData: currentAttachedImage)
         messages.append(userMessage)
         await persistMessage(userMessage)
 
@@ -162,12 +168,10 @@ final class AIChatViewModel: ObservableObject {
 
     // MARK: - Send with Vision (canvas screenshot)
 
-    func sendWithVision(text: String, drawing: PKDrawing) async {
+    func sendWithVision(text: String, imageData: Data) async {
         guard !isStreaming else { return }
 
-        let imageData = PencilKitBridge.renderPNGData(from: drawing)
-        print("[AI Vision] imageData size: \(imageData?.count ?? 0) bytes")
-        print("[AI Vision] drawing strokes count: \(drawing.strokes.count)")
+        print("[AI Vision] imageData size: \(imageData.count) bytes")
         
         let content = text.isEmpty ? "What do you see on this canvas page?" : text
         inputText = ""
@@ -200,6 +204,20 @@ final class AIChatViewModel: ObservableObject {
                 }
             }
             isStreaming = false
+        }
+    }
+
+    func sendWithVision(text: String, drawing: PKDrawing) async {
+        guard !isStreaming else { return }
+
+        let imageData = PencilKitBridge.renderPNGData(from: drawing)
+        print("[AI Vision] imageData size: \(imageData?.count ?? 0) bytes")
+        print("[AI Vision] drawing strokes count: \(drawing.strokes.count)")
+        
+        if let data = imageData {
+            await sendWithVision(text: text, imageData: data)
+        } else {
+            await sendMessage()
         }
     }
 

@@ -134,6 +134,39 @@ struct PropertiesPanel: View {
             }
         }
         .padding(GSpacing.md)
+        .overlay(alignment: .bottom) {
+            VStack(spacing: 0) {
+                Divider().opacity(0.15)
+                
+                HStack(spacing: 0) {
+                    Button { viewModel.undo() } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.gIconMedium)
+                            .foregroundColor(!viewModel.canUndo ? Color.gTextTertiary : Color.gTextSecondary)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .disabled(!viewModel.canUndo)
+                    .accessibilityLabel("Undo")
+                    .keyboardShortcut("z", modifiers: .command)
+
+                    Divider()
+                        .frame(width: 0.5, height: 24)
+                        .background(Color.gBorder.opacity(0.3))
+
+                    Button { viewModel.redo() } label: {
+                        Image(systemName: "arrow.uturn.forward")
+                            .font(.gIconMedium)
+                            .foregroundColor(!viewModel.canRedo ? Color.gTextTertiary : Color.gTextSecondary)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                    }
+                    .disabled(!viewModel.canRedo)
+                    .accessibilityLabel("Redo")
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                }
+                .padding(.vertical, 4)
+                .background(Color.gSurface.opacity(0.96))
+            }
+        }
     }
 
     // MARK: - Color Grid

@@ -77,6 +77,7 @@ final class CanvasViewModel: ObservableObject {
     @Published var isToolbarVisible: Bool = true
     @Published var isShapeSnappingEnabled: Bool = false
     @Published var forceDrawingUpdate: Bool = false
+    @Published var isRegionCaptureMode: Bool = false
     private var isChangingTool = false
 
     // Per-tool memory: remember last-used color + width per tool

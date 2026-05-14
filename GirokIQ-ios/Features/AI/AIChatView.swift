@@ -1,5 +1,6 @@
 import SwiftUI
 import PencilKit
+internal import UniformTypeIdentifiers
 
 // MARK: - AI Chat View
 
@@ -7,6 +8,9 @@ struct AIChatView: View {
     @ObservedObject var viewModel: AIChatViewModel
     var drawing: PKDrawing?
     @Environment(\.colorScheme) private var colorScheme
+    @State private var showImagePicker = false
+    @State private var showFileImporter = false
+    var onRegionCapture: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -24,10 +28,47 @@ struct AIChatView: View {
                 Divider().opacity(0.2)
 
                 // Input bar
-                inputBar
+                VStack(spacing: 0) {
+                    if let imageData = viewModel.attachedImageData, let uiImage = UIImage(data: imageData) {
+                        HStack {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(height: 60)
+                                .cornerRadius(GRadius.sm)
+                                .overlay(alignment: .topTrailing) {
+                                    Button {
+                                        viewModel.attachedImageData = nil
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.white)
+                                            .background(Circle().fill(Color.black.opacity(0.5)))
+                                    }
+                                    .padding(4)
+                                }
+                            Spacer()
+                        }
+                        .padding(.horizontal, GSpacing.md)
+                        .padding(.top, GSpacing.sm)
+                    }
+                    inputBar
+                }
             }
         }
         .background(Color.gSurface)
+        .sheet(isPresented: $showImagePicker) {
+            ImagePicker(imageData: $viewModel.attachedImageData)
+        }
+        .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                if url.startAccessingSecurityScopedResource() {
+                    if let data = try? Data(contentsOf: url) {
+                        viewModel.attachedImageData = data
+                    }
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+        }
     }
 
     // MARK: - Header
@@ -248,23 +289,33 @@ struct AIChatView: View {
 
     var inputBar: some View {
         HStack(spacing: GSpacing.xs) {
-            if let drawing = drawing, !drawing.strokes.isEmpty {
+            Menu {
                 Button {
-                    Task {
-                        await viewModel.sendWithVision(
-                            text: viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines),
-                            drawing: drawing
-                        )
-                    }
+                    showImagePicker = true
                 } label: {
-                    Image(systemName: "viewfinder.circle")
-                        .font(.gIconLarge)
-                        .foregroundColor(.gPrimary)
+                    Label("Photo Library", systemImage: "photo")
                 }
-                .disabled(viewModel.isStreaming)
-                .accessibilityLabel("Send with vision")
-                .accessibilityHint("Send your canvas drawing to the AI")
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("Files", systemImage: "folder")
+                }
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.gIconLarge)
+                    .foregroundColor(.gPrimary)
             }
+            .accessibilityLabel("Insert image or file")
+
+            Button {
+                onRegionCapture?()
+            } label: {
+                Image(systemName: "viewfinder.circle")
+                    .font(.gIconLarge)
+                    .foregroundColor(.gPrimary)
+            }
+            .accessibilityLabel("Region Capture")
+            .accessibilityHint("Capture a specific region of the canvas")
 
             TextField("Ask something…", text: $viewModel.inputText, axis: .vertical)
                 .font(.gSubheadline)

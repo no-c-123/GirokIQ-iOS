@@ -7,18 +7,19 @@ struct PageStripView: View {
     @ObservedObject var canvasVM: CanvasViewModel
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: GSpacing.sm) {
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: GSpacing.sm) {
                 ForEach(canvasVM.pages.indices, id: \.self) { index in
                     pageButton(for: index)
                 }
                 addPageButton
             }
-            .padding(.horizontal, GSpacing.md)
-            .padding(.vertical, GSpacing.sm)
+            .padding(.vertical, GSpacing.md)
+            .padding(.horizontal, GSpacing.sm)
         }
+        .frame(width: 80)
         .background(Color.gBackground.opacity(0.96))
-        .overlay(alignment: .bottom) {
+        .overlay(alignment: .trailing) {
             Divider().opacity(0.2)
         }
     }
