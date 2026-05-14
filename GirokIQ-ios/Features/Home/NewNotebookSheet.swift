@@ -81,14 +81,9 @@ struct NewNotebookSheet: View {
     ]
     
     let prebuiltTemplates = [
-        NotebookTemplate(name: "Blank Page", sizeName: "A4", icon: "doc.plaintext"),
-        NotebookTemplate(name: "Lined Page", sizeName: "A4", icon: "line.horizontal.3"),
-        NotebookTemplate(name: "Cornell Notes", sizeName: "Letter", icon: "sidebar.left"),
-        NotebookTemplate(name: "Weekly Planner", sizeName: "A4", icon: "calendar"),
-        NotebookTemplate(name: "Dot Grid Journal", sizeName: "A5", icon: "circle.grid.cross"),
-        NotebookTemplate(name: "Sketch Page", sizeName: "Custom", icon: "pencil.and.outline"),
-        NotebookTemplate(name: "Music Sheet", sizeName: "Letter", icon: "music.note.list"),
-        NotebookTemplate(name: "Math Grid", sizeName: "A4", icon: "squareshape.split.3x3")
+        NotebookTemplate(name: "A4 Page", sizeName: "A4", icon: "doc.plaintext"),
+        NotebookTemplate(name: "Letter Page", sizeName: "Letter", icon: "doc.plaintext"),
+        NotebookTemplate(name: "A5 Page", sizeName: "A5", icon: "doc.plaintext")
     ]
 
     private var resolvedDimensions: PageDimensions {
