@@ -106,6 +106,9 @@ struct CanvasContainerView: View {
                                 allowsFingerDrawing: !canvasVM.palmRejectionEnabled
                             )
                         }
+                        
+                        CustomLassoGestureView(viewModel: canvasVM)
+                            .allowsHitTesting(canvasVM.selectedTool == .lasso)
                     }
                     .ignoresSafeArea(edges: [.horizontal, .bottom])
 
@@ -153,6 +156,11 @@ struct CanvasContainerView: View {
                         RegionCaptureOverlay(canvasVM: canvasVM, aiVM: aiVM, showAIPanel: $showAIPanel)
                             .zIndex(10)
                             .transition(.opacity)
+                    }
+
+                    if canvasVM.isLassoSelectionActive, let box = canvasVM.lassoSelectionBox {
+                        LassoSelectionOverlay(viewModel: canvasVM, box: box)
+                            .zIndex(8)
                     }
                 }
                 .zIndex(1)

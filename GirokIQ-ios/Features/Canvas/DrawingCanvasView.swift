@@ -185,11 +185,12 @@ struct DrawingCanvasView: UIViewRepresentable {
             strokeForSnap = nil
 
             if viewModel.selectedTool == .lasso {
-                selectStrokesInLasso()
-                lassoPoints = []
-                canvasView?.setNeedsDisplay()
-                return
-            }
+            // Hit testing and selection are now handled by CustomLassoGestureView
+            // via CanvasViewModel.commitLassoSelection(polygon:)
+            lassoPoints = []
+            canvasView?.setNeedsDisplay()
+            return
+        }
 
             guard let stroke = currentStroke, !stroke.points.isEmpty else { return }
             Task { @MainActor in
@@ -346,11 +347,7 @@ final class CanvasUIView: UIView {
 
         ctx.restoreGState()
 
-        if let lasso = coordinator?.lassoPoints, lasso.count > 1 {
-            let screen = lasso.map { CGPoint(x: $0.x * vm.canvasScale + vm.canvasOffset.width,
-                                             y: $0.y * vm.canvasScale + vm.canvasOffset.height) }
-            drawLasso(screen, ctx: ctx)
-        }
+        // Lasso path rendering moved to CustomLassoGestureView
     }
 
     // MARK: Background

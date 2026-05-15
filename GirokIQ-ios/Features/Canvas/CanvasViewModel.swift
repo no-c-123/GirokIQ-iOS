@@ -4,6 +4,11 @@ import SwiftUI
 import PencilKit
 import Realtime
 import Photos
+import UIKit
+
+extension Notification.Name {
+    static let lassoDrawingMutated = Notification.Name("girokiq.lassoDrawingMutated")
+}
 
 // MARK: - Canvas ViewModel
 
@@ -70,8 +75,6 @@ final class CanvasViewModel: ObservableObject {
     // in Split View / Stage Manager contexts. 
     @Published var canvasViewSize: CGSize = .zero
     @Published var showProperties: Bool = true
-    @Published var isLassoActive: Bool = false
-    @Published var selectedStrokes: Set<UUID> = []
     @Published var isSaving: Bool = false
     @Published var palmRejectionEnabled: Bool = true
     @Published var isToolbarVisible: Bool = true
@@ -254,11 +257,6 @@ final class CanvasViewModel: ObservableObject {
     }
 
     // MARK: - Lasso Actions (forwarded to PKCanvasView via UIResponder)
-    
-    // We send standard UIResponder actions which PKCanvasView will catch if it has a lasso selection
-    func performLassoAction(_ action: Selector) {
-        UIApplication.shared.sendAction(action, to: nil, from: nil, for: nil)
-    }
 
     func clearPage() {
         pages[currentPageIndex].drawingData = nil
@@ -295,29 +293,392 @@ final class CanvasViewModel: ObservableObject {
 
     // MARK: - Lasso Selection State
     
-    /// IDs of CanvasElements currently inside the lasso selection
+    // MARK: - Selection State
     @Published var selectedElementIds: Set<UUID> = []
+    @Published var selectedStrokes: Set<UUID> = []
     
-    /// The PKDrawing strokes selected by PencilKit's native lasso (read from canvasView.drawing after lasso)
-    /// These are identified by index into pkDrawing.strokes
-    @Published var selectedStrokeIndices: Set<Int> = []
+    // MARK: - Custom Lasso Selection State
+    /// Bounding box of all selected strokes + elements in canvas space.
+    /// Set by commitLassoSelection(). Nil when nothing is selected.
+    @Published var lassoSelectionBox: CGRect? = nil
+    /// Whether the lasso bounding box + edit menu are visible.
+    @Published var isLassoSelectionActive: Bool = false
+    /// Indices into currentPage.pkDrawing.strokes that are currently selected.
+    /// Using indices because PKStroke has no stable ID.
+    @Published var selectedPKStrokeIndices: Set<Int> = []
     
-    /// The frozen combined bounding box of ALL selected content (strokes + elements) in canvas space.
-    /// Computed once when selection is committed. Used as the resize origin.
-    @Published var selectionBoundingBox: CGRect? = nil
+    /// Called by CustomLassoGestureView when the user lifts their finger.
+    /// polygon is in screen space — this function converts to canvas space,
+    /// runs hit testing, and commits the selection.
+    func commitLassoSelection(polygon: [CGPoint]) {
+        guard polygon.count > 2 else {
+            print("[Lasso] Polygon too small (\(polygon.count) points) — skipping")
+            return
+        }
+        
+        // Convert screen-space polygon to PencilKit canvas space.
+        // canvasOffset = PKCanvasView.contentOffset (scroll position)
+        // canvasScale = PKCanvasView.zoomScale
+        // Formula: canvasPoint = (screenPoint + contentOffset) / zoomScale
+        let canvasPolygon = polygon.map { pt in
+            CGPoint(
+                x: (pt.x + canvasOffset.width) / canvasScale,
+                y: (pt.y + canvasOffset.height) / canvasScale
+            )
+        }
+        
+        // Log the polygon bounding box so we can compare to stroke positions
+        let polyXs = canvasPolygon.map { $0.x }
+        let polyYs = canvasPolygon.map { $0.y }
+        let polyBBox = CGRect(
+            x: polyXs.min()!, y: polyYs.min()!,
+            width: polyXs.max()! - polyXs.min()!,
+            height: polyYs.max()! - polyYs.min()!
+        )
+        print("[Lasso] Polygon canvas bbox: \(polyBBox.debugDescription)")
+        print("[Lasso] canvasOffset=\(canvasOffset) canvasScale=\(canvasScale)")
+        
+        // Hit-test PencilKit strokes (these are the actual ink strokes on screen)
+        let pkStrokes = currentPage.pkDrawing.strokes
+        print("[Lasso] PKDrawing has \(pkStrokes.count) strokes to test")
+        
+        // For each PKStroke, test if its renderBounds center is inside the polygon.
+        // renderBounds is already in canvas coordinate space (matches canvasPolygon).
+        var hitPKStrokeIndices: [Int] = []
+        for (i, stroke) in pkStrokes.enumerated() {
+            let center = CGPoint(x: stroke.renderBounds.midX, y: stroke.renderBounds.midY)
+            let hit = pointInPolygon(center, polygon: canvasPolygon)
+            print("[Lasso] Stroke \(i) renderBounds=\(stroke.renderBounds.debugDescription) center=\(center) hit=\(hit)")
+            if hit { hitPKStrokeIndices.append(i) }
+        }
+        
+        // Hit-test canvas elements (image/text blocks)
+        let hitElements = currentPage.elements.filter { el in
+            let c = CGPoint(x: el.positionX, y: el.positionY)
+            let hit = pointInPolygon(c, polygon: canvasPolygon)
+            print("[Lasso] Element '\(el.type)' pos=(\(el.positionX), \(el.positionY)) hit=\(hit)")
+            return hit
+        }
+        
+        print("[Lasso] Result: \(hitPKStrokeIndices.count) PK strokes, \(hitElements.count) elements selected")
+        
+        // Nothing hit — clear and return
+        guard !hitPKStrokeIndices.isEmpty || !hitElements.isEmpty else {
+            print("[Lasso] Nothing selected — clearing")
+            clearLassoSelection()
+            return
+        }
+        
+        // Store hit PK stroke indices so applyLassoColorChange can find them
+        selectedPKStrokeIndices = Set(hitPKStrokeIndices)
+        selectedElementIds = Set(hitElements.map { $0.id })
+        
+        // Compute unified bounding box in canvas space
+        var rects: [CGRect] = []
+        rects += hitPKStrokeIndices.map { pkStrokes[$0].renderBounds }
+        rects += hitElements.map { el in
+            let w = el.width ?? 200; let h = el.height ?? 200
+            return CGRect(x: el.positionX - w/2, y: el.positionY - h/2, width: w, height: h)
+        }
+        
+        let combined = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+        let padded = combined.insetBy(dx: -12, dy: -12)
+        
+        lassoSelectionBox = padded
+        isLassoSelectionActive = true
+        print("[Lasso] Selection box set: \(padded.debugDescription)")
+    }
     
-    /// Scale applied by the on-canvas drag handle during an active gesture (resets to 1.0 after commit).
-    @Published var selectionScale: CGFloat = 1.0
+    func clearLassoSelection() {
+        selectedStrokes = []
+        selectedPKStrokeIndices = []
+        selectedElementIds = []
+        lassoSelectionBox = nil
+        isLassoSelectionActive = false
+    }
     
-    /// Scale driven by the Properties Panel slider — separate from the drag handle scale.
-    /// Resets to 1.0 after Apply is tapped.
-    @Published var pendingResizeScale: CGFloat = 1.0
+    /// Ray-casting point-in-polygon (same algorithm as DrawingCanvasView coordinator).
+    /// Duplicated here so CanvasViewModel has no dependency on the view layer.
+    private func pointInPolygon(_ point: CGPoint, polygon: [CGPoint]) -> Bool {
+        var inside = false
+        var j = polygon.count - 1
+        for i in 0..<polygon.count {
+            let xi = polygon[i].x, yi = polygon[i].y
+            let xj = polygon[j].x, yj = polygon[j].y
+            if ((yi > point.y) != (yj > point.y)) &&
+                (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi) {
+                inside = !inside
+            }
+            j = i
+        }
+        return inside
+    }
     
-    /// Whether the on-canvas resize handle overlay is visible.
-    @Published var isResizing: Bool = false
+    /// Change the color of all selected strokes.
+    func applyLassoColorChange(_ newColor: Color) {
+        guard !selectedPKStrokeIndices.isEmpty else { return }
+        let uiColor = UIColor(newColor)
+        var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        
+        for i in selectedPKStrokeIndices where i < allStrokes.count {
+            let old = allStrokes[i]
+            let newInk = PKInk(old.ink.inkType, color: uiColor)
+            allStrokes[i] = PKStroke(ink: newInk, path: old.path, transform: old.transform, mask: old.mask)
+        }
+        
+        let newDrawing = PKDrawing(strokes: allStrokes)
+        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+        forceDrawingUpdate = true
+        objectWillChange.send()
+        scheduleAutoSave()
+        print("[Lasso] Color changed on \(selectedPKStrokeIndices.count) strokes")
+        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
+    }
     
-    /// The rect drawn by the user for lasso selection (in canvas space)
-    @Published var pendingLassoRect: CGRect? = nil
+    /// Scale all selected strokes and elements from the bounding box top-left anchor.
+    func applyLassoResize(scale: CGFloat) {
+        guard let bbox = lassoSelectionBox, scale > 0 else { return }
+        let origin = bbox.origin
+        let t = CGAffineTransform.identity
+            .translatedBy(x: origin.x, y: origin.y)
+            .scaledBy(x: scale, y: scale)
+            .translatedBy(x: -origin.x, y: -origin.y)
+        
+        // Scale PK strokes via their transform
+        if !selectedPKStrokeIndices.isEmpty {
+            var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            for i in selectedPKStrokeIndices where i < allStrokes.count {
+                let old = allStrokes[i]
+                allStrokes[i] = PKStroke(ink: old.ink, path: old.path,
+                                         transform: old.transform.concatenating(t),
+                                         mask: old.mask)
+            }
+            let newDrawing = PKDrawing(strokes: allStrokes)
+            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+            forceDrawingUpdate = true
+        }
+        
+        // Scale elements
+        for i in pages[currentPageIndex].elements.indices {
+            guard selectedElementIds.contains(pages[currentPageIndex].elements[i].id) else { continue }
+            let el = pages[currentPageIndex].elements[i]
+            pages[currentPageIndex].elements[i].positionX = origin.x + (el.positionX - origin.x) * scale
+            pages[currentPageIndex].elements[i].positionY = origin.y + (el.positionY - origin.y) * scale
+            pages[currentPageIndex].elements[i].width = max(40, (el.width ?? 200) * scale)
+            pages[currentPageIndex].elements[i].height = max(40, (el.height ?? 200) * scale)
+        }
+        
+        lassoSelectionBox = CGRect(x: origin.x, y: origin.y,
+                                   width: bbox.width * scale, height: bbox.height * scale)
+        objectWillChange.send()
+        scheduleElementSave()
+        scheduleAutoSave()
+        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
+    }
+    
+    /// Move all selected strokes and elements by the given translation in canvas space.
+    func applyLassoMove(translation: CGSize) {
+        guard let bbox = lassoSelectionBox else { return }
+        
+        let t = CGAffineTransform(translationX: translation.width, y: translation.height)
+        
+        // Move PK strokes via their transform
+        if !selectedPKStrokeIndices.isEmpty {
+            var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            for i in selectedPKStrokeIndices where i < allStrokes.count {
+                let old = allStrokes[i]
+                allStrokes[i] = PKStroke(ink: old.ink, path: old.path,
+                                         transform: old.transform.concatenating(t),
+                                         mask: old.mask)
+            }
+            let newDrawing = PKDrawing(strokes: allStrokes)
+            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+            forceDrawingUpdate = true
+        }
+        
+        // Move elements
+        for i in pages[currentPageIndex].elements.indices {
+            guard selectedElementIds.contains(pages[currentPageIndex].elements[i].id) else { continue }
+            pages[currentPageIndex].elements[i].positionX += translation.width
+            pages[currentPageIndex].elements[i].positionY += translation.height
+        }
+        
+        lassoSelectionBox = bbox.offsetBy(dx: translation.width, dy: translation.height)
+        objectWillChange.send()
+        scheduleElementSave()
+        scheduleAutoSave()
+    }
+
+    func moveSelection(dx: CGFloat, dy: CGFloat) {
+        let t = CGAffineTransform(translationX: dx, y: dy)
+        if !selectedPKStrokeIndices.isEmpty {
+            var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            for i in selectedPKStrokeIndices where i < allStrokes.count {
+                let old = allStrokes[i]
+                allStrokes[i] = PKStroke(ink: old.ink, path: old.path,
+                                         transform: old.transform.concatenating(t),
+                                         mask: old.mask)
+            }
+            let newDrawing = PKDrawing(strokes: allStrokes)
+            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+        }
+        for i in pages[currentPageIndex].elements.indices {
+            guard selectedElementIds.contains(pages[currentPageIndex].elements[i].id) else { continue }
+            pages[currentPageIndex].elements[i].positionX += dx
+            pages[currentPageIndex].elements[i].positionY += dy
+        }
+        if let box = lassoSelectionBox {
+            lassoSelectionBox = box.offsetBy(dx: dx, dy: dy)
+        }
+        objectWillChange.send()
+        scheduleAutoSave()
+        scheduleElementSave()
+        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
+    }
+
+    /// Cut: copy to pasteboard then delete.
+    func cutSelection() {
+        copySelection()
+        deleteSelectedLassoContent()
+    }
+
+    /// Copy selected PK strokes as PKDrawing data to UIPasteboard.
+    func copySelection() {
+        guard !selectedPKStrokeIndices.isEmpty else { return }
+        let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let selected = selectedPKStrokeIndices.sorted().compactMap {
+            $0 < allStrokes.count ? allStrokes[$0] : nil
+        }
+        let drawing = PKDrawing(strokes: selected)
+        let data = PencilKitBridge.serialize(drawing)
+        UIPasteboard.general.setData(data, forPasteboardType: "com.apple.ink.drawing")
+        print("[Lasso] Copied \(selected.count) strokes to pasteboard")
+    }
+
+    /// Paste PKDrawing from UIPasteboard, offset slightly so it's visible.
+    func pasteSelection() {
+        guard let data = UIPasteboard.general.data(forPasteboardType: "com.apple.ink.drawing"),
+              let drawing = PencilKitBridge.deserialize(data) else { return }
+        let offset = CGAffineTransform(translationX: 24, y: 24)
+        let offsetStrokes = drawing.strokes.map { s in
+            PKStroke(ink: s.ink, path: s.path, transform: s.transform.concatenating(offset), mask: s.mask)
+        }
+        var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let startIndex = allStrokes.count
+        allStrokes.append(contentsOf: offsetStrokes)
+        let newDrawing = PKDrawing(strokes: allStrokes)
+        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+        
+        // Select the pasted strokes
+        selectedPKStrokeIndices = Set(startIndex..<allStrokes.count)
+        let rects = offsetStrokes.map { $0.renderBounds }
+        if let first = rects.first {
+            let combined = rects.dropFirst().reduce(first) { $0.union($1) }
+            lassoSelectionBox = combined.insetBy(dx: -12, dy: -12)
+            isLassoSelectionActive = true
+        }
+        objectWillChange.send()
+        scheduleAutoSave()
+        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
+    }
+
+    /// Duplicate: paste a copy of the current selection in place (offset 24pt).
+    func duplicateSelection() {
+        guard !selectedPKStrokeIndices.isEmpty else { return }
+        let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let selected = selectedPKStrokeIndices.sorted().compactMap {
+            $0 < allStrokes.count ? allStrokes[$0] : nil
+        }
+        let offset = CGAffineTransform(translationX: 24, y: 24)
+        let duped = selected.map { s in
+            PKStroke(ink: s.ink, path: s.path, transform: s.transform.concatenating(offset), mask: s.mask)
+        }
+        var newAll = allStrokes
+        let startIndex = newAll.count
+        newAll.append(contentsOf: duped)
+        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(PKDrawing(strokes: newAll))
+        
+        selectedPKStrokeIndices = Set(startIndex..<newAll.count)
+        let rects = duped.map { $0.renderBounds }
+        if let first = rects.first {
+            let combined = rects.dropFirst().reduce(first) { $0.union($1) }
+            lassoSelectionBox = combined.insetBy(dx: -12, dy: -12)
+            isLassoSelectionActive = true
+        }
+        objectWillChange.send()
+        scheduleAutoSave()
+        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
+    }
+
+    /// Delete all selected strokes and elements, then clear the selection.
+    func deleteSelectedLassoContent() {
+        // Delete PK strokes by rebuilding drawing without selected indices
+        if !selectedPKStrokeIndices.isEmpty {
+            let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            let remaining = allStrokes.indices
+                .filter { !selectedPKStrokeIndices.contains($0) }
+                .map { allStrokes[$0] }
+            let newDrawing = PKDrawing(strokes: remaining)
+            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+            forceDrawingUpdate = true
+        }
+        
+        pages[currentPageIndex].elements.removeAll { selectedElementIds.contains($0.id) }
+        clearLassoSelection()
+        objectWillChange.send()
+        scheduleElementSave()
+        scheduleAutoSave()
+    }
+    
+    /// Render the selected strokes as a UIImage cropped to the lasso bounding box.
+    /// Returns nil if nothing is selected or the bounding box is empty.
+    func screenshotSelection() -> UIImage? {
+        guard !selectedPKStrokeIndices.isEmpty,
+              let bbox = lassoSelectionBox,
+              bbox.width > 0, bbox.height > 0 else { return nil }
+
+        let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let selectedStrokes = selectedPKStrokeIndices.sorted().compactMap {
+            $0 < allStrokes.count ? allStrokes[$0] : nil
+        }
+        let selectionDrawing = PKDrawing(strokes: selectedStrokes)
+
+        // Render at 2x Retina scale for crisp output
+        let scale: CGFloat = 2.0
+        
+        // Add padding around the bounding box so strokes don't touch the edge
+        let padding: CGFloat = 24.0
+        let paddedSize = CGSize(width: bbox.width + (padding * 2), height: bbox.height + (padding * 2))
+
+        // Resolve notebook background color (default white)
+        var bgColor = UIColor.white
+        if let hex = notebook?.backgroundColorHex {
+            let normalized = hex.uppercased()
+            bgColor = normalized == "#0F0F0E" ? UIColor.gBackground : UIColor(hex: hex)
+        }
+
+        // Must resolve the dynamic color so it doesn't render incorrectly in graphics context
+        bgColor = bgColor.resolvedColor(with: UITraitCollection.current)
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        format.opaque = true
+
+        let renderer = UIGraphicsImageRenderer(size: paddedSize, format: format)
+        let image = renderer.image { ctx in
+            // Fill background
+            bgColor.setFill()
+            ctx.fill(CGRect(origin: .zero, size: paddedSize))
+            
+            // Draw strokes: shift so bounding box origin maps to (0,0) plus our padding
+            // PKDrawing.image(from:scale:) renders strokes at their absolute canvas positions,
+            // so we pass a rect anchored at bbox.origin to crop correctly.
+            let strokeImage = selectionDrawing.image(from: bbox, scale: scale)
+            strokeImage.draw(in: CGRect(x: padding, y: padding, width: bbox.width, height: bbox.height))
+        }
+
+        return image
+    }
     
     private var elementSaveTask: Task<Void, Never>?
     
@@ -442,121 +803,6 @@ final class CanvasViewModel: ObservableObject {
 
     // MARK: - Unified Lasso Resize
     
-    func computeSelectionBoundingBox() {
-        var rects: [CGRect] = []
-
-        // Bounding boxes from selected CanvasElements
-        for el in currentPage.elements where selectedElementIds.contains(el.id) {
-            let w = el.width ?? 200
-            let h = el.height ?? 200
-            rects.append(CGRect(
-                x: el.positionX - w / 2,
-                y: el.positionY - h / 2,
-                width: w,
-                height: h
-            ))
-        }
-
-        // Bounding boxes from selected PencilKit strokes
-        let drawing = currentPage.pkDrawing
-        for (i, stroke) in drawing.strokes.enumerated() where selectedStrokeIndices.contains(i) {
-            rects.append(stroke.renderBounds)
-        }
-
-        guard !rects.isEmpty else {
-            selectionBoundingBox = nil
-            return
-        }
-
-        // Union all rects into one combined bounding box
-        let combined = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
-        selectionBoundingBox = combined
-        selectionScale = 1.0
-        pendingResizeScale = 1.0
-        // Automatically enter resize mode whenever a selection bounding box exists
-        isResizing = true
-    }
-
-    func applySelectionResize(scale: CGFloat) {
-        guard let bbox = selectionBoundingBox, scale > 0 else { return }
-        let origin = bbox.origin  // top-left of combined bounding box — the fixed resize anchor
-
-        // 1. Resize CanvasElements
-        for i in pages[currentPageIndex].elements.indices {
-            let el = pages[currentPageIndex].elements[i]
-            guard selectedElementIds.contains(el.id) else { continue }
-
-            // Translate position relative to bbox origin, scale, translate back
-            let newX = origin.x + (el.positionX - origin.x) * scale
-            let newY = origin.y + (el.positionY - origin.y) * scale
-            let newW = (el.width  ?? 200) * scale
-            let newH = (el.height ?? 200) * scale
-
-            pages[currentPageIndex].elements[i].positionX = newX
-            pages[currentPageIndex].elements[i].positionY = newY
-            pages[currentPageIndex].elements[i].width  = max(40, newW)
-            pages[currentPageIndex].elements[i].height = max(40, newH)
-            pages[currentPageIndex].elements[i].updatedAt = Date()
-        }
-
-        // 2. Resize PencilKit strokes
-        let drawing = currentPage.pkDrawing
-        var newStrokes = drawing.strokes
-
-        for i in selectedStrokeIndices.sorted() where i < newStrokes.count {
-            let stroke = newStrokes[i]
-
-            // Scale around the bounding box origin (fixed anchor point).
-            // Three steps applied in order:
-            //   1. Translate so the anchor is at (0,0)
-            //   2. Scale
-            //   3. Translate back by the original anchor amount (not divided by scale)
-            // Built with concatenating so each step is in its own unambiguous space.
-            let toOrigin = CGAffineTransform(translationX: -origin.x, y: -origin.y)
-            let scaleTransform = CGAffineTransform(scaleX: scale, y: scale)
-            let fromOrigin = CGAffineTransform(translationX: origin.x, y: origin.y)
-            let transform = toOrigin.concatenating(scaleTransform).concatenating(fromOrigin)
-
-            // Reconstruct the PKStroke path using transformed points
-            var newPoints: [PKStrokePoint] = []
-            for point in stroke.path {
-                let newLocation = point.location.applying(transform)
-                let newPoint = PKStrokePoint(
-                    location: newLocation,
-                    timeOffset: point.timeOffset,
-                    size: CGSize(width: point.size.width * scale, height: point.size.height * scale),
-                    opacity: point.opacity,
-                    force: point.force,
-                    azimuth: point.azimuth,
-                    altitude: point.altitude
-                )
-                newPoints.append(newPoint)
-            }
-            let newPath = PKStrokePath(controlPoints: newPoints, creationDate: stroke.path.creationDate)
-            newStrokes[i] = PKStroke(ink: stroke.ink, path: newPath)
-        }
-
-        let newDrawing = PKDrawing(strokes: newStrokes)
-        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
-
-        // 3. Update frozen bounding box to the new scaled size (for subsequent resizes)
-        selectionBoundingBox = CGRect(
-            x: origin.x,
-            y: origin.y,
-            width: bbox.width  * scale,
-            height: bbox.height * scale
-        )
-        selectionScale = 1.0
-        pendingResizeScale = 1.0
-        isResizing = false
-
-        // 4. Notify PencilKit to redraw and save
-        forceDrawingUpdate = true
-        objectWillChange.send()
-        scheduleElementSave()
-        scheduleAutoSave()
-    }
-    
     // MARK: - Tool Selection (with per-tool memory)
 
     func selectTool(_ tool: DrawingTool) {
@@ -566,12 +812,11 @@ final class CanvasViewModel: ObservableObject {
         // Save current tool settings before switching
         updateCurrentToolMemory()
 
-        if tool == .lasso {
-            isLassoActive = true
-        } else {
-            isLassoActive = false
-            selectedStrokes.removeAll()
-        }
+        // Clear any active lasso selection when switching tools
+        if tool != .lasso { clearLassoSelection() }
+
+        // isLassoActive removed — custom lasso manages its own state
+        selectedStrokes.removeAll()
         selectedElementIds = []
         selectedTool = tool
 

@@ -288,11 +288,13 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         let menuBlocker = MenuBlockerGestureRecognizer(canvas: canvasView)
         canvasView.addGestureRecognizer(menuBlocker)
         
-        // Custom Pan Gesture to track Lasso rectangle in canvas space
-        let lassoTracker = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLassoPan(_:)))
-        lassoTracker.delegate = context.coordinator
-        lassoTracker.cancelsTouchesInView = false
-        canvasView.addGestureRecognizer(lassoTracker)
+        // Observe lasso drawing mutations so PKCanvasView stays in sync
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.handleLassoDrawingMutation),
+            name: .lassoDrawingMutated,
+            object: nil
+        )
 
         // Forward UndoManager to viewModel
         Task { @MainActor in
@@ -381,7 +383,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                    aInk.width == bInk.width
         }
         if a is PKEraserTool && b is PKEraserTool { return true }
-        if a is PKLassoTool && b is PKLassoTool { return true }
+
         return false
     }
 
@@ -407,7 +409,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         var currentPageIndex: Int = 0
         var currentPageId: UUID?
 
-        var lassoStartPoint: CGPoint? = nil
+
 
         /// Tracks whether we are currently performing a programmatic drawing update
         private var isUpdatingDrawing = false
@@ -435,18 +437,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
             guard !isUpdatingDrawing else { return }
 
-            // If lasso tool is active, try to determine which strokes are selected
-            // by checking which strokes' renderBounds intersect the lasso region
-            if viewModel.selectedTool == .lasso, let lassoRect = viewModel.pendingLassoRect {
-                let drawing = canvasView.drawing
-                let selected = drawing.strokes.indices.filter { i in
-                    drawing.strokes[i].renderBounds.intersects(lassoRect)
-                }
-                Task { @MainActor in
-                    self.viewModel.selectedStrokeIndices = Set(selected)
-                    self.viewModel.computeSelectionBoundingBox()
-                }
-            }
+
 
             let fromPencil = lastStrokeFromPencil
 
@@ -494,68 +485,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        // MARK: - Lasso Pan Gesture
 
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-            return true
-        }
-
-        @objc func handleLassoPan(_ gesture: UIPanGestureRecognizer) {
-            guard viewModel.selectedTool == .lasso, let canvas = canvasView else { return }
-            let screenLocation = gesture.location(in: canvas)
-            
-            // Use live canvas scroll/zoom state — not the viewModel copies which 
-            // may be one render cycle behind during an active gesture. 
-            let scale = canvas.zoomScale
-            let offset = canvas.contentOffset
-            let canvasLocation = CGPoint(
-                x: (screenLocation.x + offset.x) / scale,
-                y: (screenLocation.y + offset.y) / scale
-            )
-            
-            switch gesture.state {
-            case .began:
-                lassoStartPoint = canvasLocation
-                viewModel.pendingLassoRect = nil
-            case .changed:
-                if let start = lassoStartPoint {
-                    let rect = CGRect(
-                        x: min(start.x, canvasLocation.x),
-                        y: min(start.y, canvasLocation.y),
-                        width: abs(canvasLocation.x - start.x),
-                        height: abs(canvasLocation.y - start.y)
-                    )
-                    viewModel.pendingLassoRect = rect
-                }
-            case .ended, .cancelled:
-                if let rect = viewModel.pendingLassoRect, let canvas = canvasView {
-                    // Detect element hits
-                    let hits = viewModel.currentPage.elements.filter { el in
-                        let w = el.width ?? 200
-                        let h = el.height ?? 200
-                        let elRect = CGRect(
-                            x: el.positionX - w / 2,
-                            y: el.positionY - h / 2,
-                            width: w,
-                            height: h
-                        )
-                        return rect.intersects(elRect)
-                    }
-                    viewModel.selectedElementIds = Set(hits.map(\.id))
-                    
-                    // Detect stroke hits using live canvas state 
-                    let drawing = canvas.drawing
-                    let strokeHits = drawing.strokes.indices.filter { i in
-                        drawing.strokes[i].renderBounds.intersects(rect)
-                    }
-                    viewModel.selectedStrokeIndices = Set(strokeHits)
-                    viewModel.computeSelectionBoundingBox()
-                }
-                lassoStartPoint = nil
-            default:
-                break
-            }
-        }
 
         // MARK: - Tap Gesture for Blocks
 
@@ -597,6 +527,17 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                 self.viewModel.addElement(newElement)
                 self.viewModel.selectTool(.pen)
                 HapticEngine.medium()
+            }
+        }
+
+        @objc func handleLassoDrawingMutation() {
+            Task { @MainActor in
+                guard let canvas = self.canvasView else { return }
+                let drawing = self.viewModel.currentPage.pkDrawing
+                // Only update if the drawing actually changed to avoid loops
+                if canvas.drawing != drawing {
+                    canvas.drawing = drawing
+                }
             }
         }
 
