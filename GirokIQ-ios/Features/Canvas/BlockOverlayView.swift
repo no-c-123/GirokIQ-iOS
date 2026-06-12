@@ -21,6 +21,21 @@ struct BlockOverlayView: View {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { location in
+                        // If the tap lands on an existing element, let that element's own
+                        // gestures handle it. This background tap is for truly empty canvas only.
+                        let hitExistingElement = viewModel.pages[viewModel.currentPageIndex].elements.contains { element in
+                            let w = CGFloat(element.width ?? 200)
+                            let h = CGFloat(element.height ?? 200)
+                            var rect = CGRect(x: element.positionX, y: element.positionY, width: w, height: h)
+                            if viewModel.selectedElementIds.contains(element.id) && element.type == "text" {
+                                rect = rect.insetBy(dx: -10, dy: 0)
+                                rect.origin.y -= TextElementMetrics.selectedHandleTopPadding
+                                rect.size.height += TextElementMetrics.selectedHandleTopPadding
+                            }
+                            return rect.contains(location)
+                        }
+                        guard !hitExistingElement else { return }
+
                         if viewModel.selectedTool == .text {
                             if viewModel.selectedElementIds.isEmpty {
                                 // Nothing selected — place a new text block
@@ -873,8 +888,8 @@ struct LassoSelectionOverlay: View {
                                 .labelsHidden()
                                 .frame(width: 28, height: 28)
                                 .opacity(0.01) // transparent but tappable
-                                .onChange(of: pickedColor) { _, c in
-                                    viewModel.applyLassoColorChange(c)
+                                .onChange(of: pickedColor) { _, newColor in
+                                    viewModel.applyLassoColorChange(newColor)
                                 }
                         }
                     }
@@ -1035,13 +1050,18 @@ struct CustomLassoGestureView: View {
                 var path = Path()
                 path.addLines(points)
                 if points.count > 2 {
-                    path.addLine(points[0])
+                    path.addLine(to: points[0])
                 }
 
                 context.stroke(
                     path,
                     with: .color(Color(hex: "#D8B547").opacity(0.95)),
-                    style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round, dash: [7, 5])
+                    style: SwiftUI.StrokeStyle(
+                        lineWidth: 2,
+                        lineCap: SwiftUI.CGLineCap.round,
+                        lineJoin: SwiftUI.CGLineJoin.round,
+                        dash: [7, 5]
+                    )
                 )
                 context.fill(path, with: .color(Color(hex: "#D8B547").opacity(0.08)))
             }

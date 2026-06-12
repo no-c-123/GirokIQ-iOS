@@ -103,12 +103,15 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             if canvasView.drawingPolicy != .pencilOnly {
                 canvasView.drawingPolicy = .pencilOnly
             }
+            // Allow one-finger drag for moving/resizing blocks; pan the page with two fingers.
+            hostView.scrollView.panGestureRecognizer.minimumNumberOfTouches = 2
         } else {
             canvasView.drawingGestureRecognizer.isEnabled = true
             let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
             if canvasView.drawingPolicy != newPolicy {
                 canvasView.drawingPolicy = newPolicy
             }
+            hostView.scrollView.panGestureRecognizer.minimumNumberOfTouches = 1
         }
 
         // Sync background pattern
@@ -264,7 +267,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
 
 // MARK: - FixedCanvasHostView
 
-final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
+final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     let scrollView = UIScrollView()
     let pageContainerView = UIView()
     let pageBackgroundView = UIView()
@@ -278,9 +281,10 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
     private var didSetInitialZoom = false
     private lazy var textTapRecognizer: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCanvasTap(_:)))
-        // Swallow the tap so PencilKit / the scroll view doesn't trigger the default
-        // edit pills on empty canvas when block tools are active.
-        recognizer.cancelsTouchesInView = true
+        // Do NOT swallow touches: the UITextView inside text blocks must receive
+        // finger taps for caret placement and standard editing.
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
         return recognizer
     }()
     private lazy var canvasLongPressRecognizer: UILongPressGestureRecognizer = {
@@ -288,6 +292,7 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         recognizer.minimumPressDuration = 0.45
         // Cancel touches so the system doesn't show the iPadOS edit menu under our custom menu.
         recognizer.cancelsTouchesInView = true
+        recognizer.delegate = self
         return recognizer
     }()
 
@@ -464,5 +469,20 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         let location = recognizer.location(in: pageContainerView)
         guard CGRect(origin: .zero, size: pageSize).contains(location) else { return }
         viewModel.showCanvasContextMenu(at: location)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === textTapRecognizer || gestureRecognizer === canvasLongPressRecognizer else {
+            return true
+        }
+        guard let blockView = blockOverlayHostView?.view else { return true }
+
+        let pointInBlock = touch.location(in: blockView)
+        if let hit = blockView.hitTest(pointInBlock, with: nil), hit !== blockView {
+            // Touch landed on a real overlay subview (textbox, editor, handle, etc).
+            // Let that view own the interaction; canvas gestures should ignore it.
+            return false
+        }
+        return true
     }
 }
