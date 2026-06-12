@@ -5,6 +5,8 @@ import PencilKit
 
 struct PropertiesPanel: View {
     @ObservedObject var viewModel: CanvasViewModel
+    @State private var screenshotImageForPanel: UIImage? = nil
+    @State private var showScreenshotFromPanel = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,6 +24,11 @@ struct PropertiesPanel: View {
                 .stroke(Color.gBorderStrong, lineWidth: 0.5)
         )
         .shadow(color: .black.opacity(0.4), radius: 12, y: 4)
+        .sheet(isPresented: $showScreenshotFromPanel) {
+            if let img = screenshotImageForPanel {
+                LassoScreenshotPreview(image: img)
+            }
+        }
     }
 
     var panelHeader: some View {
@@ -43,23 +50,37 @@ struct PropertiesPanel: View {
                     PropertySection(title: "Eraser Type", showCloseButton: true, onClose: closeAction) {
                         eraserTypeSelector
                     }
-                } else if viewModel.selectedTool == .lasso || viewModel.selectedTool == .selection {
-                    // LASSO PROPERTIES
-                    PropertySection(title: "Lasso Actions", showCloseButton: true, onClose: closeAction) {
-                        lassoActions
+                } else if viewModel.selectedTool == .lasso {
+                    PropertySection(title: "Lasso", showCloseButton: true, onClose: closeAction) {
+                        if viewModel.isLassoSelectionActive {
+                            VStack(spacing: 6) {
+                                lassoActionRow("Cut", icon: "scissors") { viewModel.cutSelection() }
+                                lassoActionRow("Copy", icon: "doc.on.doc") { viewModel.copySelection() }
+                                lassoActionRow("Paste", icon: "doc.on.clipboard"){ viewModel.pasteSelection() }
+                                lassoActionRow("Duplicate", icon: "plus.square.on.square") { viewModel.duplicateSelection() }
+                                lassoActionRow("Delete", icon: "trash", tint: .red) { viewModel.deleteSelectedLassoContent() }
+                                lassoActionRow("Screenshot", icon: "camera") {
+                                    if let img = viewModel.screenshotSelection() {
+                                        screenshotImageForPanel = img
+                                        showScreenshotFromPanel = true
+                                    }
+                                }
+                            }
+                        } else {
+                            Text("Draw around strokes or blocks to select them.")
+                                .foregroundColor(.secondary)
+                                .font(.caption)
+                                .padding(.vertical, 8)
+                        }
                     }
-                } else if viewModel.selectedTool == .text {
-                    // TEXT PROPERTIES
-                    PropertySection(title: "Text Color", showCloseButton: true, onClose: closeAction) {
+                    Divider().opacity(0.1)
+                    PropertySection(title: "Color") {
                         colorGrid
-                    }
-                    Divider().opacity(0.1)
-                    PropertySection(title: "Opacity") {
-                        opacitySlider
-                    }
-                    Divider().opacity(0.1)
-                    PropertySection(title: "Actions") {
-                        blockActions
+                            .onChange(of: viewModel.strokeColor) { _, newColor in
+                                if viewModel.isLassoSelectionActive {
+                                    viewModel.applyLassoColorChange(newColor)
+                                }
+                            }
                     }
                 } else if viewModel.selectedTool == .image {
                     // IMAGE PROPERTIES
@@ -99,8 +120,8 @@ struct PropertiesPanel: View {
                     }
                 }
 
-                // ASSISTANTS (Hide for lasso, text, image, and eraser tools)
-                if viewModel.selectedTool == .pen || viewModel.selectedTool == .pencil || viewModel.selectedTool == .marker {
+                // ASSISTANTS (Hide for image and eraser tools)
+                if viewModel.selectedTool == .pen || viewModel.selectedTool == .pencil || viewModel.selectedTool == .marker || viewModel.selectedTool == .lasso {
                     Divider().opacity(0.1)
 
                     PropertySection(title: "Assistants") {
@@ -320,7 +341,8 @@ struct PropertiesPanel: View {
         }
     }
 
-    // MARK: - Lasso Actions
+    // MARK: - Block Actions
+
 
     var blockActions: some View {
         HStack(spacing: GSpacing.sm) {
@@ -350,125 +372,7 @@ struct PropertiesPanel: View {
         .foregroundColor(.gTextPrimary)
     }
 
-    var lassoActions: some View {
-        VStack(spacing: GSpacing.xs) {
-            Button(action: { viewModel.performLassoAction(NSSelectorFromString("selectAll:")) }) {
-                Text("Select All")
-                    .font(.custom("PlusJakartaSans-Medium", size: 14))
-                    .foregroundColor(.gPrimary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: GRadius.sm)
-                            .stroke(Color.gPrimary, lineWidth: 1)
-                    )
-            }
-            .buttonStyle(.plain)
 
-            let actions: [(String, String, () -> Void, Bool)] = [
-                ("Cut", "scissors", { viewModel.performLassoAction(#selector(UIResponder.cut(_:))) }, false),
-                ("Copy", "doc.on.doc", { viewModel.performLassoAction(#selector(UIResponder.copy(_:))) }, false),
-                ("Paste", "doc.on.clipboard", { viewModel.performLassoAction(#selector(UIResponder.paste(_:))) }, true),
-                ("Duplicate", "plus.square.on.square", { viewModel.performLassoAction(NSSelectorFromString("duplicate:")) }, false),
-                ("Delete", "trash", { viewModel.performLassoAction(#selector(UIResponder.delete(_:))) }, false)
-            ]
-            
-            // 3x2 Grid for Lasso Actions
-            VStack(spacing: 6) {
-                // Top row (3 items)
-                HStack(spacing: 6) {
-                    ForEach(0..<3, id: \.self) { i in
-                        lassoActionButton(action: actions[i])
-                    }
-                }
-                
-                // Bottom row (2 items)
-                HStack(spacing: 6) {
-                    ForEach(3..<5, id: \.self) { i in
-                        lassoActionButton(action: actions[i])
-                    }
-                    // Empty spacer slot to keep the 3-column width alignment
-                    Color.clear
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            
-            HStack(spacing: 6) {
-                Image(systemName: "info.circle")
-                    .font(.system(size: 13))
-                Text("Make a selection with the lasso tool before using these actions")
-                    .font(.custom("PlusJakartaSans-Regular", size: 13))
-                    .italic()
-            }
-            .foregroundColor(.gTextTertiary)
-            .padding(.top, 4)
-                
-            if !viewModel.selectedElementIds.isEmpty || !viewModel.selectedStrokeIndices.isEmpty {
-                Divider()
-
-                Text("RESIZE SELECTION")
-                    .font(.caption.weight(.semibold))
-                    .foregroundColor(.secondary)
-                    .tracking(0.5)
-                    .padding(.top, 8)
-
-                // Slider drives pendingResizeScale — separate from the on-canvas drag handle
-                HStack {
-                    Image(systemName: "arrow.down.right.and.arrow.up.left")
-                        .foregroundColor(.secondary)
-                        .frame(width: 20)
-                    Slider(
-                        value: $viewModel.pendingResizeScale,
-                        in: 0.25...3.0,
-                        step: 0.05
-                    )
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .foregroundColor(.secondary)
-                        .frame(width: 20)
-                }
-
-                Text("\(Int(viewModel.pendingResizeScale * 100))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
-                // Apply commits pendingResizeScale
-                Button {
-                    viewModel.applySelectionResize(scale: viewModel.pendingResizeScale)
-                } label: {
-                    Text("Apply Resize")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background(Color.blue, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 4)
-            }
-        }
-    }
-
-    private func lassoActionButton(action: (String, String, () -> Void, Bool)) -> some View {
-        Button(action: action.2) {
-            VStack(spacing: 4) {
-                Image(systemName: action.1)
-                    .font(.system(size: 20))
-                Text(action.0)
-                    .font(.system(size: 11))
-                    .foregroundColor(.gTextSecondary)
-            }
-            .foregroundColor(action.0 == "Delete" ? .red : .gTextPrimary)
-            .frame(maxWidth: .infinity)
-            .frame(height: 56)
-            .background(Color.gElevated)
-            .cornerRadius(GRadius.sm)
-        }
-        .buttonStyle(.plain)
-        // Disable paste if no content (simulated check here, update with actual logic)
-        .disabled(action.3 && !UIPasteboard.general.hasStrings && !UIPasteboard.general.hasImages)
-        .opacity((action.3 && !UIPasteboard.general.hasStrings && !UIPasteboard.general.hasImages) ? 0.35 : 1.0)
-    }
 
     // MARK: - Opacity Slider
 
@@ -495,6 +399,23 @@ struct PropertiesPanel: View {
                     .tint(.clear)
             }
         }
+    }
+
+    @ViewBuilder
+    private func lassoActionRow(_ label: String, icon: String, tint: Color = .primary, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Image(systemName: icon)
+                    .frame(width: 20)
+                    .foregroundColor(tint)
+                Text(label)
+                    .foregroundColor(tint)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 4)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Helper

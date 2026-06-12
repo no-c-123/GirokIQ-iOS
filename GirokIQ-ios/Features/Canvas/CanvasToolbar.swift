@@ -189,7 +189,7 @@ struct ToolPopoverView: View {
                 .font(.gCaption)
                 .foregroundColor(.gTextTertiary)
 
-            if tool != .eraser && tool != .lasso && tool != .selection && tool != .text && tool != .image {
+            if tool != .eraser && tool != .lasso && tool != .selection && tool != .image {
                 Text("Tip: Adjust width and color in the Properties panel.")
                     .font(.gCaption2)
                     .foregroundColor(.gTextTertiary)

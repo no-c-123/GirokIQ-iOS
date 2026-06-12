@@ -75,9 +75,10 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             viewModel.refreshUndoState()
         }
 
-        // Tap gesture for text and image placement
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleCanvasTap(_:)))
-        canvasView.addGestureRecognizer(tapGesture)
+        // Used by #5: allow the view model to scroll the viewport when the keyboard covers text.
+        Task { @MainActor in
+            viewModel.setViewportScrollView(hostView.scrollView)
+        }
 
         return hostView
     }
@@ -93,11 +94,15 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             canvasView.tool = newTool
         }
 
-        let isBlockTool = viewModel.selectedTool == .text || viewModel.selectedTool == .image
+        let isBlockTool = viewModel.selectedTool == .image || viewModel.selectedTool == .text
         if isBlockTool {
             // Never disable isUserInteractionEnabled for PKCanvasView during drawing.
             // Use drawingGestureRecognizer.isEnabled to toggle PencilKit input.
             canvasView.drawingGestureRecognizer.isEnabled = false
+            // Force pencil-only so finger taps don't trigger PencilKit's edit menu.
+            if canvasView.drawingPolicy != .pencilOnly {
+                canvasView.drawingPolicy = .pencilOnly
+            }
         } else {
             canvasView.drawingGestureRecognizer.isEnabled = true
             let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
@@ -219,43 +224,6 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        @objc func handleCanvasTap(_ gesture: UITapGestureRecognizer) {
-            guard let canvas = canvasView,
-                  viewModel.selectedTool == .text else { return }
-
-            let location = gesture.location(in: canvas)
-            let tapPoint = location
-
-            for element in viewModel.currentPage.elements where element.type == "text" {
-                let w = CGFloat(element.width ?? 200)
-                let h = CGFloat(element.height ?? 50)
-                let rect = CGRect(
-                    x: CGFloat(element.positionX) - w / 2,
-                    y: CGFloat(element.positionY) - h / 2,
-                    width: w,
-                    height: h
-                )
-                if rect.contains(tapPoint) { return }
-            }
-
-            Task { @MainActor in
-                let newElement = CanvasElement(
-                    pageId: self.viewModel.currentPage.id,
-                    userId: self.viewModel.userId ?? UUID(),
-                    type: "text",
-                    content: "\u{200B}",
-                    positionX: Double(tapPoint.x),
-                    positionY: Double(tapPoint.y),
-                    width: 200,
-                    height: nil,
-                    style: ElementStyle(fontSize: 24, textColor: "#FFFFFE")
-                )
-                self.viewModel.addElement(newElement)
-                self.viewModel.selectTool(.pen)
-                HapticEngine.medium()
-            }
-        }
-
         func setDrawing(_ drawing: PKDrawing, on canvasView: PKCanvasView? = nil) {
             let target = canvasView ?? self.canvasView
             guard let canvas = target else { return }
@@ -308,6 +276,20 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
     private let pageSize: CGSize
     private var viewModel: CanvasViewModel?
     private var didSetInitialZoom = false
+    private lazy var textTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCanvasTap(_:)))
+        // Swallow the tap so PencilKit / the scroll view doesn't trigger the default
+        // edit pills on empty canvas when block tools are active.
+        recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
+    private lazy var canvasLongPressRecognizer: UILongPressGestureRecognizer = {
+        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleCanvasLongPress(_:)))
+        recognizer.minimumPressDuration = 0.45
+        // Cancel touches so the system doesn't show the iPadOS edit menu under our custom menu.
+        recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
 
     init(pageSize: CGSize, viewModel: CanvasViewModel?) {
         self.pageSize = pageSize
@@ -331,6 +313,8 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.delegate = self
         scrollView.contentInsetAdjustmentBehavior = .never
+        scrollView.addGestureRecognizer(textTapRecognizer)
+        scrollView.addGestureRecognizer(canvasLongPressRecognizer)
         addSubview(scrollView)
 
         pageContainerView.frame = CGRect(origin: .zero, size: pageSize)
@@ -372,9 +356,9 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
             let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel))
             blockHost.view.backgroundColor = .clear
             blockHost.view.isUserInteractionEnabled = true
-            blockHost.view.frame = bounds
-            blockHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            addSubview(blockHost.view)
+            blockHost.view.frame = CGRect(origin: .zero, size: pageSize)
+            blockHost.view.clipsToBounds = false
+            pageContainerView.addSubview(blockHost.view)
             self.blockOverlayHostView = blockHost
         }
     }
@@ -420,11 +404,65 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if let blockView = blockOverlayHostView?.view {
             let blockPoint = self.convert(point, to: blockView)
-            if let hit = blockView.hitTest(blockPoint, with: event),
-               hit !== blockView {
-                return hit
+            if let hit = blockView.hitTest(blockPoint, with: event) {
+                // Forward only real overlay subviews (text blocks, handles, editor).
+                // Let empty-space touches fall through so the scroll view can pan/zoom.
+                if hit !== blockView {
+                    return hit
+                }
             }
         }
         return super.hitTest(point, with: event)
+    }
+
+    @objc private func handleCanvasTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended,
+              viewModel?.selectedTool == .text,
+              let viewModel else { return }
+
+        let location = recognizer.location(in: pageContainerView)
+        guard CGRect(origin: .zero, size: pageSize).contains(location) else { return }
+
+        // 1) If tapping an existing text element, select it (do not create a new one).
+        if let hitId = viewModel.currentPage.elements
+            .reversed()
+            .first(where: { el in
+                guard el.type == "text" else { return false }
+                let w = CGFloat(el.width ?? 200)
+                let h = CGFloat(el.height ?? 32)
+                let rect = CGRect(x: el.positionX, y: el.positionY, width: w, height: h)
+                return rect.contains(location)
+            })?.id {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+            viewModel.selectedElementIds = [hitId]
+            return
+        }
+
+        // 2) Otherwise, place a new text element at the tap location.
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
+        viewModel.selectedElementIds = []
+        viewModel.addTextElement(at: location)
+    }
+
+    @objc private func handleCanvasLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began,
+              let viewModel else { return }
+        guard !viewModel.isLassoSelectionActive, !viewModel.isRegionCaptureMode else { return }
+
+        if #available(iOS 13.0, *) {
+            UIMenuController.shared.hideMenu(from: self)
+        } else {
+            UIMenuController.shared.setMenuVisible(false, animated: false)
+        }
+
+        let location = recognizer.location(in: pageContainerView)
+        guard CGRect(origin: .zero, size: pageSize).contains(location) else { return }
+        viewModel.showCanvasContextMenu(at: location)
     }
 }

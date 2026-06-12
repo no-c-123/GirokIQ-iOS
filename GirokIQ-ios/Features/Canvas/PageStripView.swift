@@ -65,6 +65,17 @@ struct PageStripView: View {
         .accessibilityLabel("Page \(index + 1)")
         .accessibilityHint(isSelected ? "Currently selected" : "Double tap to switch to page \(index + 1)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .contextMenu {
+            if canvasVM.pages.count > 1 {
+                Button(role: .destructive) {
+                    withAnimation {
+                        canvasVM.deletePage(at: index)
+                    }
+                } label: {
+                    Label("Delete Page", systemImage: "trash")
+                }
+            }
+        }
     }
 
     private var addPageButton: some View {

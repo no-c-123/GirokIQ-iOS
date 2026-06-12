@@ -37,6 +37,17 @@ struct CanvasContainerView: View {
         }
         .animation(GAnimation.motionSafe(), value: showAIPanel)
         .navigationBarHidden(true)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            guard let frame = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+            canvasVM.updateKeyboardHeight(frame.height)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            canvasVM.updateKeyboardHeight(0)
+        }
+        .onChange(of: canvasVM.selectedElementIds) { _, _ in
+            // If the keyboard is up, keep the selected text block visible.
+            canvasVM.ensureSelectedTextVisible()
+        }
         .sheet(isPresented: $showPatternPicker) {
             PatternPickerSheet(
                 selectedPattern: $canvasVM.backgroundPattern,
@@ -92,6 +103,13 @@ struct CanvasContainerView: View {
                     .zIndex(2)
                 }
 
+                // Text tool formatting bar — full width, just below the top toolbar
+                if canvasVM.selectedTool == .text {
+                    TextToolKeyboardBar(viewModel: canvasVM)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .zIndex(3)
+                }
+
                 ZStack(alignment: .leading) {
                     // Main Drawing Surface
                     ZStack {
@@ -106,6 +124,9 @@ struct CanvasContainerView: View {
                                 allowsFingerDrawing: !canvasVM.palmRejectionEnabled
                             )
                         }
+                        
+                        CustomLassoGestureView(viewModel: canvasVM)
+                            .allowsHitTesting(canvasVM.selectedTool == .lasso)
                     }
                     .ignoresSafeArea(edges: [.horizontal, .bottom])
 
@@ -152,6 +173,17 @@ struct CanvasContainerView: View {
                     if canvasVM.isRegionCaptureMode {
                         RegionCaptureOverlay(canvasVM: canvasVM, aiVM: aiVM, showAIPanel: $showAIPanel)
                             .zIndex(10)
+                            .transition(.opacity)
+                    }
+
+                    if canvasVM.isLassoSelectionActive, let box = canvasVM.lassoSelectionBox {
+                        LassoSelectionOverlay(viewModel: canvasVM, box: box)
+                            .zIndex(8)
+                    }
+
+                    if let pt = canvasVM.canvasContextMenuPoint {
+                        CanvasContextMenuOverlay(viewModel: canvasVM, canvasPoint: pt)
+                            .zIndex(9)
                             .transition(.opacity)
                     }
                 }

@@ -82,8 +82,8 @@ enum DrawingTool: String, CaseIterable, Codable {
     case eraser
     case lasso
     case selection
-    case text
     case image
+    case text
 
     var icon: String {
         switch self {
@@ -93,8 +93,8 @@ enum DrawingTool: String, CaseIterable, Codable {
         case .eraser:    return "eraser"
         case .lasso:     return "lasso"
         case .selection: return "arrow.up.left.and.arrow.down.right"
-        case .text:      return "textformat"
         case .image:     return "photo"
+        case .text:      return "textformat"
         }
     }
 
@@ -106,8 +106,8 @@ enum DrawingTool: String, CaseIterable, Codable {
         case .eraser:    return "Eraser"
         case .lasso:     return "Lasso"
         case .selection: return "Select"
-        case .text:      return "Text"
         case .image:     return "Image"
+        case .text:      return "Text"
         }
     }
 
@@ -119,8 +119,8 @@ enum DrawingTool: String, CaseIterable, Codable {
         case .eraser:    return 20.0
         case .lasso:     return 1.0
         case .selection: return 1.0
-        case .text:      return 1.0
         case .image:     return 1.0
+        case .text:      return 1.0
         }
     }
 

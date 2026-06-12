@@ -110,6 +110,13 @@ final class SupabaseService {
             .execute()
     }
 
+    func deletePage(id: UUID) async throws {
+        try await supabase.from("pages")
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     // MARK: - Strokes
 
     func fetchStrokes(pageId: UUID) async throws -> [RemoteStroke] {

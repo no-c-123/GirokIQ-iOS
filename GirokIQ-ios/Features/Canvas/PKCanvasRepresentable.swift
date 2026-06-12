@@ -1,14 +1,45 @@
 import SwiftUI
 import PencilKit
+import UIKit
 
 final class GirokCanvasView: PKCanvasView {
+    private var didStripEditMenuInteractions = false
+
+    // Block ALL edit-menu actions, not just three selectors.
+    // Keep undo/redo so hardware keyboard Cmd+Z and Cmd+Shift+Z still work.
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-        let actionName = NSStringFromSelector(action)
-        // Disable "Select All" and "Insert Space" which appear when tapping empty canvas
-        if actionName == "selectAll:" || actionName == "_insertSpace:" || actionName == "insertSpace:" {
-            return false
+        let name = NSStringFromSelector(action)
+        if name == "undo:" || name == "redo:" {
+            return super.canPerformAction(action, withSender: sender)
         }
-        return super.canPerformAction(action, withSender: sender)
+        return false
+    }
+
+    // Remove PencilKit's internal edit-menu / handwriting-selection interactions,
+    // which can present pills from internal subviews via UIEditMenuInteraction.
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard !didStripEditMenuInteractions, window != nil else { return }
+        didStripEditMenuInteractions = true
+        Self.stripEditMenuInteractions(from: self)
+    }
+
+    private static func stripEditMenuInteractions(from view: UIView) {
+        for interaction in view.interactions {
+            let typeName = String(describing: type(of: interaction))
+            if #available(iOS 16.0, *) {
+                if interaction is UIEditMenuInteraction {
+                    view.removeInteraction(interaction)
+                    continue
+                }
+            }
+            if typeName.contains("EditMenu") || typeName.contains("TextSelection") {
+                view.removeInteraction(interaction)
+            }
+        }
+        for sub in view.subviews {
+            stripEditMenuInteractions(from: sub)
+        }
     }
 }
 
@@ -74,8 +105,24 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     // MARK: - Private
 
     private let backgroundScrollView = UIScrollView()
+    private let canvasContentView = UIView()
     private let canvasContentSize: CGSize
     private var viewModel: CanvasViewModel?
+    private lazy var textTapRecognizer: UITapGestureRecognizer = {
+        let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCanvasTap(_:)))
+        // Swallow the tap so PencilKit never receives it (prevents the default
+        // "Select All / Insert Space" edit pills on empty canvas).
+        recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
+    private lazy var canvasLongPressRecognizer: UILongPressGestureRecognizer = {
+        let recognizer = UILongPressGestureRecognizer(target: self, action: #selector(handleCanvasLongPress(_:)))
+        recognizer.minimumPressDuration = 0.45
+        // Cancel touches so the system doesn't show the PencilKit edit menu
+        // (e.g. "Select All / Insert Space") underneath our custom menu.
+        recognizer.cancelsTouchesInView = true
+        return recognizer
+    }()
 
     // MARK: - Init
 
@@ -115,19 +162,32 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         backgroundScrollView.backgroundColor = .clear
         backgroundScrollView.isOpaque = false
         backgroundScrollView.delegate = self  // for viewForZooming(in:)
-        backgroundScrollView.addSubview(backgroundPatternView)
+
+        // canvasContentView is the single zoom target for backgroundScrollView.
+        // viewForZooming returns this view, so both backgroundPatternView and
+        // blockHost.view scale together as one unit when syncBackground() assigns
+        // backgroundScrollView.zoomScale = canvasView.zoomScale.
+        canvasContentView.frame = CGRect(origin: .zero, size: canvasContentSize)
+        canvasContentView.backgroundColor = .clear
+        canvasContentView.isUserInteractionEnabled = false
+        canvasContentView.clipsToBounds = false
+
+        canvasContentView.addSubview(backgroundPatternView)
+        backgroundScrollView.addSubview(canvasContentView)
 
         // index 0 — tiled background
         addSubview(backgroundScrollView)
 
-        // index 1 — block overlay (images, text blocks)
+        // index 1 — block overlay inside canvasContentView so it zooms with the background.
+        // Touches reach it via CanvasHostView.hitTest which converts and forwards
+        // directly, bypassing backgroundScrollView.isUserInteractionEnabled=false.
         if let viewModel = viewModel {
             let blockHost = UIHostingController(rootView: BlockOverlayView(viewModel: viewModel))
             blockHost.view.backgroundColor = .clear
             blockHost.view.isUserInteractionEnabled = true
-            blockHost.view.frame = bounds
-            blockHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-            addSubview(blockHost.view)
+            blockHost.view.clipsToBounds = false
+            blockHost.view.frame = CGRect(origin: .zero, size: canvasContentSize)
+            canvasContentView.addSubview(blockHost.view)
             self.blockOverlayHostView = blockHost
         }
 
@@ -162,6 +222,8 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         }
 
         addSubview(canvasView)
+        canvasView.addGestureRecognizer(textTapRecognizer)
+        canvasView.addGestureRecognizer(canvasLongPressRecognizer)
 
         // Center initial viewport
         let initialOffset = CGPoint(
@@ -172,10 +234,18 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         backgroundScrollView.contentOffset = initialOffset
     }
 
+    // Tracks whether the viewport has been centered for the first time.
+    // Cannot use contentOffset == .zero as the sentinel because setupViews()
+    // already writes a non-zero value before the real bounds are known.
+    private var didApplyInitialOffset = false
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        // Re-center if this is the first real layout (bounds were zero during init)
-        if backgroundScrollView.contentOffset == .zero && bounds.width > 0 {
+        // Re-center once the view receives its real bounds for the first time.
+        // setupViews() sets contentOffset based on zero bounds, so we must
+        // recompute and reapply here — and keep the two scroll views in sync.
+        if !didApplyInitialOffset && bounds.width > 0 {
+            didApplyInitialOffset = true
             let initialOffset = CGPoint(
                 x: (canvasContentSize.width  - bounds.width)  / 2,
                 y: (canvasContentSize.height - bounds.height) / 2
@@ -189,8 +259,9 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     // MARK: - UIScrollViewDelegate (for backgroundScrollView only)
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? {
-        // Return the background pattern view so zoomScale assignment works
-        return backgroundPatternView
+        // Return canvasContentView so both backgroundPatternView and blockHost.view
+        // zoom together as one unit when syncBackground() assigns zoomScale.
+        return canvasContentView
     }
 
     // MARK: - Sync
@@ -201,6 +272,8 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
         backgroundScrollView.contentOffset = canvasView.contentOffset
         backgroundScrollView.zoomScale = canvasView.zoomScale
         updateCenteringInsets()
+        // No syncOverlay() — blockHost.view is inside backgroundScrollView
+        // and moves automatically when contentOffset/zoomScale are synced.
     }
     
     private func updateCenteringInsets() {
@@ -218,12 +291,89 @@ final class CanvasHostView: UIView, UIScrollViewDelegate {
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         if let blockView = blockOverlayHostView?.view {
             let blockPoint = self.convert(point, to: blockView)
-            if let hit = blockView.hitTest(blockPoint, with: event),
-               hit !== blockView {
-                return hit
+            if let hit = blockView.hitTest(blockPoint, with: event) {
+                // Forward only real overlay subviews (text blocks, handles, editor).
+                // Let empty-space touches fall through so the canvas can pan/zoom.
+                if hit !== blockView {
+                    return hit
+                }
             }
         }
         return super.hitTest(point, with: event)
+    }
+
+    @objc private func handleCanvasTap(_ recognizer: UITapGestureRecognizer) {
+        guard recognizer.state == .ended,
+              viewModel?.selectedTool == .text,
+              let viewModel else { return }
+
+        // Convert the tap to the block overlay's coordinate space.
+        // This automatically accounts for scroll + zoom transforms and avoids
+        // edge cases with contentInset/contentOffset math.
+        let hostPoint = recognizer.location(in: self)
+        if let blockView = blockOverlayHostView?.view {
+            let canvasPoint = self.convert(hostPoint, to: blockView)
+            // 1) If tapping an existing text element, select it (do not create a new one).
+            // Use stored element rects in canvas space (top-left anchored).
+            if let hitId = viewModel.currentPage.elements
+                .reversed()
+                .first(where: { el in
+                    guard el.type == "text" else { return false }
+                    let w = CGFloat(el.width ?? 200)
+                    let h = CGFloat(el.height ?? 32)
+                    let rect = CGRect(x: el.positionX, y: el.positionY, width: w, height: h)
+                    return rect.contains(canvasPoint)
+                })?.id {
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder),
+                    to: nil, from: nil, for: nil
+                )
+                viewModel.selectedElementIds = [hitId]
+                return
+            }
+
+            // 2) Otherwise, place a new text element at the tap location.
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+            viewModel.selectedElementIds = []
+            viewModel.addTextElement(at: canvasPoint)
+        } else {
+            // Fallback to canvas view space (should not happen in normal operation).
+            let location = recognizer.location(in: canvasView)
+            let canvasPoint = CGPoint(
+                x: (location.x + canvasView.contentOffset.x) / canvasView.zoomScale,
+                y: (location.y + canvasView.contentOffset.y) / canvasView.zoomScale
+            )
+            // No reliable element hit-test in fallback mode — just create a new one.
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+            viewModel.selectedElementIds = []
+            viewModel.addTextElement(at: canvasPoint)
+        }
+    }
+
+    @objc private func handleCanvasLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began,
+              let viewModel else { return }
+        // Do not interrupt lasso / region capture modes
+        guard !viewModel.isLassoSelectionActive, !viewModel.isRegionCaptureMode else { return }
+
+        // Dismiss any system edit menu that might already be up
+        if #available(iOS 13.0, *) {
+            UIMenuController.shared.hideMenu(from: canvasView)
+        } else {
+            UIMenuController.shared.setMenuVisible(false, animated: false)
+        }
+
+        let hostPoint = recognizer.location(in: self)
+        if let blockView = blockOverlayHostView?.view {
+            let canvasPoint = self.convert(hostPoint, to: blockView)
+            viewModel.showCanvasContextMenu(at: canvasPoint)
+        }
     }
 }
 
@@ -300,9 +450,10 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             viewModel.refreshUndoState()
         }
 
-        // Tap gesture for text and image placement
-        let tapGesture = UITapGestureRecognizer(target: context.coordinator, action: #selector(context.coordinator.handleCanvasTap(_:)))
-        canvasView.addGestureRecognizer(tapGesture)
+        // Used by #5: allow the view model to scroll the viewport when the keyboard covers text.
+        Task { @MainActor in
+            viewModel.setViewportScrollView(canvasView)
+        }
 
         return hostView
     }
@@ -319,9 +470,15 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             canvasView.tool = newTool
         }
 
-        let isBlockTool = viewModel.selectedTool == .text || viewModel.selectedTool == .image
+        let isBlockTool = viewModel.selectedTool == .image || viewModel.selectedTool == .text
         if isBlockTool {
-            canvasView.isUserInteractionEnabled = false
+            canvasView.isUserInteractionEnabled = true
+            canvasView.drawingGestureRecognizer.isEnabled = false
+            // Force pencil-only while block tools are active so finger taps don't
+            // trigger PencilKit's edit menu. Pan/zoom still works via scrolling.
+            if canvasView.drawingPolicy != .pencilOnly {
+                canvasView.drawingPolicy = .pencilOnly
+            }
         } else {
             canvasView.isUserInteractionEnabled = true
             canvasView.drawingGestureRecognizer.isEnabled = true
@@ -459,16 +616,12 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             hostView?.syncBackground()
-            Task { @MainActor in
-                self.viewModel.canvasOffset = CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y)
-            }
+            viewModel.canvasOffset = CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y)
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             hostView?.syncBackground()
-            Task { @MainActor in
-                self.viewModel.canvasScale = scrollView.zoomScale
-            }
+            viewModel.canvasScale = scrollView.zoomScale
         }
 
         /// Called by the finger-touch gesture recognizer installed on the canvas
@@ -557,48 +710,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             }
         }
 
-        // MARK: - Tap Gesture for Blocks
-
-        @objc func handleCanvasTap(_ gesture: UITapGestureRecognizer) {
-            guard let canvas = canvasView,
-                  viewModel.selectedTool == .text else { return }
-
-            let location = gesture.location(in: canvas)
-            let scale = canvas.zoomScale
-            let offset = canvas.contentOffset
-            let canvasX = (location.x + offset.x) / scale
-            let canvasY = (location.y + offset.y) / scale
-            let tapPoint = CGPoint(x: canvasX, y: canvasY)
-
-            for element in viewModel.currentPage.elements where element.type == "text" {
-                let w = CGFloat(element.width ?? 200)
-                let h = CGFloat(element.height ?? 50)
-                let rect = CGRect(
-                    x: CGFloat(element.positionX) - w / 2,
-                    y: CGFloat(element.positionY) - h / 2,
-                    width: w,
-                    height: h
-                )
-                if rect.contains(tapPoint) { return }
-            }
-
-            Task { @MainActor in
-                let newElement = CanvasElement(
-                    pageId: self.viewModel.currentPage.id,
-                    userId: self.viewModel.userId ?? UUID(),
-                    type: "text",
-                    content: "\u{200B}",
-                    positionX: Double(tapPoint.x),
-                    positionY: Double(tapPoint.y),
-                    width: 200,
-                    height: nil,
-                    style: ElementStyle(fontSize: 24, textColor: "#FFFFFE")
-                )
-                self.viewModel.addElement(newElement)
-                self.viewModel.selectTool(.pen)
-                HapticEngine.medium()
-            }
-        }
+        // MARK: - Programmatic Updates
 
         // MARK: - Page Switching & Programmatic Updates
 
@@ -640,6 +752,11 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             } else {
                 coordinator?.fingerTouchDetected()
             }
+            // Dismiss keyboard whenever the user touches the canvas 
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
             state = .failed
         }
     }

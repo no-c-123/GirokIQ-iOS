@@ -161,6 +161,14 @@ final class LocalDatabase {
         }
     }
 
+    func deletePage(id: UUID, syncStatus: SyncStatus = .pending) async throws {
+        try await dbQueue.write { db in
+            _ = try Page.filter(Column("id") == id.uuidString).deleteAll(db)
+            try db.execute(sql: "DELETE FROM page_drawing WHERE page_id = ?", arguments: [id.uuidString])
+            try self.recordSyncChange(db: db, table: "page", id: id.uuidString, status: syncStatus)
+        }
+    }
+
     func saveCanvasElements(_ elements: [CanvasElement], forPageId pageId: UUID) async throws {
         try await dbQueue.write { db in
             if let row = try Row.fetchOne(db, sql: "SELECT * FROM page WHERE id = ?", arguments: [pageId.uuidString]) {
