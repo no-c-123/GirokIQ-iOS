@@ -1013,3 +1013,93 @@ struct CanvasContextMenuOverlay: View {
             .frame(width: 0.5, height: 28)
     }
 }
+
+// MARK: - Custom Lasso Gesture
+
+/// Captures a freeform polygon for lasso selection in screen space and delegates
+/// hit testing + selection commit to `CanvasViewModel.commitLassoSelection(polygon:)`.
+///
+/// This is mounted above the canvas (in `CanvasContainerView`) and enabled only when
+/// the lasso tool is active. It draws a gold dashed path while the user drags.
+struct CustomLassoGestureView: View {
+    @ObservedObject var viewModel: CanvasViewModel
+
+    @State private var points: [CGPoint] = []
+    @State private var isActiveDrag = false
+
+    var body: some View {
+        ZStack {
+            // Visible lasso path during drag
+            Canvas { context, _ in
+                guard points.count > 1 else { return }
+                var path = Path()
+                path.addLines(points)
+                if points.count > 2 {
+                    path.addLine(points[0])
+                }
+
+                context.stroke(
+                    path,
+                    with: .color(Color(hex: "#D8B547").opacity(0.95)),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round, dash: [7, 5])
+                )
+                context.fill(path, with: .color(Color(hex: "#D8B547").opacity(0.08)))
+            }
+            .allowsHitTesting(false)
+
+            // Gesture capture layer
+            Color.clear
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
+                        .onChanged { value in
+                            guard viewModel.selectedTool == .lasso,
+                                  !viewModel.isRegionCaptureMode else { return }
+                            if !isActiveDrag {
+                                isActiveDrag = true
+                                points = []
+                            }
+                            points.append(value.location)
+                        }
+                        .onEnded { _ in
+                            guard viewModel.selectedTool == .lasso,
+                                  points.count > 2 else {
+                                points = []
+                                isActiveDrag = false
+                                return
+                            }
+                            viewModel.commitLassoSelection(polygon: points)
+                            points = []
+                            isActiveDrag = false
+                        }
+                )
+        }
+    }
+}
+
+// MARK: - Lasso Screenshot Preview
+
+/// Simple preview sheet for a lasso screenshot image.
+struct LassoScreenshotPreview: View {
+    let image: UIImage
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(16)
+            }
+            .navigationTitle("Screenshot")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+    }
+}
