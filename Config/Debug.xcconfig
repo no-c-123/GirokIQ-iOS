@@ -1,0 +1,7 @@
+// GirokIQ debug build configuration
+//
+// This file is intentionally safe to commit.
+// Secrets are injected by local Xcode build settings / Xcode Cloud environment variables.
+//
+// Keep this file present in the repository because the Xcode project references it
+// as a base configuration file for Debug builds.

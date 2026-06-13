@@ -20,6 +20,9 @@ DerivedData/
 Config/Debug.xcconfig
 Config/Release.xcconfig
 *.xcconfig
+!Config/
+!Config/Debug.xcconfig
+!Config/Release.xcconfig
 
 # DS_Store
 .DS_Store
