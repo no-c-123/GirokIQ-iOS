@@ -72,6 +72,7 @@ struct SidebarView: View {
             Section("Recent") {
                 ForEach(viewModel.recentNotebooks) { notebook in
                     Button {
+                        viewModel.markNotebookOpened(notebook)
                         selectedNotebook = notebook
                     } label: {
                         HStack(spacing: GSpacing.sm) {

@@ -10,43 +10,34 @@ struct CanvasSidebar: View {
 
     var body: some View {
         VStack(spacing: GSpacing.sm) {
-            // Pages
-            SidebarButton(icon: "square.stack.3d.up", label: "Pages", action: onShowPages)
-            
-            // Patterns
-            SidebarButton(icon: "circle.grid.3x3", label: "Pattern", action: onShowPatterns)
-            
-            // Properties Toggle
-            SidebarButton(
-                icon: "slider.horizontal.3",
-                label: "Properties",
-                isActive: viewModel.showProperties,
-                action: {
-                    withAnimation(GAnimation.springFast) {
-                        viewModel.showProperties.toggle()
-                    }
+            VStack(spacing: GSpacing.xs) {
+                ForEach([DrawingTool.pen, .pencil, .marker, .eraser, .lasso, .text, .image], id: \.self) { tool in
+                    RailToolButton(tool: tool, viewModel: viewModel)
                 }
-            )
-            
-            // AI Button
+            }
+
+            Divider().opacity(0.2)
+                .padding(.vertical, 6)
+
+            SidebarButton(icon: "square.stack.3d.up", label: "Pages", action: onShowPages)
+            SidebarButton(icon: "circle.grid.3x3", label: "Pattern", action: onShowPatterns)
+
             SidebarButton(
                 icon: "sparkles",
                 label: "AI",
                 isActive: isAIPanelVisible,
                 action: onShowAI
             )
-            
-            // Region Capture Button
+
             SidebarButton(
                 icon: "viewfinder",
                 label: "Capture Region",
                 isActive: viewModel.isRegionCaptureMode,
                 action: onRegionCapture
             )
-            
+
             Spacer()
-            
-            // Sync
+
             SidebarButton(icon: "arrow.triangle.2.circlepath", label: "Sync") {
                 Task {
                     await viewModel.flushSave()
@@ -67,6 +58,56 @@ struct CanvasSidebar: View {
                 .stroke(Color.gBorderStrong.opacity(0.5), lineWidth: 0.5)
         )
         .frame(width: 52)
+    }
+}
+
+private struct RailToolButton: View {
+    let tool: DrawingTool
+    @ObservedObject var viewModel: CanvasViewModel
+
+    @State private var showPopover = false
+
+    private var isSelected: Bool { viewModel.selectedTool == tool }
+    private var supportsPopover: Bool {
+        switch tool {
+        case .text, .lasso, .selection:
+            return false
+        default:
+            return true
+        }
+    }
+
+    var body: some View {
+        Button {
+            if isSelected && supportsPopover {
+                showPopover.toggle()
+            } else {
+                showPopover = false
+                viewModel.selectTool(tool)
+            }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                    .fill(isSelected ? Color.gPrimary : Color.gElevated.opacity(0.5))
+                    .frame(width: 36, height: 36)
+
+                Image(systemName: tool.icon)
+                    .font(.system(size: 18, weight: isSelected ? .semibold : .medium))
+                    .foregroundColor(isSelected ? .white : .gTextSecondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .onLongPressGesture(minimumDuration: 0.4) {
+            guard supportsPopover else { return }
+            if !isSelected { viewModel.selectTool(tool) }
+            HapticEngine.light()
+            showPopover = true
+        }
+        .popover(isPresented: $showPopover, arrowEdge: .leading) {
+            ToolQuickSettingsPopover(tool: tool, viewModel: viewModel)
+                .frame(width: tool == .image ? 240 : 220)
+        }
+        .accessibilityLabel(tool.label)
     }
 }
 

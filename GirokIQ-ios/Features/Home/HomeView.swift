@@ -1,4 +1,5 @@
 import SwiftUI
+internal import UniformTypeIdentifiers
 
 struct HomeView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
@@ -20,6 +21,9 @@ struct HomeView: View {
     @State private var renameText = ""
     @State private var showSettings = false
     @State private var showSidebarPanel = false
+    @State private var showNotebookImporter = false
+    @State private var exportURL: URL? = nil
+    @State private var showExportShare = false
     
     // Folder Creation & Management
     @State private var showNewFolderAlert = false
@@ -34,6 +38,11 @@ struct HomeView: View {
         }
         // Use an adaptive layout so the portrait cards don't grow to fill the screen
         return [GridItem(.adaptive(minimum: 160, maximum: 240), spacing: GSpacing.md)]
+    }
+
+    private func openNotebook(_ notebook: Notebook) {
+        viewModel.markNotebookOpened(notebook)
+        selectedNotebook = notebook
     }
 
     var body: some View {
@@ -69,6 +78,25 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $showExportShare) {
+            if let url = exportURL {
+                ShareSheet(items: [url])
+            }
+        }
+        .fileImporter(
+            isPresented: $showNotebookImporter,
+            allowedContentTypes: [.girokIQNotebook, .data],
+            allowsMultipleSelection: false
+        ) { result in
+            guard let userId = authViewModel.currentUserId else { return }
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { _ = await viewModel.importNotebook(from: url, userId: userId) }
+            case .failure(let error):
+                viewModel.errorMessage = error.localizedDescription
+            }
         }
         .alert("Rename Notebook", isPresented: Binding(
             get: { notebookToRename != nil },
@@ -153,6 +181,9 @@ struct HomeView: View {
                     selectedNotebook: Binding(
                         get: { selectedNotebook },
                         set: { newValue in
+                            if let notebook = newValue {
+                                viewModel.markNotebookOpened(notebook)
+                            }
                             selectedNotebook = newValue
                             animateMotionSafe {
                                 showSidebarPanel = false
@@ -256,6 +287,13 @@ struct HomeView: View {
                     Label("New Folder", systemImage: "folder.badge.plus")
                         .font(.custom("PlusJakartaSans-Medium", size: 15))
                 }
+
+                Button {
+                    showNotebookImporter = true
+                } label: {
+                    Label("Import Notebook", systemImage: "square.and.arrow.down.on.square")
+                        .font(.custom("PlusJakartaSans-Medium", size: 15))
+                }
             } label: {
                 Image(systemName: "plus")
                     .toolbarIconStyle(primary: true)
@@ -342,7 +380,7 @@ struct HomeView: View {
                                 notebook: notebook,
                                 viewMode: viewModel.viewMode
                             ) {
-                                selectedNotebook = notebook
+                                openNotebook(notebook)
                             }
                             .contextMenu { notebookContextMenu(for: notebook) }
                             .transition(.scale(scale: 0.9).combined(with: .opacity))
@@ -364,7 +402,7 @@ struct HomeView: View {
                             viewMode: viewModel.viewMode,
                             columns: columns,
                             onToggle: { viewModel.toggleFolder(folder.id) },
-                            onSelectNotebook: { selectedNotebook = $0 },
+                            onSelectNotebook: { openNotebook($0) },
                             onContextAction: { handleContextAction($0, notebook: $1) },
                             onFolderContextAction: { handleFolderContextAction($0, folder: $1) }
                         )
@@ -380,7 +418,7 @@ struct HomeView: View {
                                 notebook: notebook,
                                 viewMode: viewModel.viewMode
                             ) {
-                                selectedNotebook = notebook
+                                openNotebook(notebook)
                             }
                             .contextMenu { notebookContextMenu(for: notebook) }
                             .transition(.scale(scale: 0.9).combined(with: .opacity))
@@ -485,6 +523,15 @@ struct HomeView: View {
                     }
                 }
             }
+        }
+
+        Button {
+            Task {
+                exportURL = await viewModel.exportNotebookArchive(notebook)
+                showExportShare = exportURL != nil
+            }
+        } label: {
+            Label("Export Notebook", systemImage: "square.and.arrow.up")
         }
 
         Divider()

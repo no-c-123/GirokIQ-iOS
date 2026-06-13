@@ -13,6 +13,7 @@ struct CanvasContainerView: View {
     @State private var showPageStrip = false
     @State private var showPatternPicker = false
     @State private var showAIPanel = false
+    @State private var pickedCanvasImageData: Data? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -21,7 +22,7 @@ struct CanvasContainerView: View {
 
             // iPad: side panel for AI
             if sizeClass == .regular && showAIPanel {
-                AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing, onRegionCapture: {
+                AIChatView(viewModel: aiVM, drawing: canvasVM.currentDrawing, onRegionCapture: {
                     showAIPanel = false
                     canvasVM.isRegionCaptureMode = true
                 })
@@ -56,12 +57,19 @@ struct CanvasContainerView: View {
                 }
             )
         }
+        .sheet(isPresented: $canvasVM.showCanvasImagePicker, onDismiss: {
+            if pickedCanvasImageData == nil {
+                canvasVM.cancelPendingImageInsertion()
+            }
+        }) {
+            ImagePicker(imageData: $pickedCanvasImageData)
+        }
         // iPhone: sheet for AI
         .sheet(isPresented: Binding(
             get: { sizeClass == .compact && showAIPanel },
             set: { if !$0 { showAIPanel = false } }
         )) {
-            AIChatView(viewModel: aiVM, drawing: canvasVM.currentPage.pkDrawing, onRegionCapture: {
+            AIChatView(viewModel: aiVM, drawing: canvasVM.currentDrawing, onRegionCapture: {
                 showAIPanel = false
                 canvasVM.isRegionCaptureMode = true
             })
@@ -79,6 +87,11 @@ struct CanvasContainerView: View {
                 await aiVM.startSession(userId: userId, notebookId: notebook.id)
             }
         }
+        .onChange(of: pickedCanvasImageData) { _, newValue in
+            guard let data = newValue, let image = UIImage(data: data) else { return }
+            canvasVM.insertImage(image, at: canvasVM.pendingImageInsertionPoint)
+            pickedCanvasImageData = nil
+        }
         .onDisappear {
             // Force save any pending strokes immediately before the view model is destroyed
             Task {
@@ -92,16 +105,13 @@ struct CanvasContainerView: View {
     var canvasArea: some View {
         GeometryReader { geo in
             VStack(spacing: 0) {
-                // Top Toolbar (auto-hides during drawing)
-                if canvasVM.isToolbarVisible {
-                    CanvasToolbar(
-                        notebook: notebook,
-                        viewModel: canvasVM,
-                        onBack: { dismiss() }
-                    )
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .zIndex(2)
-                }
+                CanvasToolbar(
+                    notebook: notebook,
+                    viewModel: canvasVM,
+                    onBack: { dismiss() }
+                )
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(2)
 
                 // Text tool formatting bar — full width, just below the top toolbar
                 if canvasVM.selectedTool == .text {
@@ -132,37 +142,25 @@ struct CanvasContainerView: View {
 
                     // Left-aligned controls
                     HStack(spacing: 0) {
-                        // 1. Sidebar (always shown if toolbar is visible)
-                        if canvasVM.isToolbarVisible {
-                            CanvasSidebar(
-                                viewModel: canvasVM,
-                                onShowPages: { withAnimation { showPageStrip.toggle() } },
-                                onShowPatterns: { showPatternPicker = true },
-                                onShowAI: { withAnimation(GAnimation.spring) { showAIPanel.toggle() } },
-                                isAIPanelVisible: showAIPanel,
-                                onRegionCapture: {
-                                    showAIPanel = false
-                                    canvasVM.isRegionCaptureMode = true
-                                }
-                            )
-                            .padding(.leading, 12)
-                            .padding(.top, 16)
-                            .transition(.move(edge: .leading).combined(with: .opacity))
-                        }
+                        CanvasSidebar(
+                            viewModel: canvasVM,
+                            onShowPages: { withAnimation { showPageStrip.toggle() } },
+                            onShowPatterns: { showPatternPicker = true },
+                            onShowAI: { withAnimation(GAnimation.spring) { showAIPanel.toggle() } },
+                            isAIPanelVisible: showAIPanel,
+                            onRegionCapture: {
+                                showAIPanel = false
+                                canvasVM.isRegionCaptureMode = true
+                            }
+                        )
+                        .padding(.leading, 12)
+                        .padding(.top, 16)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
 
-                        // 2. Page Manager (vertical list)
-                        if showPageStrip && canvasVM.isToolbarVisible {
+                        if showPageStrip {
                             PageStripView(canvasVM: canvasVM)
                                 .padding(.top, 16)
                                 .transition(.move(edge: .leading).combined(with: .opacity))
-                        }
-
-                        // 3. Properties Panel
-                        if canvasVM.showProperties && canvasVM.isToolbarVisible {
-                            PropertiesPanel(viewModel: canvasVM)
-                                .padding(.leading, 12)
-                                .padding(.top, 16)
-                                .transition(.opacity)
                         }
                         
                         Spacer()

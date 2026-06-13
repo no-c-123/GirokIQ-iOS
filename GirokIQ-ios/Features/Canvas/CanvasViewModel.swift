@@ -69,11 +69,12 @@ final class CanvasViewModel: ObservableObject {
     @Published var backgroundPattern: BackgroundPattern = .grid
     @Published var canvasOffset: CGSize = .zero
     @Published var canvasScale: CGFloat = 1.0
+    @Published var restoredViewport: CanvasViewportState?
     // Initial value is .zero — the correct size is written by PKCanvasRepresentable's 
     // updateUIView on the first render pass, before any user interaction can occur. 
     // Using UIScreen.main.bounds.size here was both deprecated (iOS 16+) and wrong 
     // in Split View / Stage Manager contexts. 
-    @Published var canvasViewSize: CGSize = .zero
+    var canvasViewSize: CGSize = .zero
     @Published var showProperties: Bool = true
     @Published var isSaving: Bool = false
     @Published var palmRejectionEnabled: Bool = true
@@ -81,6 +82,8 @@ final class CanvasViewModel: ObservableObject {
     @Published var isShapeSnappingEnabled: Bool = false
     @Published var forceDrawingUpdate: Bool = false
     @Published var isRegionCaptureMode: Bool = false
+    @Published var showCanvasImagePicker: Bool = false
+    @Published var pendingImageInsertionPoint: CGPoint? = nil
 
     // MARK: - Keyboard / Viewport (Text Tool)
     @Published var keyboardHeight: CGFloat = 0
@@ -104,6 +107,21 @@ final class CanvasViewModel: ObservableObject {
         didSet {
             if let encoded = try? JSONEncoder().encode(toolMemory) {
                 UserDefaults.standard.set(encoded, forKey: "toolMemory")
+            }
+        }
+    }
+
+    // Per-tool customization: preset colors + user colors + preset widths
+    @Published var toolCustomizations: [DrawingTool: ToolCustomization] = {
+        if let data = UserDefaults.standard.data(forKey: "toolCustomizations"),
+           let decoded = try? JSONDecoder().decode([DrawingTool: ToolCustomization].self, from: data) {
+            return decoded
+        }
+        return [:]
+    }() {
+        didSet {
+            if let encoded = try? JSONEncoder().encode(toolCustomizations) {
+                UserDefaults.standard.set(encoded, forKey: "toolCustomizations")
             }
         }
     }
@@ -137,6 +155,10 @@ final class CanvasViewModel: ObservableObject {
     private var autoSaveTask: Task<Void, Never>?
     private var toolbarHideTask: Task<Void, Never>?
     private var thumbnailTask: Task<Void, Never>?
+    private var drawingSerializationTask: Task<Void, Never>?
+    private var liveDrawingCache: [UUID: PKDrawing] = [:]
+    private var pendingSerializedDrawingData: [UUID: Data] = [:]
+    private var lastKnownStrokeCounts: [UUID: Int] = [:]
 
     var currentPage: DrawingPage {
         get { pages[currentPageIndex] }
@@ -144,7 +166,101 @@ final class CanvasViewModel: ObservableObject {
     }
 
     var currentDrawing: PKDrawing {
-        pages[currentPageIndex].pkDrawing
+        let page = pages[currentPageIndex]
+        if let cached = liveDrawingCache[page.id] {
+            return cached
+        }
+        let drawing = page.pkDrawing
+        liveDrawingCache[page.id] = drawing
+        lastKnownStrokeCounts[page.id] = drawing.strokes.count
+        return drawing
+    }
+
+    private func resolvedDrawing(for page: DrawingPage) -> PKDrawing {
+        if let cached = liveDrawingCache[page.id] {
+            return cached
+        }
+        return page.pkDrawing
+    }
+
+    private func resolvedDrawingData(for page: DrawingPage) -> Data? {
+        if let pending = pendingSerializedDrawingData[page.id] {
+            return pending
+        }
+        if let cached = liveDrawingCache[page.id] {
+            return PencilKitBridge.serialize(cached)
+        }
+        return page.drawingData
+    }
+
+    func setCanvasViewSizeIfNeeded(_ size: CGSize) {
+        guard canvasViewSize != size else { return }
+        canvasViewSize = size
+    }
+
+    // MARK: - Export
+    func exportNotebookPDF() -> URL? {
+        let drawings = pages.map { resolvedDrawing(for: $0) }
+        let pdfData = PencilKitBridge.renderPDF(from: drawings)
+
+        let safeName = (notebook?.name ?? "GirokIQ")
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        let fileName = "\(safeName)-\(Date().timeIntervalSince1970).pdf"
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            try pdfData.write(to: url)
+            return url
+        } catch {
+            print("[Canvas] Failed to export PDF: \(error)")
+            return nil
+        }
+    }
+
+    func exportNotebookArchive() -> URL? {
+        guard let notebook else { return nil }
+
+        let snapshotPages = pages.enumerated().map { index, page in
+            NotebookTransferPage(
+                title: page.title,
+                pageIndex: index,
+                type: "canvas",
+                backgroundPattern: page.backgroundPattern.rawValue,
+                drawingData: resolvedDrawingData(for: page),
+                elements: page.elements
+            )
+        }
+
+        let package = NotebookTransferPackage(
+            version: 1,
+            notebook: NotebookTransferNotebook(
+                name: notebook.name,
+                canvasType: notebook.canvasType,
+                pageDimensions: notebook.pageDimensions,
+                backgroundPattern: notebook.backgroundPattern,
+                backgroundColorHex: notebook.backgroundColorHex
+            ),
+            pages: snapshotPages
+        )
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+
+        do {
+            let data = try encoder.encode(package)
+            let safeName = notebook.name
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            let url = FileManager.default.temporaryDirectory
+                .appendingPathComponent("\(safeName).girokiq")
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            print("[Canvas] Failed to export notebook archive: \(error)")
+            return nil
+        }
     }
 
     // MARK: - Context Summary
@@ -156,10 +272,8 @@ final class CanvasViewModel: ObservableObject {
         summary += "Elements on page:\n"
         
         // 1. Analyze PencilKit Ink
-        if let data = page.drawingData, let drawing = PencilKitBridge.deserialize(data) {
-            let strokes = drawing.strokes
-            summary += "- \(strokes.count) handwritten ink strokes\n"
-        }
+        let strokes = resolvedDrawing(for: page).strokes
+        summary += "- \(strokes.count) handwritten ink strokes\n"
         
         // 2. Images
         let imageElements = page.elements.filter { $0.type == "image" }
@@ -182,6 +296,7 @@ final class CanvasViewModel: ObservableObject {
         self.notebook = notebook
         self.notebookId = notebookId
         self.userId = userId
+        self.restoredViewport = Self.loadViewportState(for: notebookId)
         
         // Restore the notebook-level background pattern so the canvas opens
         // with the correct pattern instead of always falling back to .grid.
@@ -207,6 +322,8 @@ final class CanvasViewModel: ObservableObject {
                 try await LocalDatabase.shared.savePage(initialPage)
                 
                 self.pages = [DrawingPage(id: newPageId, title: "Page 1", backgroundPattern: backgroundPattern, order: 0)]
+                self.liveDrawingCache[newPageId] = PKDrawing()
+                self.lastKnownStrokeCounts[newPageId] = 0
             } else {
                 // Load existing pages
                 self.pages = fetchedPages.map { tuple in
@@ -220,6 +337,14 @@ final class CanvasViewModel: ObservableObject {
                         elements: tuple.page.settings?.elements ?? []
                     )
                 }
+                self.liveDrawingCache.removeAll()
+                self.pendingSerializedDrawingData.removeAll()
+                self.lastKnownStrokeCounts = Dictionary(
+                    uniqueKeysWithValues: self.pages.map { page in
+                        let count = page.drawingData.flatMap(PencilKitBridge.deserialize)?.strokes.count ?? 0
+                        return (page.id, count)
+                    }
+                )
             }
             self.currentPageIndex = 0
             
@@ -229,6 +354,72 @@ final class CanvasViewModel: ObservableObject {
             }
         } catch {
             print("Failed to load notebook pages: \(error)")
+        }
+    }
+
+    func updateViewport(offset: CGSize, scale: CGFloat) {
+        canvasOffset = offset
+        canvasScale = scale
+        guard let notebookId else { return }
+        let state = CanvasViewportState(offsetX: offset.width, offsetY: offset.height, scale: scale)
+        restoredViewport = state
+        Self.saveViewportState(state, for: notebookId)
+    }
+
+    func finalizeViewport(offset: CGSize, scale: CGFloat) {
+        updateViewport(offset: offset, scale: scale)
+    }
+
+    private static func viewportStorageKey(for notebookId: UUID) -> String {
+        "notebookViewport_\(notebookId.uuidString)"
+    }
+
+    private static func loadViewportState(for notebookId: UUID) -> CanvasViewportState? {
+        guard let data = UserDefaults.standard.data(forKey: viewportStorageKey(for: notebookId)) else { return nil }
+        return try? JSONDecoder().decode(CanvasViewportState.self, from: data)
+    }
+
+    private static func saveViewportState(_ state: CanvasViewportState, for notebookId: UUID) {
+        if let data = try? JSONEncoder().encode(state) {
+            UserDefaults.standard.set(data, forKey: viewportStorageKey(for: notebookId))
+        }
+    }
+
+    private func cacheDrawing(_ drawing: PKDrawing, for pageId: UUID) {
+        liveDrawingCache[pageId] = drawing
+        lastKnownStrokeCounts[pageId] = drawing.strokes.count
+    }
+
+    private func setCurrentPageDrawingSerialized(_ drawing: PKDrawing, forceViewUpdate: Bool = false) {
+        let pageId = pages[currentPageIndex].id
+        let data = PencilKitBridge.serialize(drawing)
+        cacheDrawing(drawing, for: pageId)
+        pendingSerializedDrawingData[pageId] = data
+        pages[currentPageIndex].drawingData = data
+        if forceViewUpdate {
+            forceDrawingUpdate = true
+        }
+    }
+
+    private func scheduleDrawingPersistence(for pageId: UUID, drawing: PKDrawing) {
+        drawingSerializationTask?.cancel()
+        drawingSerializationTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(0.7))
+            guard !Task.isCancelled else { return }
+
+            let data = await Task.detached(priority: .utility) {
+                PencilKitBridge.serialize(drawing)
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.pendingSerializedDrawingData[pageId] = data
+                if let pageIndex = self.pages.firstIndex(where: { $0.id == pageId }) {
+                    self.pages[pageIndex].drawingData = data
+                }
+                self.scheduleAutoSave(for: pageId, drawingData: data)
+            }
         }
     }
 
@@ -274,8 +465,12 @@ final class CanvasViewModel: ObservableObject {
     // MARK: - Lasso Actions (forwarded to PKCanvasView via UIResponder)
 
     func clearPage() {
+        let pageId = pages[currentPageIndex].id
         pages[currentPageIndex].drawingData = nil
         pages[currentPageIndex].strokes.removeAll()
+        liveDrawingCache[pageId] = PKDrawing()
+        pendingSerializedDrawingData[pageId] = nil
+        lastKnownStrokeCounts[pageId] = 0
     }
 
     func addPage() {
@@ -285,6 +480,8 @@ final class CanvasViewModel: ObservableObject {
         let newOrder = pages.count
         let newPage = DrawingPage(id: newPageId, title: "Page \(newOrder + 1)", backgroundPattern: backgroundPattern, order: newOrder)
         pages.append(newPage)
+        liveDrawingCache[newPageId] = PKDrawing()
+        lastKnownStrokeCounts[newPageId] = 0
         currentPageIndex = pages.count - 1
         
         let initialPage = Page(
@@ -323,6 +520,9 @@ final class CanvasViewModel: ObservableObject {
         
         // Remove from thumbnails cache
         pageThumbnails[pageId] = nil
+        liveDrawingCache[pageId] = nil
+        pendingSerializedDrawingData[pageId] = nil
+        lastKnownStrokeCounts[pageId] = nil
 
         Task.detached(priority: .utility) {
             do {
@@ -351,6 +551,90 @@ final class CanvasViewModel: ObservableObject {
     /// Indices into currentPage.pkDrawing.strokes that are currently selected.
     /// Using indices because PKStroke has no stable ID.
     @Published var selectedPKStrokeIndices: Set<Int> = []
+
+    // MARK: - Shared Canvas Interaction Helpers
+
+    func textElementID(at canvasPoint: CGPoint) -> UUID? {
+        currentPage.elements
+            .reversed()
+            .first(where: { element in
+                guard element.type == "text" else { return false }
+                let width = CGFloat(element.width ?? 200)
+                let height = CGFloat(element.height ?? 32)
+                let rect = CGRect(
+                    x: element.positionX,
+                    y: element.positionY,
+                    width: width,
+                    height: height
+                )
+                return rect.contains(canvasPoint)
+            })?.id
+    }
+
+    func handleTextToolCanvasTap(at canvasPoint: CGPoint) {
+        guard selectedTool == .text else { return }
+
+        if let hitId = textElementID(at: canvasPoint) {
+            UIApplication.shared.sendAction(
+                #selector(UIResponder.resignFirstResponder),
+                to: nil, from: nil, for: nil
+            )
+            selectedElementIds = [hitId]
+            return
+        }
+
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil, from: nil, for: nil
+        )
+        selectedElementIds = []
+        addTextElement(at: canvasPoint)
+    }
+
+    var selectedObjectCanvasRect: CGRect? {
+        guard selectedElementIds.count == 1,
+              let id = selectedElementIds.first,
+              let element = currentPage.elements.first(where: { $0.id == id }) else { return nil }
+
+        let width = CGFloat(element.width ?? 200)
+        let height = CGFloat(element.height ?? 200)
+        return CGRect(x: element.positionX, y: element.positionY, width: width, height: height)
+    }
+
+    var selectedElement: CanvasElement? {
+        guard selectedElementIds.count == 1,
+              let id = selectedElementIds.first else { return nil }
+        return currentPage.elements.first(where: { $0.id == id })
+    }
+
+    func duplicateSelectedElement() {
+        guard let element = selectedElement else { return }
+        let newId = UUID()
+        let duplicate = CanvasElement(
+            id: newId,
+            pageId: element.pageId,
+            userId: element.userId,
+            type: element.type,
+            content: element.content,
+            positionX: element.positionX + 24,
+            positionY: element.positionY + 24,
+            width: element.width,
+            height: element.height,
+            rotation: element.rotation,
+            zIndex: currentPage.elements.count,
+            style: element.style,
+            userResized: element.userResized,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        addElement(duplicate)
+        selectedElementIds = [newId]
+    }
+
+    func deleteSelectedElement() {
+        guard let id = selectedElement?.id else { return }
+        removeElement(id: id)
+    }
     
     /// Called by CustomLassoGestureView when the user lifts their finger.
     /// polygon is in screen space — this function converts to canvas space,
@@ -384,7 +668,7 @@ final class CanvasViewModel: ObservableObject {
         print("[Lasso] canvasOffset=\(canvasOffset) canvasScale=\(canvasScale)")
         
         // Hit-test PencilKit strokes (these are the actual ink strokes on screen)
-        let pkStrokes = currentPage.pkDrawing.strokes
+        let pkStrokes = currentDrawing.strokes
         print("[Lasso] PKDrawing has \(pkStrokes.count) strokes to test")
         
         // For each PKStroke, test if its renderBounds center is inside the polygon.
@@ -466,7 +750,7 @@ final class CanvasViewModel: ObservableObject {
     func applyLassoColorChange(_ newColor: Color) {
         guard !selectedPKStrokeIndices.isEmpty else { return }
         let uiColor = UIColor(newColor)
-        var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        var allStrokes = currentDrawing.strokes
         
         for i in selectedPKStrokeIndices where i < allStrokes.count {
             let old = allStrokes[i]
@@ -475,8 +759,7 @@ final class CanvasViewModel: ObservableObject {
         }
         
         let newDrawing = PKDrawing(strokes: allStrokes)
-        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
-        forceDrawingUpdate = true
+        setCurrentPageDrawingSerialized(newDrawing, forceViewUpdate: true)
         objectWillChange.send()
         scheduleAutoSave()
         print("[Lasso] Color changed on \(selectedPKStrokeIndices.count) strokes")
@@ -494,7 +777,7 @@ final class CanvasViewModel: ObservableObject {
         
         // Scale PK strokes via their transform
         if !selectedPKStrokeIndices.isEmpty {
-            var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            var allStrokes = currentDrawing.strokes
             for i in selectedPKStrokeIndices where i < allStrokes.count {
                 let old = allStrokes[i]
                 allStrokes[i] = PKStroke(ink: old.ink, path: old.path,
@@ -502,8 +785,7 @@ final class CanvasViewModel: ObservableObject {
                                          mask: old.mask)
             }
             let newDrawing = PKDrawing(strokes: allStrokes)
-            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
-            forceDrawingUpdate = true
+            setCurrentPageDrawingSerialized(newDrawing, forceViewUpdate: true)
         }
         
         // Scale elements
@@ -532,7 +814,7 @@ final class CanvasViewModel: ObservableObject {
         
         // Move PK strokes via their transform
         if !selectedPKStrokeIndices.isEmpty {
-            var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            var allStrokes = currentDrawing.strokes
             for i in selectedPKStrokeIndices where i < allStrokes.count {
                 let old = allStrokes[i]
                 allStrokes[i] = PKStroke(ink: old.ink, path: old.path,
@@ -540,8 +822,7 @@ final class CanvasViewModel: ObservableObject {
                                          mask: old.mask)
             }
             let newDrawing = PKDrawing(strokes: allStrokes)
-            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
-            forceDrawingUpdate = true
+            setCurrentPageDrawingSerialized(newDrawing, forceViewUpdate: true)
         }
         
         // Move elements
@@ -560,7 +841,7 @@ final class CanvasViewModel: ObservableObject {
     func moveSelection(dx: CGFloat, dy: CGFloat) {
         let t = CGAffineTransform(translationX: dx, y: dy)
         if !selectedPKStrokeIndices.isEmpty {
-            var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            var allStrokes = currentDrawing.strokes
             for i in selectedPKStrokeIndices where i < allStrokes.count {
                 let old = allStrokes[i]
                 allStrokes[i] = PKStroke(ink: old.ink, path: old.path,
@@ -568,7 +849,7 @@ final class CanvasViewModel: ObservableObject {
                                          mask: old.mask)
             }
             let newDrawing = PKDrawing(strokes: allStrokes)
-            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+            setCurrentPageDrawingSerialized(newDrawing)
         }
         for i in pages[currentPageIndex].elements.indices {
             guard selectedElementIds.contains(pages[currentPageIndex].elements[i].id) else { continue }
@@ -593,7 +874,7 @@ final class CanvasViewModel: ObservableObject {
     /// Copy selected PK strokes as PKDrawing data to UIPasteboard.
     func copySelection() {
         guard !selectedPKStrokeIndices.isEmpty else { return }
-        let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let allStrokes = currentDrawing.strokes
         let selected = selectedPKStrokeIndices.sorted().compactMap {
             $0 < allStrokes.count ? allStrokes[$0] : nil
         }
@@ -611,11 +892,11 @@ final class CanvasViewModel: ObservableObject {
         let offsetStrokes = drawing.strokes.map { s in
             PKStroke(ink: s.ink, path: s.path, transform: s.transform.concatenating(offset), mask: s.mask)
         }
-        var allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        var allStrokes = currentDrawing.strokes
         let startIndex = allStrokes.count
         allStrokes.append(contentsOf: offsetStrokes)
         let newDrawing = PKDrawing(strokes: allStrokes)
-        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
+        setCurrentPageDrawingSerialized(newDrawing)
         
         // Select the pasted strokes
         selectedPKStrokeIndices = Set(startIndex..<allStrokes.count)
@@ -633,7 +914,7 @@ final class CanvasViewModel: ObservableObject {
     /// Duplicate: paste a copy of the current selection in place (offset 24pt).
     func duplicateSelection() {
         guard !selectedPKStrokeIndices.isEmpty else { return }
-        let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let allStrokes = currentDrawing.strokes
         let selected = selectedPKStrokeIndices.sorted().compactMap {
             $0 < allStrokes.count ? allStrokes[$0] : nil
         }
@@ -644,7 +925,7 @@ final class CanvasViewModel: ObservableObject {
         var newAll = allStrokes
         let startIndex = newAll.count
         newAll.append(contentsOf: duped)
-        pages[currentPageIndex].drawingData = PencilKitBridge.serialize(PKDrawing(strokes: newAll))
+        setCurrentPageDrawingSerialized(PKDrawing(strokes: newAll))
         
         selectedPKStrokeIndices = Set(startIndex..<newAll.count)
         let rects = duped.map { $0.renderBounds }
@@ -662,13 +943,12 @@ final class CanvasViewModel: ObservableObject {
     func deleteSelectedLassoContent() {
         // Delete PK strokes by rebuilding drawing without selected indices
         if !selectedPKStrokeIndices.isEmpty {
-            let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+            let allStrokes = currentDrawing.strokes
             let remaining = allStrokes.indices
                 .filter { !selectedPKStrokeIndices.contains($0) }
                 .map { allStrokes[$0] }
             let newDrawing = PKDrawing(strokes: remaining)
-            pages[currentPageIndex].drawingData = PencilKitBridge.serialize(newDrawing)
-            forceDrawingUpdate = true
+            setCurrentPageDrawingSerialized(newDrawing, forceViewUpdate: true)
         }
         
         pages[currentPageIndex].elements.removeAll { selectedElementIds.contains($0.id) }
@@ -685,7 +965,7 @@ final class CanvasViewModel: ObservableObject {
               let bbox = lassoSelectionBox,
               bbox.width > 0, bbox.height > 0 else { return nil }
 
-        let allStrokes = pages[currentPageIndex].pkDrawing.strokes
+        let allStrokes = currentDrawing.strokes
         let selectedStrokes = selectedPKStrokeIndices.sorted().compactMap {
             $0 < allStrokes.count ? allStrokes[$0] : nil
         }
@@ -763,6 +1043,27 @@ final class CanvasViewModel: ObservableObject {
         selectedElementIds = [newElement.id]
         objectWillChange.send()
     }
+
+    func beginImageInsertion(at canvasPoint: CGPoint) {
+        pendingImageInsertionPoint = canvasPoint
+        selectedElementIds = []
+        showCanvasImagePicker = true
+    }
+
+    func cancelPendingImageInsertion() {
+        pendingImageInsertionPoint = nil
+        showCanvasImagePicker = false
+    }
+
+    func completePendingImageInsertion() {
+        pendingImageInsertionPoint = nil
+        showCanvasImagePicker = false
+    }
+
+    var imageInsertionPlaceholderSize: CGSize {
+        let width = max(120, min(240, canvasViewSize.width * 0.32 / max(canvasScale, 0.25)))
+        return CGSize(width: width, height: width)
+    }
     
     func insertImage(_ asset: PHAsset) {
         let manager = PHImageManager.default()
@@ -802,39 +1103,58 @@ final class CanvasViewModel: ObservableObject {
             ImageCache.shared.store(image, for: fileName)
             
             Task { @MainActor in
-                // Calculate center of the visible canvas based on offset and scale
-                let viewSize = self.canvasViewSize
-                let center = CGPoint(
-                    x: (viewSize.width / 2 + self.canvasOffset.width) / self.canvasScale,
-                    y: (viewSize.height / 2 + self.canvasOffset.height) / self.canvasScale
-                )
-                
-                // Initial block size
-                let blockWidth: Double = min(300, Double(viewSize.width) * 0.6 / self.canvasScale)
-                let aspectRatio = image.size.width > 0
-                    ? Double(image.size.height / image.size.width) : 1.0
-                let blockHeight: Double = blockWidth * aspectRatio
-                
-                let newElement = CanvasElement(
-                    pageId: self.currentPage.id,
-                    userId: self.userId ?? UUID(),
-                    type: "image",
-                    content: fileName, // Store the local file name instead of base64
-                    positionX: Double(center.x),
-                    positionY: Double(center.y),
-                    width: blockWidth,
-                    height: blockHeight,
-                    rotation: 0,
-                    zIndex: self.currentPage.elements.count
-                )
-                
-                self.currentPage.elements.append(newElement)
-                self.selectedElementIds = [newElement.id]
-                self.objectWillChange.send()
-                self.scheduleElementSave()
-                self.selectTool(.pen)
+                self.insertResolvedImage(image, fileName: fileName, at: self.pendingImageInsertionPoint)
             }
         }
+    }
+
+    func insertImage(_ image: UIImage, at canvasPoint: CGPoint? = nil) {
+        let fileName = UUID().uuidString + ".jpg"
+        guard let data = image.jpegData(compressionQuality: 0.85) else { return }
+        let fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
+
+        do {
+            try data.write(to: fileURL)
+        } catch {
+            print("Failed to save image locally: \(error)")
+            return
+        }
+
+        ImageCache.shared.store(image, for: fileName)
+        insertResolvedImage(image, fileName: fileName, at: canvasPoint)
+    }
+
+    private func insertResolvedImage(_ image: UIImage, fileName: String, at canvasPoint: CGPoint?) {
+        let viewSize = canvasViewSize
+        let insertionCenter = canvasPoint ?? CGPoint(
+            x: (viewSize.width / 2 + canvasOffset.width) / max(canvasScale, 0.25),
+            y: (viewSize.height / 2 + canvasOffset.height) / max(canvasScale, 0.25)
+        )
+
+        let placeholderWidth = Double(imageInsertionPlaceholderSize.width)
+        let aspectRatio = image.size.width > 0
+            ? Double(image.size.height / image.size.width) : 1.0
+        let blockWidth = min(300, placeholderWidth)
+        let blockHeight = blockWidth * aspectRatio
+
+        let newElement = CanvasElement(
+            pageId: currentPage.id,
+            userId: userId ?? UUID(),
+            type: "image",
+            content: fileName,
+            positionX: Double(insertionCenter.x) - blockWidth / 2,
+            positionY: Double(insertionCenter.y) - blockHeight / 2,
+            width: blockWidth,
+            height: blockHeight,
+            rotation: 0,
+            zIndex: currentPage.elements.count
+        )
+
+        currentPage.elements.append(newElement)
+        selectedElementIds = [newElement.id]
+        objectWillChange.send()
+        scheduleElementSave()
+        completePendingImageInsertion()
     }
 
     func updateElement(_ element: CanvasElement) {
@@ -909,6 +1229,9 @@ final class CanvasViewModel: ObservableObject {
         selectedElementIds = []
         selectedTool = tool
 
+        // Ensure customization exists for drawing tools.
+        _ = ensureToolCustomization(for: tool)
+
         if tool == .image {
             requestPhotoAccessAndFetch()
         }
@@ -931,18 +1254,103 @@ final class CanvasViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Tool Customization API
+
+    @discardableResult
+    func ensureToolCustomization(for tool: DrawingTool) -> ToolCustomization {
+        if let existing = toolCustomizations[tool] { return existing }
+        let created = ToolCustomization.defaults(for: tool)
+        toolCustomizations[tool] = created
+        return created
+    }
+
+    func presetColors(for tool: DrawingTool) -> [Color] {
+        let c = ensureToolCustomization(for: tool)
+        return c.presetColorHexes.map { Color(hex: $0) }
+    }
+
+    func extraColors(for tool: DrawingTool) -> [Color] {
+        let c = ensureToolCustomization(for: colorCustomizableTools.first ?? tool)
+        return c.extraColorHexes.map { Color(hex: $0) }
+    }
+
+    func addExtraColor(_ color: Color, for tool: DrawingTool) {
+        let hex = color.hexString.uppercased()
+        for colorTool in colorCustomizableTools {
+            var c = ensureToolCustomization(for: colorTool)
+            guard !c.presetColorHexes.contains(hex) else { continue }
+            if !c.extraColorHexes.contains(hex) {
+                c.extraColorHexes.append(hex)
+                toolCustomizations[colorTool] = c
+            }
+        }
+    }
+
+    func removeExtraColor(at index: Int, for tool: DrawingTool) {
+        let extras = extraColors(for: tool)
+        guard extras.indices.contains(index) else { return }
+        removeSelectedCustomColorFromColorTools(color: extras[index])
+    }
+
+    func widthPresets(for tool: DrawingTool) -> [CGFloat] {
+        let c = ensureToolCustomization(for: tool)
+        return c.widthPresets.map { CGFloat($0) }
+    }
+
+    func setWidthPreset(for tool: DrawingTool, index: Int, to width: CGFloat) {
+        var c = ensureToolCustomization(for: tool)
+        guard c.widthPresets.indices.contains(index) else { return }
+        c.widthPresets[index] = Double(width)
+        toolCustomizations[tool] = c
+    }
+
+    func canDeleteSelectedCustomColor(for tool: DrawingTool) -> Bool {
+        let hex = strokeColor.hexString.uppercased()
+        let c = ensureToolCustomization(for: colorCustomizableTools.first ?? tool)
+        return c.extraColorHexes.contains(hex)
+    }
+
+    func removeSelectedCustomColorFromColorTools(color: Color? = nil) {
+        let hex = (color ?? strokeColor).hexString.uppercased()
+        var removed = false
+
+        for colorTool in colorCustomizableTools {
+            var c = ensureToolCustomization(for: colorTool)
+            let before = c.extraColorHexes.count
+            c.extraColorHexes.removeAll { $0 == hex }
+            if c.extraColorHexes.count != before {
+                removed = true
+                toolCustomizations[colorTool] = c
+            }
+            if var memory = toolMemory[colorTool], memory.colorHex.uppercased() == hex {
+                memory.colorHex = c.presetColorHexes.first ?? Color.strokePresets.first?.hexString ?? "#FFFFFE"
+                toolMemory[colorTool] = memory
+            }
+        }
+
+        if removed, strokeColor.hexString.uppercased() == hex {
+            let fallback = presetColors(for: selectedTool).first ?? Color.strokePresets.first ?? Color(hex: "#FFFFFE")
+            strokeColor = fallback
+        }
+    }
+
+    private var colorCustomizableTools: [DrawingTool] {
+        [.pen, .pencil, .marker]
+    }
+
     // MARK: - Drawing Changed Callback
 
     /// Called by PKCanvasRepresentable when the drawing changes.
     /// `fromPencil` indicates whether the change came from Apple Pencil (true) or finger (false).
     func drawingDidChange(_ drawing: PKDrawing, fromPencil: Bool = true) {
+        let pageId = pages[currentPageIndex].id
         var modifiedDrawing = drawing
         
         // Shape snapping logic (post-processing method)
         if isShapeSnappingEnabled, let lastStroke = modifiedDrawing.strokes.last {
-            let currentStrokes = pages[currentPageIndex].pkDrawing.strokes
+            let previousStrokeCount = lastKnownStrokeCounts[pageId] ?? liveDrawingCache[pageId]?.strokes.count ?? 0
             // Only process if a new stroke was just added
-            if modifiedDrawing.strokes.count > currentStrokes.count {
+            if modifiedDrawing.strokes.count > previousStrokeCount {
                 let pts = lastStroke.path.compactMap { $0.location }
                 if let shape = ShapeSnapper.recognizeShape(from: pts) {
                     let snappedShape = ShapeSnapper.straightenShape(shape)
@@ -958,10 +1366,9 @@ final class CanvasViewModel: ObservableObject {
             }
         }
 
-        let data = PencilKitBridge.serialize(modifiedDrawing)
-        pages[currentPageIndex].drawingData = data
+        cacheDrawing(modifiedDrawing, for: pageId)
         refreshUndoState()
-        scheduleAutoSave()
+        scheduleDrawingPersistence(for: pageId, drawing: modifiedDrawing)
 
         // Regenerate cached thumbnail for the page strip — debounced so rapid
         // stroke updates don't spawn hundreds of concurrent render tasks.
@@ -989,8 +1396,8 @@ final class CanvasViewModel: ObservableObject {
     func regenerateThumbnail(for pageIndex: Int) {
         let page = pages[pageIndex]
         let pageId = page.id
-        guard let data = page.drawingData,
-              let drawing = PencilKitBridge.deserialize(data) else {
+        let drawing = resolvedDrawing(for: page)
+        guard !drawing.strokes.isEmpty else {
             pageThumbnails[pageId] = nil
             return
         }
@@ -1079,9 +1486,10 @@ final class CanvasViewModel: ObservableObject {
             height: rectCanvas.height * s
         )
 
-        // Visible height above keyboard
+        // Visible height above keyboard and below the persistent top chrome.
+        let persistentTopChrome: CGFloat = 48 + 46
         let visibleBottom = canvasViewSize.height - keyboardHeight - extraPadding
-        let visibleTop = extraPadding
+        let visibleTop = persistentTopChrome + extraPadding
 
         var newOffsetY = canvasOffset.height
 
@@ -1152,24 +1560,38 @@ final class CanvasViewModel: ObservableObject {
 
     // MARK: - Auto-Save (1.5s debounce)
 
-    private func scheduleAutoSave() {
+    private func scheduleAutoSave(for pageId: UUID? = nil, drawingData: Data? = nil) {
+        let resolvedPageId = pageId ?? pages[currentPageIndex].id
+        let resolvedData = drawingData ?? pendingSerializedDrawingData[resolvedPageId] ?? pages.first(where: { $0.id == resolvedPageId })?.drawingData
+        guard let resolvedData else { return }
+
         autoSaveTask?.cancel()
         autoSaveTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
-            await self?.performAutoSave()
+            await self?.performAutoSave(pageId: resolvedPageId, drawingData: resolvedData)
         }
     }
     
     /// Forces an immediate save of the current drawing data, cancelling any pending debounced save.
     func flushSave() async {
         autoSaveTask?.cancel()
-        await performAutoSave()
+        drawingSerializationTask?.cancel()
+
+        let pageId = pages[currentPageIndex].id
+        if let cachedDrawing = liveDrawingCache[pageId] {
+            let serialized = await Task.detached(priority: .utility) {
+                PencilKitBridge.serialize(cachedDrawing)
+            }.value
+            pendingSerializedDrawingData[pageId] = serialized
+            pages[currentPageIndex].drawingData = serialized
+            await performAutoSave(pageId: pageId, drawingData: serialized)
+        } else if let drawingData = pages[currentPageIndex].drawingData {
+            await performAutoSave(pageId: pageId, drawingData: drawingData)
+        }
     }
 
-    private func performAutoSave() async {
-        guard let drawingData = pages[currentPageIndex].drawingData else { return }
-        let pageId = pages[currentPageIndex].id
+    private func performAutoSave(pageId: UUID, drawingData: Data) async {
         isSaving = true
         // Save to local database on a background thread — never blocks the UI
         await Task.detached(priority: .utility) {
@@ -1179,6 +1601,7 @@ final class CanvasViewModel: ObservableObject {
                 print("Auto-save error: \(error)")
             }
         }.value
+        pendingSerializedDrawingData[pageId] = nil
         isSaving = false
     }
 
@@ -1316,4 +1739,71 @@ struct ToolSettings: Codable {
     var colorHex: String
     var width: CGFloat
     var opacity: Double
+}
+
+struct ToolCustomization: Codable {
+    /// Exactly 5 preset colors (non-deletable in UI).
+    var presetColorHexes: [String]
+    /// User-added colors (deletable).
+    var extraColorHexes: [String]
+    /// Exactly 3 width presets.
+    var widthPresets: [Double]
+
+    static func defaults(for tool: DrawingTool) -> ToolCustomization {
+        let presetColors = Array(Color.strokePresets.prefix(5)).map { $0.hexString.uppercased() }
+
+        func widthTriplet(defaultWidth: CGFloat) -> [Double] {
+            let w0 = max(0.5, defaultWidth * 0.6)
+            let w1 = max(0.5, defaultWidth)
+            let w2 = max(0.5, defaultWidth * 1.6)
+            return [Double(w0), Double(w1), Double(w2)]
+        }
+
+        let widths: [Double]
+        switch tool {
+        case .pen:
+            widths = widthTriplet(defaultWidth: 2.0)
+        case .pencil:
+            widths = widthTriplet(defaultWidth: 1.5)
+        case .marker:
+            widths = widthTriplet(defaultWidth: 8.0)
+        default:
+            widths = widthTriplet(defaultWidth: tool.defaultWidth)
+        }
+
+        return ToolCustomization(
+            presetColorHexes: presetColors,
+            extraColorHexes: [],
+            widthPresets: widths
+        )
+    }
+}
+
+struct CanvasViewportState: Codable, Equatable {
+    var offsetX: CGFloat
+    var offsetY: CGFloat
+    var scale: CGFloat
+}
+
+struct NotebookTransferPackage: Codable {
+    var version: Int
+    var notebook: NotebookTransferNotebook
+    var pages: [NotebookTransferPage]
+}
+
+struct NotebookTransferNotebook: Codable {
+    var name: String
+    var canvasType: String
+    var pageDimensions: PageDimensions?
+    var backgroundPattern: String
+    var backgroundColorHex: String
+}
+
+struct NotebookTransferPage: Codable {
+    var title: String
+    var pageIndex: Int
+    var type: String
+    var backgroundPattern: String
+    var drawingData: Data?
+    var elements: [CanvasElement]
 }

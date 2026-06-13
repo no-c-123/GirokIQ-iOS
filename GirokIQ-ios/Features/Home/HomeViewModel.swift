@@ -18,6 +18,7 @@ final class HomeViewModel: ObservableObject {
     enum ViewMode { case grid, list }
 
     private let service = SupabaseService.shared
+    private let recentNotebookIDsKey = "home.recentNotebookIDs"
 
     // MARK: - Derived Data (business logic belongs here, not in Views)
 
@@ -51,9 +52,15 @@ final class HomeViewModel: ObservableObject {
         return folders
     }
 
-    /// Most recently updated notebooks (for sidebar "Recents" section)
+    /// Most recently opened notebooks (falls back to updated order when needed)
     var recentNotebooks: [Notebook] {
-        Array(notebooks.sorted { $0.updatedAt > $1.updatedAt }.prefix(5))
+        let recents = recentNotebookIDs.compactMap { id in
+            notebooks.first(where: { $0.id == id })
+        }
+        let remaining = notebooks
+            .filter { notebook in !recentNotebookIDs.contains(notebook.id) }
+            .sorted { $0.updatedAt > $1.updatedAt }
+        return Array((recents + remaining).prefix(5))
     }
 
     /// Notebooks not in any folder
@@ -64,6 +71,23 @@ final class HomeViewModel: ObservableObject {
     /// Notebooks belonging to a specific folder
     func notebooksInFolder(_ folderId: UUID) -> [Notebook] {
         filteredNotebooks.filter { $0.folderId == folderId }
+    }
+
+    private var recentNotebookIDs: [UUID] {
+        get {
+            let strings = UserDefaults.standard.stringArray(forKey: recentNotebookIDsKey) ?? []
+            return strings.compactMap(UUID.init(uuidString:))
+        }
+        set {
+            UserDefaults.standard.set(newValue.map(\.uuidString), forKey: recentNotebookIDsKey)
+        }
+    }
+
+    func markNotebookOpened(_ notebook: Notebook) {
+        var ids = recentNotebookIDs.filter { $0 != notebook.id }
+        ids.insert(notebook.id, at: 0)
+        recentNotebookIDs = Array(ids.prefix(20))
+        objectWillChange.send()
     }
 
     // MARK: - Loading
@@ -131,6 +155,142 @@ final class HomeViewModel: ObservableObject {
             print("[Home] Failed to create notebook remotely, SyncEngine will retry: \(error)")
             notebooks.insert(notebook, at: 0)
             return notebook
+        }
+    }
+
+    func importNotebook(from url: URL, userId: UUID) async -> Notebook? {
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess { url.stopAccessingSecurityScopedResource() }
+        }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let package = try decoder.decode(NotebookTransferPackage.self, from: data)
+
+            let importedNotebook = Notebook(
+                userId: userId,
+                name: package.notebook.name,
+                canvasType: package.notebook.canvasType,
+                pageDimensions: package.notebook.pageDimensions,
+                backgroundPattern: package.notebook.backgroundPattern,
+                backgroundColorHex: package.notebook.backgroundColorHex
+            )
+
+            try await LocalDatabase.shared.saveNotebook(importedNotebook)
+            var persistedNotebook: Notebook
+            do {
+                persistedNotebook = try await service.createNotebook(importedNotebook)
+                try await LocalDatabase.shared.saveNotebook(persistedNotebook, syncStatus: .synced)
+            } catch {
+                print("[Home] Failed to create imported notebook remotely, keeping local copy: \(error)")
+                persistedNotebook = importedNotebook
+            }
+
+            for entry in package.pages.sorted(by: { $0.pageIndex < $1.pageIndex }) {
+                let newPageId = UUID()
+                let remappedElements = entry.elements.map { element in
+                    CanvasElement(
+                        pageId: newPageId,
+                        userId: userId,
+                        type: element.type,
+                        content: element.content,
+                        positionX: element.positionX,
+                        positionY: element.positionY,
+                        width: element.width,
+                        height: element.height,
+                        rotation: element.rotation,
+                        zIndex: element.zIndex,
+                        style: element.style,
+                        userResized: element.userResized
+                    )
+                }
+
+                let page = Page(
+                    id: newPageId,
+                    userId: userId,
+                    notebookId: persistedNotebook.id,
+                    title: entry.title,
+                    pageIndex: entry.pageIndex,
+                    type: entry.type,
+                    settings: PageSettings(
+                        backgroundPattern: entry.backgroundPattern,
+                        zoomScale: nil,
+                        drawingData: entry.drawingData?.base64EncodedString(),
+                        elements: remappedElements
+                    )
+                )
+
+                try await LocalDatabase.shared.savePage(page)
+                do {
+                    let createdPage = try await service.createPage(page)
+                    try await LocalDatabase.shared.savePage(createdPage, syncStatus: .synced)
+                } catch {
+                    print("[Home] Failed to create imported page remotely, keeping local copy: \(error)")
+                }
+                if let drawingData = entry.drawingData {
+                    try await LocalDatabase.shared.savePageDrawing(drawingData, pageId: newPageId)
+                }
+                if !remappedElements.isEmpty {
+                    try await LocalDatabase.shared.saveCanvasElements(remappedElements, forPageId: newPageId)
+                    for element in remappedElements {
+                        try? await service.upsertCanvasElement(element)
+                    }
+                }
+            }
+
+            notebooks.insert(persistedNotebook, at: 0)
+            return persistedNotebook
+        } catch {
+            self.errorMessage = error.localizedDescription
+            print("[Home] Failed to import notebook: \(error)")
+            return nil
+        }
+    }
+
+    func exportNotebookArchive(_ notebook: Notebook) async -> URL? {
+        do {
+            let fetchedPages = try await LocalDatabase.shared.fetchPages(notebookId: notebook.id)
+            let snapshotPages = fetchedPages.enumerated().map { index, tuple in
+                NotebookTransferPage(
+                    title: tuple.page.title,
+                    pageIndex: index,
+                    type: tuple.page.type,
+                    backgroundPattern: tuple.page.settings?.backgroundPattern ?? notebook.backgroundPattern,
+                    drawingData: tuple.drawingData,
+                    elements: tuple.page.settings?.elements ?? []
+                )
+            }
+
+            let package = NotebookTransferPackage(
+                version: 1,
+                notebook: NotebookTransferNotebook(
+                    name: notebook.name,
+                    canvasType: notebook.canvasType,
+                    pageDimensions: notebook.pageDimensions,
+                    backgroundPattern: notebook.backgroundPattern,
+                    backgroundColorHex: notebook.backgroundColorHex
+                ),
+                pages: snapshotPages
+            )
+
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            encoder.dateEncodingStrategy = .iso8601
+
+            let data = try encoder.encode(package)
+            let safeName = notebook.name
+                .replacingOccurrences(of: "/", with: "-")
+                .replacingOccurrences(of: ":", with: "-")
+            let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(safeName).girokiq")
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            self.errorMessage = error.localizedDescription
+            print("[Home] Failed to export notebook archive: \(error)")
+            return nil
         }
     }
 

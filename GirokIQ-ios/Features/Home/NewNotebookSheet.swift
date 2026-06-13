@@ -108,21 +108,9 @@ struct NewNotebookSheet: View {
                         
                         nameSection
                         
-                        canvasTypeSection
-                        
-                        if canvasType == .fixed {
-                            dimensionsSection
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                        
                         patternSection
                         
                         backgroundColorSection
-                        
-                        if canvasType == .fixed {
-                            templateSection
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
                         
                         // Extra padding at bottom for sticky button
                         Spacer().frame(height: 100)
@@ -168,6 +156,7 @@ struct NewNotebookSheet: View {
             }
             .toolbarBackground(Color.gBackground, for: .navigationBar)
             .onAppear {
+                canvasType = .infinite
                 isNameFocused = true
             }
             .animation(.spring(response: 0.4, dampingFraction: 0.8), value: canvasType)
@@ -226,29 +215,6 @@ struct NewNotebookSheet: View {
                 .focused($isNameFocused)
         }
         .padding(.horizontal, 24)
-    }
-    
-    private var canvasTypeSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("CANVAS TYPE")
-            
-            HStack(spacing: 12) {
-                canvasTypeCard(
-                    type: .infinite,
-                    icon: "arrow.up.left.and.arrow.down.right",
-                    title: "Infinite Canvas",
-                    subtitle: "No page boundaries. Zoom and pan freely."
-                )
-                
-                canvasTypeCard(
-                    type: .fixed,
-                    icon: "doc.text",
-                    title: "Fixed Template",
-                    subtitle: "Page-sized canvas. Use pre-made or custom templates."
-                )
-            }
-            .padding(.horizontal, 24)
-        }
     }
     
     private func canvasTypeCard(type: CanvasType, icon: String, title: String, subtitle: String) -> some View {
@@ -536,8 +502,8 @@ struct NewNotebookSheet: View {
             _ = await viewModel.createNotebook(
                 userId: userId,
                 name: name.isEmpty ? "Untitled Notebook" : name,
-                canvasType: canvasType.rawValue,
-                pageDimensions: canvasType == .fixed ? resolvedDimensions : nil,
+                canvasType: CanvasType.infinite.rawValue,
+                pageDimensions: nil,
                 backgroundPattern: selectedPattern,
                 backgroundColorHex: selectedBgColorHex
             )
@@ -545,4 +511,3 @@ struct NewNotebookSheet: View {
         }
     }
 }
-

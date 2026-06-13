@@ -27,10 +27,14 @@ struct BlockOverlayView: View {
                             let w = CGFloat(element.width ?? 200)
                             let h = CGFloat(element.height ?? 200)
                             var rect = CGRect(x: element.positionX, y: element.positionY, width: w, height: h)
-                            if viewModel.selectedElementIds.contains(element.id) && element.type == "text" {
-                                rect = rect.insetBy(dx: -10, dy: 0)
-                                rect.origin.y -= TextElementMetrics.selectedHandleTopPadding
-                                rect.size.height += TextElementMetrics.selectedHandleTopPadding
+                            if viewModel.selectedElementIds.contains(element.id) {
+                                rect = rect.insetBy(dx: -18, dy: -18)
+                                rect.origin.y -= 58
+                                rect.size.height += 76
+                                if element.type == "text" {
+                                    rect.origin.y -= TextElementMetrics.selectedHandleTopPadding
+                                    rect.size.height += TextElementMetrics.selectedHandleTopPadding
+                                }
                             }
                             return rect.contains(location)
                         }
@@ -56,6 +60,12 @@ struct BlockOverlayView: View {
                                 let canvasY = location.y
                                 viewModel.addTextElement(at: CGPoint(x: canvasX, y: canvasY))
                             }
+                        } else if viewModel.selectedTool == .image {
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil, from: nil, for: nil
+                            )
+                            viewModel.beginImageInsertion(at: location)
                         } else {
                             // Resign keyboard FIRST before clearing selection
                             // so UITextView has a chance to commit its content
@@ -76,6 +86,10 @@ struct BlockOverlayView: View {
                     BlockElementView(element: element, viewModel: viewModel)
                 }
 
+                if viewModel.selectedTool == .image,
+                   let insertionPoint = viewModel.pendingImageInsertionPoint {
+                    ImageInsertionPlaceholderView(viewModel: viewModel, center: insertionPoint)
+                }
 
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
@@ -320,6 +334,16 @@ struct BlockElementView: View {
         viewModel.selectedElementIds.contains(element.id)
     }
 
+    var selectionTopPadding: CGFloat {
+        guard isSelected else { return 0 }
+        if element.type == "text" { return 50 }
+        return 58
+    }
+
+    var selectionYOffsetCompensation: CGFloat {
+        selectionTopPadding / 2
+    }
+
     var body: some View {
         ZStack {
             elementContent
@@ -331,7 +355,7 @@ struct BlockElementView: View {
         .overlay(selectionOverlay)
         // Padding exposes the overhanging handles to hit-testing without
         // shifting the visual frame. Compensated in .position() below.
-        .padding(isSelected ? .init(top: TextElementMetrics.selectedHandleTopPadding, leading: 10, bottom: 0, trailing: 10) : .init())
+        .padding(isSelected ? .init(top: selectionTopPadding, leading: 14, bottom: 16, trailing: 14) : .init())
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectedElementIds = [element.id]
@@ -339,7 +363,7 @@ struct BlockElementView: View {
         // No whole-block dragGesture — movement is via the top grabber only.
         .position(
             x: CGFloat(element.positionX) + dragOffset.width + frameWidth / 2,
-            y: CGFloat(element.positionY) + dragOffset.height + frameHeight / 2 - (isSelected ? TextElementMetrics.selectedHandleYOffsetCompensation : 0)
+            y: CGFloat(element.positionY) + dragOffset.height + frameHeight / 2 - selectionYOffsetCompensation
         )
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             // System keyboard dismiss button was tapped — deselect the block
@@ -516,15 +540,15 @@ struct BlockElementView: View {
             .updating($dragOffset) { value, state, _ in
                 guard isSelected else { return }
                 state = CGSize(
-                    width: value.translation.width / viewModel.canvasScale,
-                    height: value.translation.height / viewModel.canvasScale
+                    width: value.translation.width,
+                    height: value.translation.height
                 )
             }
             .onEnded { value in
                 guard isSelected else { return }
                 var updated = element
-                updated.positionX += value.translation.width / viewModel.canvasScale
-                updated.positionY += value.translation.height / viewModel.canvasScale
+                updated.positionX += value.translation.width
+                updated.positionY += value.translation.height
                 updated.updatedAt = Date()
                 viewModel.updateElement(updated)
             }
@@ -536,13 +560,13 @@ struct BlockElementView: View {
         DragGesture(minimumDistance: 0)
             .updating($resizeDelta) { value, state, _ in
                 state = CGSize(
-                    width: value.translation.width / viewModel.canvasScale,
-                    height: value.translation.height / viewModel.canvasScale
+                    width: value.translation.width,
+                    height: value.translation.height
                 )
             }
             .onEnded { value in
-                let dw = value.translation.width / viewModel.canvasScale
-                let dh = value.translation.height / viewModel.canvasScale
+                let dw = value.translation.width
+                let dh = value.translation.height
                 let oldW = element.width ?? 200
                 let newW = max(60, oldW + dw)
                 let oldH = element.height ?? 50
@@ -577,11 +601,11 @@ struct BlockElementView: View {
         DragGesture(minimumDistance: 0)
             .updating($resizeDelta) { value, state, _ in
                 // Negative translation = dragging left = wider block
-                let dw = -value.translation.width / viewModel.canvasScale
+                let dw = -value.translation.width
                 state = CGSize(width: -dw, height: 0)
             }
             .onEnded { value in
-                let dw = -value.translation.width / viewModel.canvasScale
+                let dw = -value.translation.width
                 let oldW = element.width ?? Double(frameWidth)
                 let newW = max(60, oldW + dw)
                 isCommittingResize = true
@@ -601,11 +625,11 @@ struct BlockElementView: View {
     var rightResizeGesture: some Gesture {
         DragGesture(minimumDistance: 0)
             .updating($resizeDelta) { value, state, _ in
-                let dw = value.translation.width / viewModel.canvasScale
+                let dw = value.translation.width
                 state = CGSize(width: dw, height: 0)
             }
             .onEnded { value in
-                let dw = value.translation.width / viewModel.canvasScale
+                let dw = value.translation.width
                 let oldW = element.width ?? Double(frameWidth)
                 let newW = max(60, oldW + dw)
                 isCommittingResize = true
@@ -627,6 +651,16 @@ struct BlockElementView: View {
                 // Gold border
                 Rectangle()
                     .stroke(Color.gPrimary, lineWidth: 1.5)
+
+                VStack {
+                    ObjectActionPill(
+                        onDuplicate: { viewModel.duplicateSelectedElement() },
+                        onDelete: { viewModel.deleteSelectedElement() }
+                    )
+                    .offset(y: -50)
+                    .zIndex(11)
+                    Spacer()
+                }
 
                 // ── TOP GRABBER PILL ──
                 // A draggable pill centred above the top edge. Drives the block's
@@ -688,24 +722,26 @@ struct BlockElementView: View {
                 Rectangle()
                     .stroke(Color.blue, style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [5]))
 
-                // Delete button — top right
                 VStack {
-                    HStack {
-                        Spacer()
-                        Button {
-                            viewModel.removeElement(id: element.id)
-                        } label: {
-                            ZStack {
-                                Circle().fill(Color.red).frame(width: 26, height: 26)
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .offset(x: 13, y: -13)
-                        .zIndex(10)
+                    ObjectActionPill(
+                        onDuplicate: { viewModel.duplicateSelectedElement() },
+                        onDelete: { viewModel.deleteSelectedElement() }
+                    )
+                    .offset(y: -48)
+                    .zIndex(11)
+
+                    ZStack {
+                        Capsule()
+                            .fill(Color.blue)
+                            .frame(width: 44, height: 22)
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
                     }
+                    .offset(y: -22)
+                    .gesture(dragGesture)
+                    .zIndex(10)
+
                     Spacer()
                 }
 
@@ -727,6 +763,69 @@ struct BlockElementView: View {
                 }
             }
         }
+    }
+}
+
+private struct ImageInsertionPlaceholderView: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    let center: CGPoint
+
+    var body: some View {
+        let size = viewModel.imageInsertionPlaceholderSize
+
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.gPrimary.opacity(0.9), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [8, 6]))
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.gPrimary.opacity(0.05))
+                )
+
+            VStack(spacing: 8) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundColor(.gPrimary)
+                Text("Add image")
+                    .font(.gCaption.weight(.medium))
+                    .foregroundColor(.gTextSecondary)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .position(center)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ObjectActionPill: View {
+    let onDuplicate: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            pillButton("Duplicate", tint: .white, action: onDuplicate)
+            divider
+            pillButton("Delete", tint: .red, action: onDelete)
+        }
+        .background(Color(hex: "#1A1A18").opacity(0.93))
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 1)
+    }
+
+    private func pillButton(_ label: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundColor(tint)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.2))
+            .frame(width: 0.5, height: 24)
     }
 }
 
@@ -1063,36 +1162,85 @@ struct CustomLassoGestureView: View {
                         dash: [7, 5]
                     )
                 )
-                context.fill(path, with: .color(Color(hex: "#D8B547").opacity(0.08)))
             }
             .allowsHitTesting(false)
 
             // Gesture capture layer
-            Color.clear
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture(minimumDistance: 0, coordinateSpace: .local)
-                        .onChanged { value in
-                            guard viewModel.selectedTool == .lasso,
-                                  !viewModel.isRegionCaptureMode else { return }
-                            if !isActiveDrag {
-                                isActiveDrag = true
-                                points = []
-                            }
-                            points.append(value.location)
-                        }
-                        .onEnded { _ in
-                            guard viewModel.selectedTool == .lasso,
-                                  points.count > 2 else {
-                                points = []
-                                isActiveDrag = false
-                                return
-                            }
-                            viewModel.commitLassoSelection(polygon: points)
-                            points = []
-                            isActiveDrag = false
-                        }
-                )
+            PencilOnlyPanCaptureView(
+                onBegan: { location in
+                    guard viewModel.selectedTool == .lasso,
+                          !viewModel.isRegionCaptureMode else { return }
+                    isActiveDrag = true
+                    points = [location]
+                },
+                onChanged: { location in
+                    guard viewModel.selectedTool == .lasso,
+                          !viewModel.isRegionCaptureMode,
+                          isActiveDrag else { return }
+                    points.append(location)
+                },
+                onEnded: {
+                    guard viewModel.selectedTool == .lasso,
+                          points.count > 2 else {
+                        points = []
+                        isActiveDrag = false
+                        return
+                    }
+                    viewModel.commitLassoSelection(polygon: points)
+                    points = []
+                    isActiveDrag = false
+                }
+            )
+        }
+    }
+}
+
+private struct PencilOnlyPanCaptureView: UIViewRepresentable {
+    var onBegan: (CGPoint) -> Void
+    var onChanged: (CGPoint) -> Void
+    var onEnded: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded) }
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+
+        let recognizer = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        recognizer.minimumNumberOfTouches = 1
+        recognizer.maximumNumberOfTouches = 1
+        recognizer.cancelsTouchesInView = true
+        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        view.addGestureRecognizer(recognizer)
+
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
+
+    final class Coordinator: NSObject {
+        let onBegan: (CGPoint) -> Void
+        let onChanged: (CGPoint) -> Void
+        let onEnded: () -> Void
+
+        init(onBegan: @escaping (CGPoint) -> Void, onChanged: @escaping (CGPoint) -> Void, onEnded: @escaping () -> Void) {
+            self.onBegan = onBegan
+            self.onChanged = onChanged
+            self.onEnded = onEnded
+        }
+
+        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+            let location = gesture.location(in: gesture.view)
+            switch gesture.state {
+            case .began:
+                onBegan(location)
+            case .changed:
+                onChanged(location)
+            case .ended, .cancelled, .failed:
+                onEnded()
+            default:
+                break
+            }
         }
     }
 }

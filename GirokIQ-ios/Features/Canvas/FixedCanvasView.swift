@@ -85,9 +85,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
 
     func updateUIView(_ hostView: FixedCanvasHostView, context: Context) {
         let canvasView = hostView.canvasView
-        DispatchQueue.main.async {
-            viewModel.canvasViewSize = hostView.bounds.size
-        }
+        viewModel.setCanvasViewSizeIfNeeded(hostView.bounds.size)
 
         let newTool = currentPKTool()
         if !toolsEqual(canvasView.tool, newTool) {
@@ -95,6 +93,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         }
 
         let isBlockTool = viewModel.selectedTool == .image || viewModel.selectedTool == .text
+        let isLassoTool = viewModel.selectedTool == .lasso
         if isBlockTool {
             // Never disable isUserInteractionEnabled for PKCanvasView during drawing.
             // Use drawingGestureRecognizer.isEnabled to toggle PencilKit input.
@@ -105,6 +104,10 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             }
             // Allow one-finger drag for moving/resizing blocks; pan the page with two fingers.
             hostView.scrollView.panGestureRecognizer.minimumNumberOfTouches = 2
+        } else if isLassoTool {
+            // Lasso is Apple Pencil only (handled by CustomLassoGestureView). Disable drawing so Pencil doesn't ink.
+            canvasView.drawingGestureRecognizer.isEnabled = false
+            hostView.scrollView.panGestureRecognizer.minimumNumberOfTouches = 1
         } else {
             canvasView.drawingGestureRecognizer.isEnabled = true
             let newPolicy: PKCanvasViewDrawingPolicy = allowsFingerDrawing ? .anyInput : .pencilOnly
@@ -129,7 +132,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         if context.coordinator.currentPageIndex != viewModel.currentPageIndex || context.coordinator.currentPageId != viewModel.currentPage.id || viewModel.forceDrawingUpdate {
             context.coordinator.currentPageIndex = viewModel.currentPageIndex
             context.coordinator.currentPageId = viewModel.currentPage.id
-            let pageDrawing = viewModel.currentPage.pkDrawing
+            let pageDrawing = viewModel.currentDrawing
             
             if viewModel.forceDrawingUpdate {
                 if let undoManager = canvasView.undoManager {
@@ -373,9 +376,24 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         guard !didSetInitialZoom, bounds.width > 0 else {
             return
         }
-        let fitZoom = (bounds.width - 80) / pageSize.width
-        scrollView.zoomScale = max(scrollView.minimumZoomScale, min(fitZoom, scrollView.maximumZoomScale))
-        centerPage()
+        if let state = viewModel?.restoredViewport {
+            let restoredScale = max(scrollView.minimumZoomScale, min(state.scale, scrollView.maximumZoomScale))
+            scrollView.zoomScale = restoredScale
+            centerPage()
+            scrollView.contentOffset = CGPoint(x: state.offsetX, y: state.offsetY)
+            viewModel?.finalizeViewport(
+                offset: CGSize(width: state.offsetX, height: state.offsetY),
+                scale: restoredScale
+            )
+        } else {
+            let fitZoom = (bounds.width - 80) / pageSize.width
+            scrollView.zoomScale = max(scrollView.minimumZoomScale, min(fitZoom, scrollView.maximumZoomScale))
+            centerPage()
+            viewModel?.finalizeViewport(
+                offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+                scale: scrollView.zoomScale
+            )
+        }
         didSetInitialZoom = true
     }
 
@@ -393,14 +411,37 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerPage()
-        Task { @MainActor in
-            self.viewModel?.canvasScale = scrollView.zoomScale
-        }
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        guard !decelerate else { return }
         Task { @MainActor in
-            self.viewModel?.canvasOffset = CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y)
+            self.viewModel?.finalizeViewport(
+                offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+                scale: scrollView.zoomScale
+            )
+        }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        Task { @MainActor in
+            self.viewModel?.finalizeViewport(
+                offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+                scale: scrollView.zoomScale
+            )
+        }
+    }
+
+    func scrollViewDidEndZooming(_ scrollView: UIScrollView, with view: UIView?, atScale scale: CGFloat) {
+        centerPage()
+        Task { @MainActor in
+            self.viewModel?.finalizeViewport(
+                offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+                scale: scale
+            )
         }
     }
 
@@ -422,37 +463,16 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
 
     @objc private func handleCanvasTap(_ recognizer: UITapGestureRecognizer) {
         guard recognizer.state == .ended,
-              viewModel?.selectedTool == .text,
               let viewModel else { return }
+        guard viewModel.selectedTool == .text || viewModel.selectedTool == .image else { return }
 
         let location = recognizer.location(in: pageContainerView)
         guard CGRect(origin: .zero, size: pageSize).contains(location) else { return }
-
-        // 1) If tapping an existing text element, select it (do not create a new one).
-        if let hitId = viewModel.currentPage.elements
-            .reversed()
-            .first(where: { el in
-                guard el.type == "text" else { return false }
-                let w = CGFloat(el.width ?? 200)
-                let h = CGFloat(el.height ?? 32)
-                let rect = CGRect(x: el.positionX, y: el.positionY, width: w, height: h)
-                return rect.contains(location)
-            })?.id {
-            UIApplication.shared.sendAction(
-                #selector(UIResponder.resignFirstResponder),
-                to: nil, from: nil, for: nil
-            )
-            viewModel.selectedElementIds = [hitId]
-            return
+        if viewModel.selectedTool == .text {
+            viewModel.handleTextToolCanvasTap(at: location)
+        } else {
+            viewModel.beginImageInsertion(at: location)
         }
-
-        // 2) Otherwise, place a new text element at the tap location.
-        UIApplication.shared.sendAction(
-            #selector(UIResponder.resignFirstResponder),
-            to: nil, from: nil, for: nil
-        )
-        viewModel.selectedElementIds = []
-        viewModel.addTextElement(at: location)
     }
 
     @objc private func handleCanvasLongPress(_ recognizer: UILongPressGestureRecognizer) {
