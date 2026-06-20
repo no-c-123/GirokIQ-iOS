@@ -122,10 +122,10 @@ final class ShapeSnapper {
             
             return .line(start: s, end: e)
             
-        case .rect(let corners):
+        case .rect:
             return shape // recognizeRect already generates a perfect axis-aligned rectangle
-            
-        case .circle(let center, let radius):
+
+        case .circle:
             return shape // recognizeCircle already generates a perfect circle
         }
     }

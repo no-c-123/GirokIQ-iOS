@@ -363,12 +363,9 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
         // Do not interrupt lasso / region capture modes
         guard !viewModel.isLassoSelectionActive, !viewModel.isRegionCaptureMode else { return }
 
-        // Dismiss any system edit menu that might already be up
-        if #available(iOS 13.0, *) {
-            UIMenuController.shared.hideMenu(from: canvasView)
-        } else {
-            UIMenuController.shared.setMenuVisible(false, animated: false)
-        }
+        // The system edit menu (UIEditMenuInteraction on iOS 16+) is already
+        // suppressed via canPerformAction(_:withSender:) and interaction stripping,
+        // so no explicit menu dismissal is needed here before showing our own menu.
 
         let hostPoint = recognizer.location(in: self)
         if let blockView = blockOverlayHostView?.view {
@@ -547,7 +544,10 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         }
 
         // Sync drawing data when page changes (detect by comparing index or ID)
-        if context.coordinator.currentPageIndex != viewModel.currentPageIndex || context.coordinator.currentPageId != viewModel.currentPage.id || viewModel.forceDrawingUpdate {
+        if context.coordinator.currentPageIndex != viewModel.currentPageIndex ||
+            context.coordinator.currentPageId != viewModel.currentPage.id ||
+            viewModel.forceDrawingUpdate ||
+            viewModel.forceDrawingPreviewRefresh {
             context.coordinator.currentPageIndex = viewModel.currentPageIndex
             context.coordinator.currentPageId = viewModel.currentPage.id
             let pageDrawing = viewModel.currentDrawing
@@ -564,6 +564,12 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                 
                 DispatchQueue.main.async {
                     viewModel.forceDrawingUpdate = false
+                }
+            } else if viewModel.forceDrawingPreviewRefresh {
+                context.coordinator.setDrawing(pageDrawing, on: canvasView)
+                
+                DispatchQueue.main.async {
+                    viewModel.forceDrawingPreviewRefresh = false
                 }
             } else {
                 // Regular page change, just set drawing normally
@@ -650,10 +656,18 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             hostView?.syncBackground()
+            viewModel.updateViewport(
+                offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+                scale: scrollView.zoomScale
+            )
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
             hostView?.syncBackground()
+            viewModel.updateViewport(
+                offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+                scale: scrollView.zoomScale
+            )
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {

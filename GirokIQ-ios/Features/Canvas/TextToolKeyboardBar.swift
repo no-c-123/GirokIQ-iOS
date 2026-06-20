@@ -1,14 +1,57 @@
 import SwiftUI
 
 /// Horizontal 46pt toolbar that replaces the vertical PropertiesPanel when
-/// the text tool is active and the keyboard is visible. Sits between the
-/// canvas and the system keyboard.
+/// the text tool is active. Sits full-width just below the top canvas toolbar.
+///
+/// Each picker (color / font / more) opens a floating panel anchored directly
+/// beneath its trigger button — clamped to stay on-screen — and overlays the
+/// canvas instead of pushing it down.
 struct TextToolKeyboardBar: View {
     @ObservedObject var viewModel: CanvasViewModel
 
     @State private var showColorPicker = false
     @State private var showFontPicker  = false
     @State private var showMore        = false
+
+    /// Frames of the trigger buttons (and the strip itself, under "_bar"),
+    /// measured in the `barSpace` coordinate space so panels can anchor to them.
+    @State private var triggerFrames: [String: CGRect] = [:]
+
+    private let barSpace = "textToolBar"
+    private let stripHeight: CGFloat = 46
+
+    // MARK: - Active panel
+
+    private enum Panel: String { case color, font, more }
+
+    private var activePanel: Panel? {
+        if showColorPicker { return .color }
+        if showFontPicker  { return .font }
+        if showMore        { return .more }
+        return nil
+    }
+
+    private var barWidth: CGFloat { triggerFrames["_bar"]?.width ?? 0 }
+
+    private func panelWidth(_ p: Panel) -> CGFloat {
+        switch p {
+        case .color: return 248
+        case .font:  return 200
+        case .more:  return 248
+        }
+    }
+
+    /// Horizontal offset that places a panel under its trigger, clamped to the bar.
+    /// The "more" panel right-aligns to its trigger (it lives on the right edge);
+    /// the others left-align.
+    private func panelX(_ p: Panel) -> CGFloat {
+        let w = panelWidth(p)
+        let margin: CGFloat = 12
+        guard let t = triggerFrames[p.rawValue], barWidth > 0 else { return margin }
+        let desired = (p == .more) ? (t.maxX - w) : t.minX
+        let upperBound = max(margin, barWidth - w - margin)
+        return min(max(margin, desired), upperBound)
+    }
 
     // MARK: - Helpers
 
@@ -53,27 +96,31 @@ struct TextToolKeyboardBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The strip itself
             strip
                 .zIndex(20)
 
-            // Dropdowns — rendered below the strip
-            if showColorPicker {
-                colorDropdown
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                    .zIndex(10)
-            }
-            if showFontPicker {
-                fontDropdown
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                    .zIndex(10)
-            }
-            if showMore {
-                moreDropdown
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+            // Floating picker panel, anchored horizontally under its trigger.
+            // Kept in normal flow (not an overflowing overlay) so every control
+            // inside stays reliably hit-testable.
+            if let panel = activePanel {
+                panelContent(panel)
+                    .frame(width: panelWidth(panel))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .panelCardStyle()
+                    .padding(.leading, panelX(panel))
+                    .padding(.top, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.asymmetric(
+                        insertion: .scale(scale: 0.96, anchor: .top)
+                            .combined(with: .opacity)
+                            .combined(with: .move(edge: .top)),
+                        removal: .opacity
+                    ))
                     .zIndex(10)
             }
         }
+        .coordinateSpace(name: barSpace)
+        .onPreferenceChange(TextBarFrameKey.self) { triggerFrames = $0 }
     }
 
     // MARK: - Strip
@@ -88,11 +135,13 @@ struct TextToolKeyboardBar: View {
             } label: {
                 Circle()
                     .fill(currentColor)
-                    .frame(width: 20, height: 20)
-                    .overlay(Circle().stroke(Color.gPrimary, lineWidth: showColorPicker ? 2 : 0).frame(width: 26, height: 26))
+                    .frame(width: 22, height: 22)
+                    .overlay(Circle().strokeBorder(Color.gBorderStrong.opacity(0.4), lineWidth: 0.5))
+                    .overlay(Circle().stroke(Color.gPrimary, lineWidth: showColorPicker ? 2 : 0).frame(width: 28, height: 28))
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 6)
+            .textBarFrame("color", in: barSpace)
 
             separator
 
@@ -121,51 +170,57 @@ struct TextToolKeyboardBar: View {
                 closeAll(except: "font")
                 withAnimation(GAnimation.springFast) { showFontPicker.toggle() }
             } label: {
-                HStack(spacing: 3) {
+                HStack(spacing: 4) {
                     Text(currentFontName)
-                        .font(.system(size: 12))
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .medium))
+                        .font(.system(size: 9, weight: .semibold))
+                        .rotationEffect(.degrees(showFontPicker ? 180 : 0))
                 }
                 .foregroundColor(showFontPicker ? .gPrimary : .gTextSecondary)
-                .padding(.horizontal, 9)
-                .frame(height: 28)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
                 .background(showFontPicker ? Color.gPrimaryMuted : Color.gElevated.opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(showFontPicker ? Color.gPrimary : .clear, lineWidth: 0.5))
-                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(showFontPicker ? Color.gPrimary : .clear, lineWidth: 1))
+                .cornerRadius(7)
             }
             .buttonStyle(.plain)
+            .textBarFrame("font", in: barSpace)
 
             separator
 
             // Size stepper
-            HStack(spacing: 1) {
-                Button { stepSize(by: -2) } label: {
-                    Text("−")
-                        .font(.system(size: 18))
-                        .foregroundColor(.gTextTertiary)
-                        .frame(width: 26, height: 28)
+            HStack(spacing: 0) {
+                Button { stepSize(by: -1) } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.gTextSecondary)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
 
                 Text("\(currentSize)")
-                    .font(.system(size: 12))
-                    .foregroundColor(.gTextSecondary)
-                    .frame(minWidth: 30)
-                    .frame(height: 28)
-                    .background(Color.gElevated.opacity(0.5))
-                    .cornerRadius(5)
+                    .font(.system(size: 13, weight: .medium))
+                    .monospacedDigit()
+                    .foregroundColor(.gTextPrimary)
+                    .frame(minWidth: 26)
 
-                Button { stepSize(by: 2) } label: {
-                    Text("+")
-                        .font(.system(size: 18))
-                        .foregroundColor(.gTextTertiary)
-                        .frame(width: 26, height: 28)
+                Button { stepSize(by: 1) } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(.gTextSecondary)
+                        .frame(width: 30, height: 30)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
+            .frame(height: 30)
+            .background(Color.gElevated.opacity(0.5))
+            .cornerRadius(7)
 
-            Spacer()
+            Spacer(minLength: 8)
 
             // More button
             Button {
@@ -173,38 +228,46 @@ struct TextToolKeyboardBar: View {
                 withAnimation(GAnimation.springFast) { showMore.toggle() }
             } label: {
                 Image(systemName: "ellipsis")
-                    .font(.system(size: 14))
+                    .font(.system(size: 15, weight: .semibold))
                     .foregroundColor(showMore ? .gPrimary : .gTextSecondary)
                     .frame(width: 36, height: 36)
                     .background(showMore ? Color.gPrimaryMuted : .clear)
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(showMore ? Color.gPrimary.opacity(0.4) : .clear, lineWidth: 0.5))
-                    .cornerRadius(7)
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(showMore ? Color.gPrimary.opacity(0.4) : .clear, lineWidth: 1))
+                    .cornerRadius(8)
             }
             .buttonStyle(.plain)
-            .padding(.trailing, 4)
+            .textBarFrame("more", in: barSpace)
         }
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity)
-        .frame(height: 46)
+        .frame(height: stripHeight)
         .background(Color.gSurface.opacity(0.98))
         .overlay(Rectangle().frame(height: 0.5).foregroundColor(Color.gBorderStrong), alignment: .bottom)
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(key: TextBarFrameKey.self, value: ["_bar": g.frame(in: .named(barSpace))])
+            }
+        )
     }
 
-    // MARK: - Dropdowns
+    // MARK: - Panels (inner content only — positioning/card handled by body)
 
-    var colorDropdown: some View {
+    @ViewBuilder
+    private func panelContent(_ panel: Panel) -> some View {
+        switch panel {
+        case .color: colorPanel
+        case .font:  fontPanel
+        case .more:  morePanel
+        }
+    }
+
+    var colorPanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("TEXT COLOR")
-                    .font(.custom("PlusJakartaSans-Medium", size: 10))
-                    .foregroundColor(.gTextTertiary)
-                    .tracking(0.5)
-                Spacer()
-            }
-            .padding(.bottom, 10)
+            panelHeader("TEXT COLOR")
+                .padding(.bottom, 10)
 
-            let cols = [GridItem(.adaptive(minimum: 26), spacing: 8)]
-            LazyVGrid(columns: cols, alignment: .leading, spacing: 8) {
+            let cols = [GridItem(.adaptive(minimum: 28), spacing: 10)]
+            LazyVGrid(columns: cols, alignment: .leading, spacing: 10) {
                 ForEach(Color.strokePresets, id: \.hashValue) { color in
                     ColorSwatch(
                         color: color,
@@ -221,7 +284,8 @@ struct TextToolKeyboardBar: View {
                             colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
                             center: .center
                         ))
-                        .frame(width: 26, height: 26)
+                        .frame(width: 28, height: 28)
+                        .overlay(Circle().strokeBorder(Color.white.opacity(0.5), lineWidth: 1))
                     ColorPicker("", selection: Binding(
                         get: { currentColor },
                         set: { newColor in
@@ -229,26 +293,15 @@ struct TextToolKeyboardBar: View {
                         }
                     ), supportsOpacity: false)
                         .labelsHidden()
-                        .frame(width: 26, height: 26)
-                        .opacity(0.01)
+                        .frame(width: 28, height: 28)
+                        .opacity(0.02)
                 }
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous)
-                .fill(Color.gSurface.opacity(0.98))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous).stroke(Color.gBorderStrong, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.3), radius: 10, y: -4)
-        .padding(.horizontal, 12)
-        .padding(.top, 4) // clears the strip
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    var fontDropdown: some View {
+    var fontPanel: some View {
         let fonts: [(String?, String)] = [
             (nil,                        "System"),
             ("InstrumentSerif-Regular",  "Serif"),
@@ -259,13 +312,10 @@ struct TextToolKeyboardBar: View {
         let currentFont = selectedElement?.style?.fontName
 
         return VStack(alignment: .leading, spacing: 0) {
-            Text("FONT")
-                .font(.custom("PlusJakartaSans-Medium", size: 10))
-                .foregroundColor(.gTextTertiary)
-                .tracking(0.5)
+            panelHeader("FONT")
                 .padding(.bottom, 8)
 
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 ForEach(fonts, id: \.1) { (name, label) in
                     Button {
                         applyStyle { $0.fontName = name }
@@ -273,8 +323,8 @@ struct TextToolKeyboardBar: View {
                     } label: {
                         HStack {
                             Text(label)
-                                .font(name != nil ? .custom(name!, size: 14) : .system(size: 14))
-                                .foregroundColor(currentFont == name ? .gPrimary : .gTextSecondary)
+                                .font(name != nil ? .custom(name!, size: 15) : .system(size: 15))
+                                .foregroundColor(currentFont == name ? .gPrimary : .gTextPrimary)
                             Spacer()
                             if currentFont == name {
                                 Image(systemName: "checkmark")
@@ -282,8 +332,9 @@ struct TextToolKeyboardBar: View {
                                     .foregroundColor(.gPrimary)
                             }
                         }
-                        .padding(.vertical, 7)
-                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .padding(.horizontal, 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         .background(currentFont == name ? Color.gPrimaryMuted : Color.gElevated.opacity(0.5))
                         .cornerRadius(GRadius.sm)
                     }
@@ -292,33 +343,18 @@ struct TextToolKeyboardBar: View {
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous)
-                .fill(Color.gSurface.opacity(0.98))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous).stroke(Color.gBorderStrong, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.3), radius: 10, y: -4)
-        .frame(maxWidth: 200)
-        .padding(.leading, 12)
-        .padding(.top, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    var moreDropdown: some View {
+    var morePanel: some View {
         let currentAlignment = selectedElement?.style?.textAlignment ?? "left"
         let currentSpacing = selectedElement?.style?.lineSpacing ?? 0
 
         return VStack(alignment: .leading, spacing: 0) {
             // Alignment
-            Text("ALIGNMENT")
-                .font(.custom("PlusJakartaSans-Medium", size: 10))
-                .foregroundColor(.gTextTertiary)
-                .tracking(0.5)
+            panelHeader("ALIGNMENT")
                 .padding(.bottom, 8)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 6) {
                 let options = [
                     ("left", "text.alignleft"),
                     ("center", "text.aligncenter"),
@@ -331,51 +367,38 @@ struct TextToolKeyboardBar: View {
                         applyStyle { $0.textAlignment = val }
                     } label: {
                         Image(systemName: icon)
-                            .font(.system(size: 14))
+                            .font(.system(size: 14, weight: .medium))
                             .foregroundColor(isSelected ? .gPrimary : .gTextSecondary)
                             .frame(maxWidth: .infinity)
-                            .frame(minHeight: 32)
+                            .frame(height: 34)
                             .background(isSelected ? Color.gPrimaryMuted : Color.gElevated.opacity(0.5))
-                            .overlay(RoundedRectangle(cornerRadius: GRadius.xs).stroke(isSelected ? Color.gPrimary : Color.clear, lineWidth: 0.5))
-                            .cornerRadius(GRadius.xs)
+                            .overlay(RoundedRectangle(cornerRadius: GRadius.sm).stroke(isSelected ? Color.gPrimary : Color.clear, lineWidth: 1))
+                            .cornerRadius(GRadius.sm)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.bottom, 12)
-
-            Divider().opacity(0.15).padding(.bottom, 12)
+            .padding(.bottom, 14)
 
             // Line spacing
-            Text("LINE SPACING")
-                .font(.custom("PlusJakartaSans-Medium", size: 10))
-                .foregroundColor(.gTextTertiary)
-                .tracking(0.5)
-                .padding(.bottom, 6)
-
-            HStack(spacing: 8) {
+            HStack {
+                panelHeader("LINE SPACING")
+                Spacer()
                 Text("\(String(format: "%.1f", currentSpacing))pt")
                     .font(.gMonoCaption)
                     .foregroundColor(.gTextSecondary)
-                    .frame(minWidth: 36)
-                Slider(value: Binding(
-                    get: { selectedElement?.style?.lineSpacing ?? 0 },
-                    set: { newVal in applyStyle { $0.lineSpacing = newVal } }
-                ), in: 0...20, step: 0.5)
-                    .tint(.gPrimary)
             }
-            .padding(.bottom, 12)
+            .padding(.bottom, 4)
 
-            Divider().opacity(0.15).padding(.bottom, 12)
+            Slider(value: Binding(
+                get: { selectedElement?.style?.lineSpacing ?? 0 },
+                set: { newVal in applyStyle { $0.lineSpacing = newVal } }
+            ), in: 0...20, step: 0.5)
+                .tint(.gPrimary)
+                .padding(.bottom, 14)
 
             // Actions
-            Text("ACTIONS")
-                .font(.custom("PlusJakartaSans-Medium", size: 10))
-                .foregroundColor(.gTextTertiary)
-                .tracking(0.5)
-                .padding(.bottom, 8)
-
-            HStack(spacing: 6) {
+            HStack(spacing: 8) {
                 actionBtn(icon: "plus.square.on.square", label: "Duplicate") {
                     if let el = selectedElement {
                         let newId = UUID()
@@ -410,21 +433,16 @@ struct TextToolKeyboardBar: View {
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous)
-                .fill(Color.gSurface.opacity(0.98))
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
-        )
-        .clipShape(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous).stroke(Color.gBorderStrong, lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.3), radius: 10, y: -4)
-        .frame(maxWidth: 220)
-        .padding(.leading, 12)
-        .padding(.top, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Sub-views
+
+    private func panelHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.custom("PlusJakartaSans-Medium", size: 10))
+            .foregroundColor(.gTextTertiary)
+            .tracking(0.6)
+    }
 
     private var separator: some View {
         Rectangle()
@@ -449,7 +467,7 @@ struct TextToolKeyboardBar: View {
                 .foregroundColor(active ? .gPrimary : .gTextSecondary)
                 .frame(width: 34, height: 34)
                 .background(active ? Color.gPrimaryMuted : .clear)
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(active ? Color.gPrimary.opacity(0.4) : .clear, lineWidth: 0.5))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(active ? Color.gPrimary.opacity(0.4) : .clear, lineWidth: 1))
                 .cornerRadius(7)
         }
         .buttonStyle(.plain)
@@ -461,14 +479,14 @@ struct TextToolKeyboardBar: View {
                 Image(systemName: icon)
                     .font(.system(size: 13))
                 Text(label)
-                    .font(.gFootnote)
+                    .font(.gFootnote.weight(.medium))
             }
             .foregroundColor(tint)
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 32)
-            .background(Color.gElevated.opacity(0.5))
-            .overlay(RoundedRectangle(cornerRadius: GRadius.xs).stroke(tint == .red ? Color.red.opacity(0.3) : Color.gBorder.opacity(0.3), lineWidth: 0.5))
-            .cornerRadius(GRadius.xs)
+            .frame(height: 36)
+            .background(tint == .red ? Color.red.opacity(0.08) : Color.gElevated.opacity(0.5))
+            .overlay(RoundedRectangle(cornerRadius: GRadius.sm).stroke(tint == .red ? Color.red.opacity(0.3) : Color.gBorder.opacity(0.3), lineWidth: 0.5))
+            .cornerRadius(GRadius.sm)
         }
         .buttonStyle(.plain)
     }
@@ -484,5 +502,40 @@ struct TextToolKeyboardBar: View {
         if except != "color" { withAnimation(GAnimation.springFast) { showColorPicker = false } }
         if except != "font"  { withAnimation(GAnimation.springFast) { showFontPicker = false } }
         if except != "more"  { withAnimation(GAnimation.springFast) { showMore = false } }
+    }
+}
+
+// MARK: - Panel anchoring support
+
+/// Collects the frames of the toolbar's trigger buttons (and the strip itself)
+/// so floating panels can be positioned directly beneath their trigger.
+private struct TextBarFrameKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private extension View {
+    /// Records this view's frame (in the given coordinate space) under `id`.
+    func textBarFrame(_ id: String, in space: String) -> some View {
+        background(
+            GeometryReader { g in
+                Color.clear.preference(key: TextBarFrameKey.self, value: [id: g.frame(in: .named(space))])
+            }
+        )
+    }
+
+    /// Shared floating-panel chrome: material card, border, drop shadow.
+    func panelCardStyle() -> some View {
+        self
+            .background(
+                RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous)
+                    .fill(Color.gSurface.opacity(0.98))
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
+            )
+            .clipShape(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: GRadius.lg, style: .continuous).stroke(Color.gBorderStrong, lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.28), radius: 14, y: 8)
     }
 }

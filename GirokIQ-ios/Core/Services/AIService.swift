@@ -12,7 +12,7 @@ final class AIService {
         return url
     }()
     private var endpoint: URL { Self.endpointURL }
-    private let defaultModel = "claude-sonnet-4-20250514"
+    private let defaultModel = "claude-sonnet-4-6"
 
     private var resolvedAPIKey: String { Configuration.anthropicAPIKey }
 
@@ -102,9 +102,21 @@ final class AIService {
 
                 do {
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
-                    guard let httpResponse = response as? HTTPURLResponse,
-                          (200...299).contains(httpResponse.statusCode) else {
+                    guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: AIError.invalidResponse)
+                        return
+                    }
+                    guard (200...299).contains(httpResponse.statusCode) else {
+                        // Read the error body so the real reason (401 bad key, 400 no
+                        // credits, 404 model, 429 rate limit) surfaces instead of a
+                        // generic "Invalid response" message.
+                        var errorBody = ""
+                        for try await line in bytes.lines { errorBody += line }
+                        if errorBody.isEmpty { errorBody = "Unknown error" }
+                        continuation.finish(throwing: AIError.apiError(
+                            statusCode: httpResponse.statusCode,
+                            message: errorBody
+                        ))
                         return
                     }
 
@@ -147,7 +159,7 @@ final class AIService {
                             "type": "image",
                             "source": [
                                 "type": "base64",
-                                "media_type": "image/png",
+                                "media_type": detectedMediaType(for: data),
                                 "data": data.base64EncodedString()
                             ]
                         ],
@@ -175,6 +187,32 @@ final class AIService {
             "messages": apiMessages
         ]
     }
+    
+    private func detectedMediaType(for data: Data) -> String {
+        let header = [UInt8](data.prefix(12))
+        
+        if header.count >= 3,
+           header[0] == 0xFF,
+           header[1] == 0xD8,
+           header[2] == 0xFF {
+            return "image/jpeg"
+        }
+        
+        if header.count >= 8,
+           header[0] == 0x89,
+           header[1] == 0x50,
+           header[2] == 0x4E,
+           header[3] == 0x47,
+           header[4] == 0x0D,
+           header[5] == 0x0A,
+           header[6] == 0x1A,
+           header[7] == 0x0A {
+            return "image/png"
+        }
+        
+        return "image/jpeg"
+    }
+
 
     private func parseResponse(_ data: Data) throws -> String {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

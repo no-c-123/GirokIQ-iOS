@@ -145,6 +145,12 @@ struct SettingsView: View {
             Toggle("Enable AI Assistant", isOn: $viewModel.aiEnabled)
                 .accessibilityHint("Show the AI assistant button on the canvas toolbar")
 
+            Picker("Chat Panel Position", selection: $viewModel.aiPanelDockSide) {
+                ForEach(AIChatPanelSide.allCases) { side in
+                    Text(side.title).tag(side)
+                }
+            }
+
             HStack {
                 Text("Status")
                 Spacer()

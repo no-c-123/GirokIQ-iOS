@@ -55,7 +55,7 @@ struct Notebook: Codable, Identifiable, Hashable {
 
 // MARK: - Page Dimensions
 
-struct PageDimensions: Codable, Hashable {
+nonisolated struct PageDimensions: Codable, Hashable {
     var widthPt: Double    // points (1pt = 1/72 inch)
     var heightPt: Double
 

@@ -10,12 +10,12 @@ enum PencilKitBridge {
     // MARK: - Serialization
 
     /// Convert a PKDrawing to Data for storage
-    static func serialize(_ drawing: PKDrawing) -> Data {
+    nonisolated static func serialize(_ drawing: PKDrawing) -> Data {
         drawing.dataRepresentation()
     }
 
     /// Restore a PKDrawing from stored Data
-    static func deserialize(_ data: Data) -> PKDrawing? {
+    nonisolated static func deserialize(_ data: Data) -> PKDrawing? {
         try? PKDrawing(data: data)
     }
 

@@ -174,6 +174,11 @@ struct AuthView: View {
                                 .stroke(Color.gBorder, lineWidth: 0.5)
                         )
                 )
+                // Cap the card width so the form stays centered on wide screens
+                // (iPad / landscape). This also keeps the Sign in with Apple button's
+                // host within ASAuthorizationAppleIDButton's built-in 375pt max width,
+                // avoiding an Auto Layout constraint conflict on large containers.
+                .frame(maxWidth: 400)
                 .padding(.horizontal, GSpacing.xl)
 
                 Spacer()

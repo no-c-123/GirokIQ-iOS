@@ -81,9 +81,11 @@ final class CanvasViewModel: ObservableObject {
     @Published var isToolbarVisible: Bool = true
     @Published var isShapeSnappingEnabled: Bool = false
     @Published var forceDrawingUpdate: Bool = false
+    @Published var forceDrawingPreviewRefresh: Bool = false
     @Published var isRegionCaptureMode: Bool = false
     @Published var showCanvasImagePicker: Bool = false
     @Published var pendingImageInsertionPoint: CGPoint? = nil
+    @Published var inlineAIHighlightRect: CGRect? = nil
 
     // MARK: - Keyboard / Viewport (Text Tool)
     @Published var keyboardHeight: CGFloat = 0
@@ -159,6 +161,7 @@ final class CanvasViewModel: ObservableObject {
     private var liveDrawingCache: [UUID: PKDrawing] = [:]
     private var pendingSerializedDrawingData: [UUID: Data] = [:]
     private var lastKnownStrokeCounts: [UUID: Int] = [:]
+    private var transientPreviewDrawing: PKDrawing? = nil
 
     var currentPage: DrawingPage {
         get { pages[currentPageIndex] }
@@ -166,6 +169,9 @@ final class CanvasViewModel: ObservableObject {
     }
 
     var currentDrawing: PKDrawing {
+        if let transientPreviewDrawing {
+            return transientPreviewDrawing
+        }
         let page = pages[currentPageIndex]
         if let cached = liveDrawingCache[page.id] {
             return cached
@@ -358,12 +364,22 @@ final class CanvasViewModel: ObservableObject {
     }
 
     func updateViewport(offset: CGSize, scale: CGFloat) {
-        canvasOffset = offset
-        canvasScale = scale
-        guard let notebookId else { return }
-        let state = CanvasViewportState(offsetX: offset.width, offsetY: offset.height, scale: scale)
-        restoredViewport = state
-        Self.saveViewportState(state, for: notebookId)
+        // This is called from UIScrollView delegate callbacks and UIView.layoutSubviews,
+        // which can run while SwiftUI is mid-update (notably when the canvas first appears
+        // and during pan/zoom). Writing these @Published values synchronously there trips
+        // "Modifying state during view update, this will cause undefined behavior."
+        // Defer to the next runloop tick so the observable writes land outside the active
+        // update pass. The live canvas (ink + background) tracks the scroll view directly,
+        // so only the conditional SwiftUI overlays read these — a one-tick defer is invisible.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.canvasOffset = offset
+            self.canvasScale = scale
+            guard let notebookId = self.notebookId else { return }
+            let state = CanvasViewportState(offsetX: offset.width, offsetY: offset.height, scale: scale)
+            self.restoredViewport = state
+            Self.saveViewportState(state, for: notebookId)
+        }
     }
 
     func finalizeViewport(offset: CGSize, scale: CGFloat) {
@@ -393,12 +409,18 @@ final class CanvasViewModel: ObservableObject {
     private func setCurrentPageDrawingSerialized(_ drawing: PKDrawing, forceViewUpdate: Bool = false) {
         let pageId = pages[currentPageIndex].id
         let data = PencilKitBridge.serialize(drawing)
+        transientPreviewDrawing = nil
         cacheDrawing(drawing, for: pageId)
         pendingSerializedDrawingData[pageId] = data
         pages[currentPageIndex].drawingData = data
         if forceViewUpdate {
             forceDrawingUpdate = true
         }
+    }
+    
+    private func setCurrentPageDrawingPreview(_ drawing: PKDrawing) {
+        transientPreviewDrawing = drawing
+        forceDrawingPreviewRefresh = true
     }
 
     private func scheduleDrawingPersistence(for pageId: UUID, drawing: PKDrawing) {
@@ -551,6 +573,11 @@ final class CanvasViewModel: ObservableObject {
     /// Indices into currentPage.pkDrawing.strokes that are currently selected.
     /// Using indices because PKStroke has no stable ID.
     @Published var selectedPKStrokeIndices: Set<Int> = []
+    private var lassoMovePreviewBaseDrawing: PKDrawing? = nil
+    private var lassoMovePreviewBaseBox: CGRect? = nil
+    private var lassoMovePreviewBaseElementPositions: [UUID: CGPoint] = [:]
+    private var lassoMovePreviewLastAppliedTranslation: CGSize = .zero
+    private var lassoMovePreviewLastUpdateTime: TimeInterval = 0
 
     // MARK: - Shared Canvas Interaction Helpers
 
@@ -722,6 +749,7 @@ final class CanvasViewModel: ObservableObject {
     }
     
     func clearLassoSelection() {
+        endLassoMovePreview(commit: false)
         selectedStrokes = []
         selectedPKStrokeIndices = []
         selectedElementIds = []
@@ -836,6 +864,97 @@ final class CanvasViewModel: ObservableObject {
         objectWillChange.send()
         scheduleElementSave()
         scheduleAutoSave()
+    }
+    
+    func beginLassoMovePreview() {
+        guard lassoMovePreviewBaseBox == nil else { return }
+        lassoMovePreviewBaseDrawing = currentDrawing
+        lassoMovePreviewBaseBox = lassoSelectionBox
+        lassoMovePreviewLastAppliedTranslation = .zero
+        lassoMovePreviewLastUpdateTime = 0
+        lassoMovePreviewBaseElementPositions = Dictionary(
+            uniqueKeysWithValues: pages[currentPageIndex].elements.compactMap { element in
+                guard selectedElementIds.contains(element.id) else { return nil }
+                return (element.id, CGPoint(x: element.positionX, y: element.positionY))
+            }
+        )
+    }
+    
+    func updateLassoMovePreview(translation: CGSize) {
+        guard let baseBox = lassoMovePreviewBaseBox else { return }
+        let currentTime = ProcessInfo.processInfo.systemUptime
+        let threshold: CGFloat = 0.35
+        guard abs(translation.width - lassoMovePreviewLastAppliedTranslation.width) > threshold ||
+                abs(translation.height - lassoMovePreviewLastAppliedTranslation.height) > threshold else {
+            return
+        }
+        guard currentTime - lassoMovePreviewLastUpdateTime >= (1.0 / 45.0) else {
+            return
+        }
+        lassoMovePreviewLastAppliedTranslation = translation
+        lassoMovePreviewLastUpdateTime = currentTime
+        
+        if let baseDrawing = lassoMovePreviewBaseDrawing, !selectedPKStrokeIndices.isEmpty {
+            var strokes = baseDrawing.strokes
+            let transform = CGAffineTransform(translationX: translation.width, y: translation.height)
+            for index in selectedPKStrokeIndices where index < strokes.count {
+                let baseStroke = baseDrawing.strokes[index]
+                strokes[index] = PKStroke(
+                    ink: baseStroke.ink,
+                    path: baseStroke.path,
+                    transform: baseStroke.transform.concatenating(transform),
+                    mask: baseStroke.mask
+                )
+            }
+            setCurrentPageDrawingPreview(PKDrawing(strokes: strokes))
+        }
+        
+        for index in pages[currentPageIndex].elements.indices {
+            let elementId = pages[currentPageIndex].elements[index].id
+            guard let basePosition = lassoMovePreviewBaseElementPositions[elementId] else { continue }
+            pages[currentPageIndex].elements[index].positionX = basePosition.x + translation.width
+            pages[currentPageIndex].elements[index].positionY = basePosition.y + translation.height
+        }
+        
+        lassoSelectionBox = baseBox.offsetBy(dx: translation.width, dy: translation.height)
+        objectWillChange.send()
+    }
+    
+    func endLassoMovePreview(commit: Bool) {
+        let baseDrawing = lassoMovePreviewBaseDrawing
+        let baseBox = lassoMovePreviewBaseBox
+        let baseElementPositions = lassoMovePreviewBaseElementPositions
+        let previewDrawing = transientPreviewDrawing
+        let shouldPersist = commit && lassoMovePreviewBaseBox != nil
+        lassoMovePreviewBaseDrawing = nil
+        lassoMovePreviewBaseBox = nil
+        lassoMovePreviewBaseElementPositions = [:]
+        lassoMovePreviewLastAppliedTranslation = .zero
+        lassoMovePreviewLastUpdateTime = 0
+        
+        if !commit {
+            if let baseDrawing {
+                setCurrentPageDrawingPreview(baseDrawing)
+            }
+            if let baseBox {
+                lassoSelectionBox = baseBox
+            }
+            for index in pages[currentPageIndex].elements.indices {
+                let elementId = pages[currentPageIndex].elements[index].id
+                guard let basePosition = baseElementPositions[elementId] else { continue }
+                pages[currentPageIndex].elements[index].positionX = basePosition.x
+                pages[currentPageIndex].elements[index].positionY = basePosition.y
+            }
+            objectWillChange.send()
+        }
+        
+        guard shouldPersist else { return }
+        if let previewDrawing {
+            setCurrentPageDrawingSerialized(previewDrawing)
+        }
+        scheduleElementSave()
+        scheduleAutoSave()
+        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
     }
 
     func moveSelection(dx: CGFloat, dy: CGFloat) {

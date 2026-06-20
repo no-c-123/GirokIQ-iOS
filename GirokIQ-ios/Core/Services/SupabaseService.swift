@@ -6,7 +6,15 @@ import Realtime
 
 let supabase = SupabaseClient(
     supabaseURL: Configuration.supabaseURL,
-    supabaseKey: Configuration.supabaseAnonKey
+    supabaseKey: Configuration.supabaseAnonKey,
+    options: SupabaseClientOptions(
+        // Opt into the upcoming default (supabase-swift PR #822): the locally stored
+        // session is emitted immediately as the initial session, regardless of validity.
+        // Callers must therefore guard on `session.isExpired` (see AuthViewModel).
+        auth: SupabaseClientOptions.AuthOptions(
+            emitLocalSessionAsInitialSession: true
+        )
+    )
 )
 
 // MARK: - Supabase Service

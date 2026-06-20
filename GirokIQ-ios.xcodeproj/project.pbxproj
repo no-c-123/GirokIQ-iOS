@@ -17,6 +17,7 @@
 		4C1223ED2F7E5D9200245941 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		4C1223EE2F7E5D9700245941 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 		4C56BD752F7A6E4B00179FAA /* GirokIQ-ios.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "GirokIQ-ios.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		4CF70C9B2FE67C4E00DF3DF0 /* GirokIQ-ios.xctestplan */ = {isa = PBXFileReference; lastKnownFileType = text; path = "GirokIQ-ios.xctestplan"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -72,6 +73,7 @@
 		4C56BD6C2F7A6E4B00179FAA = {
 			isa = PBXGroup;
 			children = (
+				4CF70C9B2FE67C4E00DF3DF0 /* GirokIQ-ios.xctestplan */,
 				4C56BD772F7A6E4B00179FAA /* GirokIQ-ios */,
 				4C1223332F7AF1ED00245941 /* Frameworks */,
 				4C56BD762F7A6E4B00179FAA /* Products */,

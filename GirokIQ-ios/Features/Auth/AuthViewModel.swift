@@ -36,6 +36,13 @@ final class AuthViewModel: ObservableObject {
     private func restoreSession() async {
         do {
             let session = try await supabase.auth.session
+            // With `emitLocalSessionAsInitialSession` enabled, a locally stored session
+            // can be surfaced even when expired, so verify validity before treating the
+            // user as signed in. An expired session means they must re-authenticate.
+            guard !session.isExpired else {
+                self.isAuthenticated = false
+                return
+            }
             applyUser(session.user)
         } catch {
             // No stored session — user needs to sign in

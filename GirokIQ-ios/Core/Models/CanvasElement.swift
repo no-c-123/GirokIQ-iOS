@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Canvas Element (matches Supabase `canvas_elements` table)
 
-struct CanvasElement: Codable, Identifiable, Hashable, Equatable {
+nonisolated struct CanvasElement: Codable, Identifiable, Hashable, Equatable {
     let id: UUID
     let pageId: UUID
     let userId: UUID
@@ -109,7 +109,7 @@ struct CanvasElement: Codable, Identifiable, Hashable, Equatable {
 
 // MARK: - Element Style (jsonb column)
 
-struct ElementStyle: Codable, Hashable {
+nonisolated struct ElementStyle: Codable, Hashable {
     var backgroundColor: String?
     var borderColor: String?
     var borderWidth: Double?

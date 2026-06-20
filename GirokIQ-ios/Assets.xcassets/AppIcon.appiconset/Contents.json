@@ -1,7 +1,7 @@
 {
   "images" : [
     {
-      "filename" : "image.png",
+      "filename" : "Gamma Image Resize 1024x1024.png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"
@@ -13,7 +13,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "GirokIQ-dark.png",
+      "filename" : "Dark Mode Logo Request Jun 15 2026 (1).png",
       "idiom" : "universal",
       "platform" : "ios",
       "size" : "1024x1024"

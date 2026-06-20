@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 import PencilKit
+import UIKit
 
 // MARK: - AI Chat ViewModel
 
@@ -33,7 +34,10 @@ final class AIChatViewModel: ObservableObject {
         You are GirokIQ Assistant, an AI embedded in a handwritten canvas note-taking app. \
         When an image is attached, it is a screenshot of the user's canvas containing handwritten notes, diagrams, or drawings. \
         Read all visible handwriting carefully and base your answer on it. \
-        Keep responses concise and actionable. Use markdown formatting when helpful.
+        Keep responses concise and actionable. \
+        Use real markdown with headings, bullets, and short sections when helpful. \
+        For math or worked examples, put each equation or evaluation step on its own line instead of cramming multiple expressions into one sentence. \
+        Do not write raw markdown symbols unless they actually create structure.
         """
         
         if let context = contextProvider?(), !context.isEmpty {
@@ -127,7 +131,7 @@ final class AIChatViewModel: ObservableObject {
         guard !text.isEmpty || attachedImageData != nil else { return }
         guard !isStreaming else { return }
 
-        let currentAttachedImage = attachedImageData
+        let currentAttachedImage = attachedImageData?.anthropicSafeImageData()
         let content = text.isEmpty && currentAttachedImage != nil ? "What do you see in this image?" : text
 
         inputText = ""
@@ -171,13 +175,14 @@ final class AIChatViewModel: ObservableObject {
     func sendWithVision(text: String, imageData: Data) async {
         guard !isStreaming else { return }
 
-        print("[AI Vision] imageData size: \(imageData.count) bytes")
+        let safeImageData = imageData.anthropicSafeImageData()
+        print("[AI Vision] imageData size: \(safeImageData.count) bytes")
         
         let content = text.isEmpty ? "What do you see on this canvas page?" : text
         inputText = ""
         errorMessage = nil
 
-        let userMessage = AIMessage(role: .user, content: content, imageData: imageData)
+        let userMessage = AIMessage(role: .user, content: content, imageData: safeImageData)
         messages.append(userMessage)
         await persistMessage(userMessage)
 
@@ -251,5 +256,55 @@ final class AIChatViewModel: ObservableObject {
         } catch {
             print("[AIChatVM] Failed to persist message, SyncEngine will retry: \(error)")
         }
+    }
+}
+
+private extension Data {
+    func anthropicSafeImageData(
+        maxDimension: CGFloat = 4096,
+        targetByteCount: Int = 3_500_000,
+        compressionQuality: CGFloat = 0.8
+    ) -> Data {
+        guard let image = UIImage(data: self) else { return self }
+        
+        func resizedImage(from source: UIImage, maxDimension: CGFloat) -> UIImage {
+            let sourceSize = source.size
+            let largestDimension = Swift.max(sourceSize.width, sourceSize.height)
+            guard largestDimension > maxDimension else { return source }
+            
+            let scale = maxDimension / largestDimension
+            let resizedSize = CGSize(
+                width: Swift.max(1, floor(sourceSize.width * scale)),
+                height: Swift.max(1, floor(sourceSize.height * scale))
+            )
+            
+            let renderer = UIGraphicsImageRenderer(size: resizedSize)
+            return renderer.image { _ in
+                source.draw(in: CGRect(origin: .zero, size: resizedSize))
+            }
+        }
+        
+        var workingImage = resizedImage(from: image, maxDimension: maxDimension)
+        var quality = compressionQuality
+        var encoded = workingImage.jpegData(compressionQuality: quality) ?? self
+        
+        while encoded.count > targetByteCount && quality > 0.45 {
+            quality -= 0.1
+            encoded = workingImage.jpegData(compressionQuality: quality) ?? encoded
+        }
+        
+        var currentMaxDimension = Swift.max(workingImage.size.width, workingImage.size.height)
+        while encoded.count > targetByteCount && currentMaxDimension > 1600 {
+            currentMaxDimension *= 0.82
+            workingImage = resizedImage(from: workingImage, maxDimension: currentMaxDimension)
+            encoded = workingImage.jpegData(compressionQuality: quality) ?? encoded
+            
+            while encoded.count > targetByteCount && quality > 0.35 {
+                quality -= 0.05
+                encoded = workingImage.jpegData(compressionQuality: quality) ?? encoded
+            }
+        }
+        
+        return encoded
     }
 }

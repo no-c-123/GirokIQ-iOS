@@ -1,0 +1,31 @@
+{
+  "configurations" : [
+    {
+      "id" : "077E10D8-531E-453D-B525-47023CE961F1",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:GirokIQ-ios.xcodeproj",
+      "identifier" : "4C56BD742F7A6E4B00179FAA",
+      "name" : "GirokIQ-ios"
+    }
+  },
+  "testTargets" : [
+    {
+      "enabled" : false,
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:GirokIQ-ios.xcodeproj",
+        "identifier" : "4C88AFF62FB5C551007219F4",
+        "name" : "EnergyConsupmtion"
+      }
+    }
+  ],
+  "version" : 1
+}

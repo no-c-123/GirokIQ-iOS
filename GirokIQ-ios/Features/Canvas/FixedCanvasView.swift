@@ -480,11 +480,9 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
               let viewModel else { return }
         guard !viewModel.isLassoSelectionActive, !viewModel.isRegionCaptureMode else { return }
 
-        if #available(iOS 13.0, *) {
-            UIMenuController.shared.hideMenu(from: self)
-        } else {
-            UIMenuController.shared.setMenuVisible(false, animated: false)
-        }
+        // The system edit menu (UIEditMenuInteraction on iOS 16+) is already
+        // suppressed via canPerformAction(_:withSender:) and interaction stripping,
+        // so no explicit menu dismissal is needed here before showing our own menu.
 
         let location = recognizer.location(in: pageContainerView)
         guard CGRect(origin: .zero, size: pageSize).contains(location) else { return }

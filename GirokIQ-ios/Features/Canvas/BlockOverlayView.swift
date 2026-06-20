@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Photos
 
 enum TextElementMetrics {
     static let editorInsets = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
@@ -84,6 +85,19 @@ struct BlockOverlayView: View {
 
                 ForEach(viewModel.pages[viewModel.currentPageIndex].elements) { element in
                     BlockElementView(element: element, viewModel: viewModel)
+                }
+                
+                if let highlightRect = viewModel.inlineAIHighlightRect {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.gPrimary.opacity(0.16))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.gPrimary.opacity(0.95), lineWidth: 2)
+                        )
+                        .frame(width: highlightRect.width, height: highlightRect.height)
+                        .position(x: highlightRect.midX, y: highlightRect.midY)
+                        .shadow(color: Color.gPrimary.opacity(0.14), radius: 8, y: 2)
+                        .allowsHitTesting(false)
                 }
 
                 if viewModel.selectedTool == .image,
@@ -365,6 +379,11 @@ struct BlockElementView: View {
             x: CGFloat(element.positionX) + dragOffset.width + frameWidth / 2,
             y: CGFloat(element.positionY) + dragOffset.height + frameHeight / 2 - selectionYOffsetCompensation
         )
+        .transaction { transaction in
+            if dragOffset != .zero {
+                transaction.animation = nil
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             // System keyboard dismiss button was tapped — deselect the block
             // so isEditable becomes false and the keyboard stays down
@@ -536,7 +555,7 @@ struct BlockElementView: View {
     // MARK: - Drag Gesture (move)
 
     var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
+        DragGesture(minimumDistance: 0, coordinateSpace: .global)
             .updating($dragOffset) { value, state, _ in
                 guard isSelected else { return }
                 state = CGSize(
@@ -674,9 +693,11 @@ struct BlockElementView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.white)
                     }
+                    .frame(width: 72, height: 40)
+                    .contentShape(Rectangle())
                     // Float 14pt above the top border (offset upward by half height + gap)
                     .offset(y: -22)
-                    .gesture(dragGesture)
+                    .highPriorityGesture(dragGesture)
                     .zIndex(10)
                     Spacer()
                 }
@@ -738,8 +759,10 @@ struct BlockElementView: View {
                             .font(.system(size: 10, weight: .semibold))
                             .foregroundColor(.white)
                     }
+                    .frame(width: 72, height: 40)
+                    .contentShape(Rectangle())
                     .offset(y: -22)
-                    .gesture(dragGesture)
+                    .highPriorityGesture(dragGesture)
                     .zIndex(10)
 
                     Spacer()
@@ -832,12 +855,13 @@ private struct ObjectActionPill: View {
 struct LassoSelectionOverlay: View {
     @ObservedObject var viewModel: CanvasViewModel
     let box: CGRect
+    let onAskAI: (CGRect, Data) -> Void
     @State private var showColorPicker = false
     @State private var pickedColor: Color = .white
     @State private var screenshotImage: UIImage? = nil
     @State private var showScreenshotPreview = false
+    @State private var isMovingSelection = false
     @GestureState private var resizeDelta: CGSize = .zero
-    @GestureState private var moveDelta: CGSize = .zero
 
     // Convert canvas-space box to screen-space for rendering
     // Since this view is now in CanvasContainerView (screen space), we must project.
@@ -861,8 +885,8 @@ struct LassoSelectionOverlay: View {
     var liveBox: CGRect {
         let sb = screenBox
         return CGRect(
-            x: sb.minX + moveDelta.width,
-            y: sb.minY + moveDelta.height,
+            x: sb.minX,
+            y: sb.minY,
             width: max(40, sb.width * liveScale),
             height: max(40, sb.height * liveScale)
         )
@@ -893,17 +917,26 @@ struct LassoSelectionOverlay: View {
                 .frame(width: liveBox.width, height: liveBox.height)
                 .position(x: liveBox.midX, y: liveBox.midY)
                 .gesture(
-                    DragGesture(minimumDistance: 2)
-                        .updating($moveDelta) { value, state, _ in
-                            state = CGSize(
-                                width: value.translation.width,
-                                height: value.translation.height
+                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                        .onChanged { value in
+                            if !isMovingSelection {
+                                isMovingSelection = true
+                                viewModel.beginLassoMovePreview()
+                            }
+                            let dx = value.translation.width / max(viewModel.canvasScale, 0.001)
+                            let dy = value.translation.height / max(viewModel.canvasScale, 0.001)
+                            viewModel.updateLassoMovePreview(
+                                translation: CGSize(width: dx, height: dy)
                             )
                         }
                         .onEnded { value in
-                            let dx = value.translation.width / viewModel.canvasScale
-                            let dy = value.translation.height / viewModel.canvasScale
-                            viewModel.applyLassoMove(translation: CGSize(width: dx, height: dy))
+                            let dx = value.translation.width / max(viewModel.canvasScale, 0.001)
+                            let dy = value.translation.height / max(viewModel.canvasScale, 0.001)
+                            viewModel.updateLassoMovePreview(
+                                translation: CGSize(width: dx, height: dy)
+                            )
+                            viewModel.endLassoMovePreview(commit: true)
+                            isMovingSelection = false
                         }
                 )
 
@@ -936,9 +969,12 @@ struct LassoSelectionOverlay: View {
             HStack(spacing: 0) {
                 pillButton("Color") { showColorPicker.toggle() }
                 pillDivider()
-                pillButton("Resize") { }
-                    .opacity(0.5)
-                    .allowsHitTesting(false)
+                pillButton("Ask AI") {
+                    if let img = viewModel.screenshotSelection(),
+                       let data = img.pngData() {
+                        onAskAI(box, data)
+                    }
+                }
                 pillDivider()
                 pillButton("Screenshot") {
                     if let img = viewModel.screenshotSelection() {
@@ -1025,6 +1061,11 @@ struct LassoSelectionOverlay: View {
                             viewModel.applyLassoResize(scale: finalScale)
                         }
                 )
+        }
+        .transaction { transaction in
+            if isMovingSelection {
+                transaction.animation = nil
+            }
         }
     }
 
@@ -1251,6 +1292,9 @@ private struct PencilOnlyPanCaptureView: UIViewRepresentable {
 struct LassoScreenshotPreview: View {
     let image: UIImage
     @Environment(\.dismiss) private var dismiss
+    @State private var showShareSheet = false
+    @State private var alertMessage = ""
+    @State private var showAlert = false
 
     var body: some View {
         NavigationStack {
@@ -1267,7 +1311,81 @@ struct LassoScreenshotPreview: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") { dismiss() }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showShareSheet = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
             }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    previewActionButton("Copy", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.image = image
+                        presentAlert("Screenshot copied.")
+                    }
+
+                    previewActionButton("Save", systemImage: "square.and.arrow.down") {
+                        Task {
+                            await saveToPhotos()
+                        }
+                    }
+
+                    previewActionButton("Share", systemImage: "square.and.arrow.up") {
+                        showShareSheet = true
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+                .background(.ultraThinMaterial)
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ShareSheet(items: [image])
+            }
+            .alert(alertMessage, isPresented: $showAlert) {
+                Button("OK", role: .cancel) {}
+            }
+        }
+    }
+
+    private func previewActionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 15, weight: .medium))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Color(hex: "#1A1A18"))
+    }
+
+    @MainActor
+    private func presentAlert(_ message: String) {
+        alertMessage = message
+        showAlert = true
+    }
+
+    private func saveToPhotos() async {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+
+        switch status {
+        case .authorized, .limited:
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAsset(from: image)
+                }
+                presentAlert("Screenshot saved to Photos.")
+            } catch {
+                presentAlert("Couldn’t save screenshot. Please try again.")
+            }
+        case .denied, .restricted:
+            presentAlert("Photos access is off. Enable it in Settings to save screenshots.")
+        case .notDetermined:
+            presentAlert("Photos permission is still pending. Please try again.")
+        @unknown default:
+            presentAlert("Couldn’t save screenshot. Please try again.")
         }
     }
 }

@@ -309,8 +309,8 @@ extension Page: FetchableRecord, PersistableRecord {
     }
 }
 
-extension PageSettings: DatabaseValueConvertible {
-    nonisolated public var databaseValue: DatabaseValue {
+nonisolated extension PageSettings: DatabaseValueConvertible {
+    public var databaseValue: DatabaseValue {
         if let data = try? JSONEncoder().encode(self),
            let string = String(data: data, encoding: .utf8) {
             return string.databaseValue
@@ -318,7 +318,7 @@ extension PageSettings: DatabaseValueConvertible {
         return .null
     }
     
-    nonisolated public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> PageSettings? {
+    public static func fromDatabaseValue(_ dbValue: DatabaseValue) -> PageSettings? {
         if let string = String.fromDatabaseValue(dbValue),
            let data = string.data(using: .utf8),
            let settings = try? JSONDecoder().decode(PageSettings.self, from: data) {

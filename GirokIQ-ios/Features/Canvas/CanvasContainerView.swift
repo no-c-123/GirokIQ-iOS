@@ -6,9 +6,11 @@ struct CanvasContainerView: View {
     let notebook: Notebook
     @StateObject private var canvasVM = CanvasViewModel()
     @StateObject private var aiVM = AIChatViewModel()
+    @StateObject private var inlineAIVM = InlineAIOverlayViewModel()
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.dismiss) var dismiss
     @Environment(\.horizontalSizeClass) var sizeClass
+    @AppStorage("aiPanelDockSide") private var aiPanelDockSide: AIChatPanelSide = .right
 
     @State private var showPageStrip = false
     @State private var showPatternPicker = false
@@ -17,22 +19,16 @@ struct CanvasContainerView: View {
 
     var body: some View {
         HStack(spacing: 0) {
+            if sizeClass == .regular && showAIPanel && aiPanelDockSide == .left {
+                aiPanel
+                    .transition(.move(edge: .leading))
+            }
+
             // Main canvas area
             canvasArea
 
-            // iPad: side panel for AI
-            if sizeClass == .regular && showAIPanel {
-                AIChatView(viewModel: aiVM, drawing: canvasVM.currentDrawing, onRegionCapture: {
-                    showAIPanel = false
-                    canvasVM.isRegionCaptureMode = true
-                })
-                    .frame(width: UIScreen.main.bounds.width * 0.3)
-                    .background(Color.gSurface)
-                    .overlay(alignment: .leading) {
-                        Rectangle()
-                            .fill(Color.gBorder)
-                            .frame(width: 0.5)
-                    }
+            if sizeClass == .regular && showAIPanel && aiPanelDockSide == .right {
+                aiPanel
                     .transition(.move(edge: .trailing))
             }
         }
@@ -82,6 +78,14 @@ struct CanvasContainerView: View {
                 
                 aiVM.contextProvider = { [weak canvasVM] in
                     canvasVM?.canvasContextSummary() ?? ""
+                }
+
+                inlineAIVM.contextProvider = { [weak canvasVM] in
+                    canvasVM?.canvasContextSummary() ?? ""
+                }
+                
+                inlineAIVM.onDismiss = { [weak canvasVM] in
+                    canvasVM?.inlineAIHighlightRect = nil
                 }
                 
                 await aiVM.startSession(userId: userId, notebookId: notebook.id)
@@ -169,13 +173,34 @@ struct CanvasContainerView: View {
                     .zIndex(5)
                     
                     if canvasVM.isRegionCaptureMode {
-                        RegionCaptureOverlay(canvasVM: canvasVM, aiVM: aiVM, showAIPanel: $showAIPanel)
+                        RegionCaptureOverlay(
+                            canvasVM: canvasVM,
+                            aiVM: aiVM,
+                            showAIPanel: $showAIPanel,
+                            onInlineAI: { canvasRect, imageData in
+                                canvasVM.inlineAIHighlightRect = canvasRect
+                                inlineAIVM.present(
+                                    anchorCanvasRect: canvasRect,
+                                    imageData: imageData
+                                )
+                            }
+                        )
                             .zIndex(10)
                             .transition(.opacity)
                     }
 
                     if canvasVM.isLassoSelectionActive, let box = canvasVM.lassoSelectionBox {
-                        LassoSelectionOverlay(viewModel: canvasVM, box: box)
+                        LassoSelectionOverlay(
+                            viewModel: canvasVM,
+                            box: box,
+                            onAskAI: { canvasRect, imageData in
+                                canvasVM.inlineAIHighlightRect = canvasRect
+                                inlineAIVM.present(
+                                    anchorCanvasRect: canvasRect,
+                                    imageData: imageData
+                                )
+                            }
+                        )
                             .zIndex(8)
                     }
 
@@ -184,11 +209,32 @@ struct CanvasContainerView: View {
                             .zIndex(9)
                             .transition(.opacity)
                     }
+
+                    InlineAIAnswerOverlay(
+                        viewModel: inlineAIVM,
+                        canvasScale: canvasVM.canvasScale,
+                        canvasOffset: canvasVM.canvasOffset
+                    )
+                        .zIndex(11)
                 }
                 .zIndex(1)
             }
             .tint(Color.gPrimary)
             .background(Color.gBackground.ignoresSafeArea())
         }
+    }
+
+    private var aiPanel: some View {
+        AIChatView(viewModel: aiVM, drawing: canvasVM.currentDrawing, onRegionCapture: {
+            showAIPanel = false
+            canvasVM.isRegionCaptureMode = true
+        })
+            .frame(width: UIScreen.main.bounds.width * 0.3)
+            .background(Color.gSurface)
+            .overlay(alignment: aiPanelDockSide == .left ? .trailing : .leading) {
+                Rectangle()
+                    .fill(Color.gBorder)
+                    .frame(width: 0.5)
+            }
     }
 }
