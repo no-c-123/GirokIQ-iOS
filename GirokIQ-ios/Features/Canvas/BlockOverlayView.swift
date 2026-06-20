@@ -860,8 +860,8 @@ struct LassoSelectionOverlay: View {
     @State private var pickedColor: Color = .white
     @State private var screenshotImage: UIImage? = nil
     @State private var showScreenshotPreview = false
-    @State private var isMovingSelection = false
     @GestureState private var resizeDelta: CGSize = .zero
+    @GestureState private var moveDelta: CGSize = .zero
 
     // Convert canvas-space box to screen-space for rendering
     // Since this view is now in CanvasContainerView (screen space), we must project.
@@ -885,8 +885,8 @@ struct LassoSelectionOverlay: View {
     var liveBox: CGRect {
         let sb = screenBox
         return CGRect(
-            x: sb.minX,
-            y: sb.minY,
+            x: sb.minX + moveDelta.width,
+            y: sb.minY + moveDelta.height,
             width: max(40, sb.width * liveScale),
             height: max(40, sb.height * liveScale)
         )
@@ -917,26 +917,17 @@ struct LassoSelectionOverlay: View {
                 .frame(width: liveBox.width, height: liveBox.height)
                 .position(x: liveBox.midX, y: liveBox.midY)
                 .gesture(
-                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                        .onChanged { value in
-                            if !isMovingSelection {
-                                isMovingSelection = true
-                                viewModel.beginLassoMovePreview()
-                            }
-                            let dx = value.translation.width / max(viewModel.canvasScale, 0.001)
-                            let dy = value.translation.height / max(viewModel.canvasScale, 0.001)
-                            viewModel.updateLassoMovePreview(
-                                translation: CGSize(width: dx, height: dy)
+                    DragGesture(minimumDistance: 2)
+                        .updating($moveDelta) { value, state, _ in
+                            state = CGSize(
+                                width: value.translation.width,
+                                height: value.translation.height
                             )
                         }
                         .onEnded { value in
-                            let dx = value.translation.width / max(viewModel.canvasScale, 0.001)
-                            let dy = value.translation.height / max(viewModel.canvasScale, 0.001)
-                            viewModel.updateLassoMovePreview(
-                                translation: CGSize(width: dx, height: dy)
-                            )
-                            viewModel.endLassoMovePreview(commit: true)
-                            isMovingSelection = false
+                            let dx = value.translation.width / viewModel.canvasScale
+                            let dy = value.translation.height / viewModel.canvasScale
+                            viewModel.applyLassoMove(translation: CGSize(width: dx, height: dy))
                         }
                 )
 
@@ -1061,11 +1052,6 @@ struct LassoSelectionOverlay: View {
                             viewModel.applyLassoResize(scale: finalScale)
                         }
                 )
-        }
-        .transaction { transaction in
-            if isMovingSelection {
-                transaction.animation = nil
-            }
         }
     }
 

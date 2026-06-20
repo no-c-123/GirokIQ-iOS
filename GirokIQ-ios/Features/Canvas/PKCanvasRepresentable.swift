@@ -546,8 +546,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         // Sync drawing data when page changes (detect by comparing index or ID)
         if context.coordinator.currentPageIndex != viewModel.currentPageIndex ||
             context.coordinator.currentPageId != viewModel.currentPage.id ||
-            viewModel.forceDrawingUpdate ||
-            viewModel.forceDrawingPreviewRefresh {
+            viewModel.forceDrawingUpdate {
             context.coordinator.currentPageIndex = viewModel.currentPageIndex
             context.coordinator.currentPageId = viewModel.currentPage.id
             let pageDrawing = viewModel.currentDrawing
@@ -564,12 +563,6 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                 
                 DispatchQueue.main.async {
                     viewModel.forceDrawingUpdate = false
-                }
-            } else if viewModel.forceDrawingPreviewRefresh {
-                context.coordinator.setDrawing(pageDrawing, on: canvasView)
-                
-                DispatchQueue.main.async {
-                    viewModel.forceDrawingPreviewRefresh = false
                 }
             } else {
                 // Regular page change, just set drawing normally

@@ -81,7 +81,6 @@ final class CanvasViewModel: ObservableObject {
     @Published var isToolbarVisible: Bool = true
     @Published var isShapeSnappingEnabled: Bool = false
     @Published var forceDrawingUpdate: Bool = false
-    @Published var forceDrawingPreviewRefresh: Bool = false
     @Published var isRegionCaptureMode: Bool = false
     @Published var showCanvasImagePicker: Bool = false
     @Published var pendingImageInsertionPoint: CGPoint? = nil
@@ -161,17 +160,12 @@ final class CanvasViewModel: ObservableObject {
     private var liveDrawingCache: [UUID: PKDrawing] = [:]
     private var pendingSerializedDrawingData: [UUID: Data] = [:]
     private var lastKnownStrokeCounts: [UUID: Int] = [:]
-    private var transientPreviewDrawing: PKDrawing? = nil
-
     var currentPage: DrawingPage {
         get { pages[currentPageIndex] }
         set { pages[currentPageIndex] = newValue }
     }
 
     var currentDrawing: PKDrawing {
-        if let transientPreviewDrawing {
-            return transientPreviewDrawing
-        }
         let page = pages[currentPageIndex]
         if let cached = liveDrawingCache[page.id] {
             return cached
@@ -409,18 +403,12 @@ final class CanvasViewModel: ObservableObject {
     private func setCurrentPageDrawingSerialized(_ drawing: PKDrawing, forceViewUpdate: Bool = false) {
         let pageId = pages[currentPageIndex].id
         let data = PencilKitBridge.serialize(drawing)
-        transientPreviewDrawing = nil
         cacheDrawing(drawing, for: pageId)
         pendingSerializedDrawingData[pageId] = data
         pages[currentPageIndex].drawingData = data
         if forceViewUpdate {
             forceDrawingUpdate = true
         }
-    }
-    
-    private func setCurrentPageDrawingPreview(_ drawing: PKDrawing) {
-        transientPreviewDrawing = drawing
-        forceDrawingPreviewRefresh = true
     }
 
     private func scheduleDrawingPersistence(for pageId: UUID, drawing: PKDrawing) {
@@ -573,11 +561,6 @@ final class CanvasViewModel: ObservableObject {
     /// Indices into currentPage.pkDrawing.strokes that are currently selected.
     /// Using indices because PKStroke has no stable ID.
     @Published var selectedPKStrokeIndices: Set<Int> = []
-    private var lassoMovePreviewBaseDrawing: PKDrawing? = nil
-    private var lassoMovePreviewBaseBox: CGRect? = nil
-    private var lassoMovePreviewBaseElementPositions: [UUID: CGPoint] = [:]
-    private var lassoMovePreviewLastAppliedTranslation: CGSize = .zero
-    private var lassoMovePreviewLastUpdateTime: TimeInterval = 0
 
     // MARK: - Shared Canvas Interaction Helpers
 
@@ -749,7 +732,6 @@ final class CanvasViewModel: ObservableObject {
     }
     
     func clearLassoSelection() {
-        endLassoMovePreview(commit: false)
         selectedStrokes = []
         selectedPKStrokeIndices = []
         selectedElementIds = []
@@ -864,97 +846,6 @@ final class CanvasViewModel: ObservableObject {
         objectWillChange.send()
         scheduleElementSave()
         scheduleAutoSave()
-    }
-    
-    func beginLassoMovePreview() {
-        guard lassoMovePreviewBaseBox == nil else { return }
-        lassoMovePreviewBaseDrawing = currentDrawing
-        lassoMovePreviewBaseBox = lassoSelectionBox
-        lassoMovePreviewLastAppliedTranslation = .zero
-        lassoMovePreviewLastUpdateTime = 0
-        lassoMovePreviewBaseElementPositions = Dictionary(
-            uniqueKeysWithValues: pages[currentPageIndex].elements.compactMap { element in
-                guard selectedElementIds.contains(element.id) else { return nil }
-                return (element.id, CGPoint(x: element.positionX, y: element.positionY))
-            }
-        )
-    }
-    
-    func updateLassoMovePreview(translation: CGSize) {
-        guard let baseBox = lassoMovePreviewBaseBox else { return }
-        let currentTime = ProcessInfo.processInfo.systemUptime
-        let threshold: CGFloat = 0.35
-        guard abs(translation.width - lassoMovePreviewLastAppliedTranslation.width) > threshold ||
-                abs(translation.height - lassoMovePreviewLastAppliedTranslation.height) > threshold else {
-            return
-        }
-        guard currentTime - lassoMovePreviewLastUpdateTime >= (1.0 / 45.0) else {
-            return
-        }
-        lassoMovePreviewLastAppliedTranslation = translation
-        lassoMovePreviewLastUpdateTime = currentTime
-        
-        if let baseDrawing = lassoMovePreviewBaseDrawing, !selectedPKStrokeIndices.isEmpty {
-            var strokes = baseDrawing.strokes
-            let transform = CGAffineTransform(translationX: translation.width, y: translation.height)
-            for index in selectedPKStrokeIndices where index < strokes.count {
-                let baseStroke = baseDrawing.strokes[index]
-                strokes[index] = PKStroke(
-                    ink: baseStroke.ink,
-                    path: baseStroke.path,
-                    transform: baseStroke.transform.concatenating(transform),
-                    mask: baseStroke.mask
-                )
-            }
-            setCurrentPageDrawingPreview(PKDrawing(strokes: strokes))
-        }
-        
-        for index in pages[currentPageIndex].elements.indices {
-            let elementId = pages[currentPageIndex].elements[index].id
-            guard let basePosition = lassoMovePreviewBaseElementPositions[elementId] else { continue }
-            pages[currentPageIndex].elements[index].positionX = basePosition.x + translation.width
-            pages[currentPageIndex].elements[index].positionY = basePosition.y + translation.height
-        }
-        
-        lassoSelectionBox = baseBox.offsetBy(dx: translation.width, dy: translation.height)
-        objectWillChange.send()
-    }
-    
-    func endLassoMovePreview(commit: Bool) {
-        let baseDrawing = lassoMovePreviewBaseDrawing
-        let baseBox = lassoMovePreviewBaseBox
-        let baseElementPositions = lassoMovePreviewBaseElementPositions
-        let previewDrawing = transientPreviewDrawing
-        let shouldPersist = commit && lassoMovePreviewBaseBox != nil
-        lassoMovePreviewBaseDrawing = nil
-        lassoMovePreviewBaseBox = nil
-        lassoMovePreviewBaseElementPositions = [:]
-        lassoMovePreviewLastAppliedTranslation = .zero
-        lassoMovePreviewLastUpdateTime = 0
-        
-        if !commit {
-            if let baseDrawing {
-                setCurrentPageDrawingPreview(baseDrawing)
-            }
-            if let baseBox {
-                lassoSelectionBox = baseBox
-            }
-            for index in pages[currentPageIndex].elements.indices {
-                let elementId = pages[currentPageIndex].elements[index].id
-                guard let basePosition = baseElementPositions[elementId] else { continue }
-                pages[currentPageIndex].elements[index].positionX = basePosition.x
-                pages[currentPageIndex].elements[index].positionY = basePosition.y
-            }
-            objectWillChange.send()
-        }
-        
-        guard shouldPersist else { return }
-        if let previewDrawing {
-            setCurrentPageDrawingSerialized(previewDrawing)
-        }
-        scheduleElementSave()
-        scheduleAutoSave()
-        NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
     }
 
     func moveSelection(dx: CGFloat, dy: CGFloat) {
