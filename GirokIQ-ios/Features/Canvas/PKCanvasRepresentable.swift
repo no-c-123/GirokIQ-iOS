@@ -125,6 +125,17 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
         recognizer.delegate = self
         return recognizer
     }()
+    /// Apple Pencil–only lasso capture. Lives on the host so finger touches still
+    /// reach the PKCanvasView and pan/zoom the canvas while the lasso tool is active.
+    private lazy var lassoPanRecognizer: UIPanGestureRecognizer = {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleLassoPan(_:)))
+        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        recognizer.maximumNumberOfTouches = 1
+        recognizer.cancelsTouchesInView = true
+        recognizer.delegate = self
+        recognizer.isEnabled = false
+        return recognizer
+    }()
 
     // MARK: - Init
 
@@ -155,8 +166,8 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
         backgroundScrollView.frame = bounds
         backgroundScrollView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         backgroundScrollView.contentSize = canvasContentSize
-        backgroundScrollView.minimumZoomScale = 0.25
-        backgroundScrollView.maximumZoomScale = 5.0
+        backgroundScrollView.minimumZoomScale = 0.1
+        backgroundScrollView.maximumZoomScale = 7.0
         backgroundScrollView.isScrollEnabled = false
         backgroundScrollView.isUserInteractionEnabled = false
         backgroundScrollView.showsVerticalScrollIndicator = false
@@ -197,8 +208,8 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
         canvasView.frame = bounds
         canvasView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         canvasView.contentSize = canvasContentSize
-        canvasView.minimumZoomScale = 0.25
-        canvasView.maximumZoomScale = 5.0
+        canvasView.minimumZoomScale = 0.1
+        canvasView.maximumZoomScale = 7.0
         canvasView.alwaysBounceVertical = true
         canvasView.alwaysBounceHorizontal = true
         canvasView.backgroundColor = .clear
@@ -227,7 +238,62 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
         canvasView.addGestureRecognizer(textTapRecognizer)
         canvasView.addGestureRecognizer(canvasLongPressRecognizer)
 
+        // Lasso capture sits on the host (above the canvas). The canvas pan must wait
+        // for it to fail: a pencil drag draws the lasso (and the pan fails); a finger
+        // drag fails the pencil-only lasso instantly, so the canvas pans normally.
+        addGestureRecognizer(lassoPanRecognizer)
+        canvasView.panGestureRecognizer.require(toFail: lassoPanRecognizer)
+
         // Initial viewport is applied in layoutSubviews once real bounds exist.
+    }
+
+    /// Enables the pencil-only lasso recognizer (and lets the view model know).
+    func setLassoActive(_ active: Bool) {
+        if lassoPanRecognizer.isEnabled != active {
+            lassoPanRecognizer.isEnabled = active
+        }
+    }
+
+    @objc private func handleLassoPan(_ recognizer: UIPanGestureRecognizer) {
+        guard let viewModel, viewModel.selectedTool == .lasso, !viewModel.isRegionCaptureMode else { return }
+        let point = recognizer.location(in: self)
+        switch recognizer.state {
+        case .began:    viewModel.beginLiveLasso(at: point)
+        case .changed:  viewModel.appendLiveLasso(point)
+        case .ended:    viewModel.endLiveLasso()
+        case .cancelled, .failed: viewModel.cancelLiveLasso()
+        default: break
+        }
+    }
+
+    // MARK: - Hosting Controller Containment
+
+    /// The block-overlay `UIHostingController` must be a child of the view controller
+    /// that owns this view. Without that containment, SwiftUI presentations inside it
+    /// (color picker, sheets, edit/context menus) reparent their effect views into the
+    /// hosting controller's own view — the source of the "_UIReparentingView /
+    /// _UIGravityWellEffectAnchorView … not supported" console warnings.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let blockHost = blockOverlayHostView else { return }
+        if window != nil {
+            if blockHost.parent == nil, let parentVC = parentViewController {
+                parentVC.addChild(blockHost)
+                blockHost.didMove(toParent: parentVC)
+            }
+        } else if blockHost.parent != nil {
+            blockHost.willMove(toParent: nil)
+            blockHost.removeFromParent()
+        }
+    }
+
+    private var parentViewController: UIViewController? {
+        var responder: UIResponder? = next
+        while let current = responder {
+            if let vc = current as? UIViewController { return vc }
+            responder = current.next
+        }
+        return nil
     }
 
     // Tracks whether the viewport has been centered for the first time.
@@ -310,6 +376,12 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
     // MARK: - Hit Testing
     
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // While an ink or eraser tool is active the pencil must be able to draw or
+        // erase over image and text blocks. Skip the block overlay entirely so the
+        // touch reaches the PKCanvasView underneath.
+        if viewModel?.selectedTool.isInkOrEraser == true {
+            return super.hitTest(point, with: event)
+        }
         if let blockView = blockOverlayHostView?.view {
             let blockPoint = self.convert(point, to: blockView)
             if let hit = blockView.hitTest(blockPoint, with: event) {
@@ -506,6 +578,8 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
         let isBlockTool = viewModel.selectedTool == .image || viewModel.selectedTool == .text
         let isLassoTool = viewModel.selectedTool == .lasso
+        // Pencil-only lasso capture lives on the host; enable it for the lasso tool.
+        hostView.setLassoActive(isLassoTool)
         if isBlockTool {
             canvasView.isUserInteractionEnabled = true
             canvasView.drawingGestureRecognizer.isEnabled = false
@@ -517,10 +591,11 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             // Allow one-finger drag for moving/resizing blocks; pan the canvas with two fingers.
             canvasView.panGestureRecognizer.minimumNumberOfTouches = 2
         } else if isLassoTool {
-            // Lasso is Apple Pencil only (handled by CustomLassoGestureView). Disable drawing so Pencil doesn't ink.
+            // Lasso ink is captured by the host's pencil-only recognizer. Disable
+            // PencilKit drawing so the pencil doesn't also ink, and allow one-finger
+            // panning so the user can move around the canvas while lassoing.
             canvasView.isUserInteractionEnabled = true
             canvasView.drawingGestureRecognizer.isEnabled = false
-            // Allow finger panning with one finger while lasso is selected.
             canvasView.panGestureRecognizer.minimumNumberOfTouches = 1
         } else {
             canvasView.isUserInteractionEnabled = true

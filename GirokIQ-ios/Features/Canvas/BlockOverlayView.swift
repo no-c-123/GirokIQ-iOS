@@ -575,37 +575,52 @@ struct BlockElementView: View {
 
     // MARK: - Resize Gesture
 
+    /// Uniform scale factor for the diagonal (corner) handle so images keep their
+    /// aspect ratio while resizing. The dominant drag axis drives the scale, which
+    /// keeps the dashed border locked to the image instead of letterboxing/cropping.
+    private func imageResizeScale(dw: CGFloat, dh: CGFloat) -> CGFloat {
+        let oldW = CGFloat(element.width ?? 200)
+        let oldH = CGFloat(element.height ?? 200)
+        guard oldW > 0, oldH > 0 else { return 1 }
+        let aspect = oldW / oldH
+        // Convert whichever axis the user is dragging more into an equivalent width delta.
+        let widthDelta = abs(dw) >= abs(dh * aspect) ? dw : dh * aspect
+        let proposedW = oldW + widthDelta
+        // Don't let either dimension drop below the 60pt minimum.
+        let minScale = max(60 / oldW, 60 / oldH)
+        return max(minScale, proposedW / oldW)
+    }
+
     var resizeGesture: some Gesture {
         DragGesture(minimumDistance: 0)
-            .updating($resizeDelta) { value, state, _ in
-                state = CGSize(
-                    width: value.translation.width,
-                    height: value.translation.height
-                )
+            .updating($resizeDelta) { [self] value, state, _ in
+                let scale = imageResizeScale(dw: value.translation.width, dh: value.translation.height)
+                let oldW = CGFloat(element.width ?? 200)
+                let oldH = CGFloat(element.height ?? 200)
+                state = CGSize(width: oldW * (scale - 1), height: oldH * (scale - 1))
             }
             .onEnded { value in
-                let dw = value.translation.width
-                let dh = value.translation.height
+                let scale = imageResizeScale(dw: value.translation.width, dh: value.translation.height)
                 let oldW = element.width ?? 200
-                let newW = max(60, oldW + dw)
-                let oldH = element.height ?? 50
-                let newH = max(60, oldH + dh)
-                
+                let oldH = element.height ?? 200
+                let newW = oldW * scale
+                let newH = oldH * scale
+
                 // Suppress naturalContentSize onChange during this commit
                 // to prevent a re-render loop (AttributeGraph cycle)
                 isCommittingResize = true
-                
+
                 var updated = element
                 // Shift center so the top-left remains fixed
                 updated.positionX += (newW - oldW) / 2
                 updated.positionY += (newH - oldH) / 2
-                
+
                 updated.width = newW
                 updated.height = newH
                 updated.userResized = true
                 updated.updatedAt = Date()
                 viewModel.updateElement(updated)
-                
+
                 // Re-enable after one run loop tick — long enough for
                 // the resize render pass to complete without triggering onChange
                 DispatchQueue.main.async {
@@ -1157,118 +1172,101 @@ struct CanvasContextMenuOverlay: View {
 
 // MARK: - Custom Lasso Gesture
 
-/// Captures a freeform polygon for lasso selection in screen space and delegates
-/// hit testing + selection commit to `CanvasViewModel.commitLassoSelection(polygon:)`.
+/// Purely visual overlay that draws the gold dashed lasso path while the user drags.
 ///
-/// This is mounted above the canvas (in `CanvasContainerView`) and enabled only when
-/// the lasso tool is active. It draws a gold dashed path while the user drags.
+/// The actual pencil gesture is captured by a recognizer attached directly to the
+/// canvas host (see `CanvasHostView`/`FixedCanvasHostView`), which reports points to
+/// `CanvasViewModel.liveLassoPoints`. Keeping the capture on the canvas — instead of
+/// a blocking overlay — lets fingers pan and pinch-zoom freely while the lasso tool
+/// is selected, since only Apple Pencil touches drive the lasso.
 struct CustomLassoGestureView: View {
     @ObservedObject var viewModel: CanvasViewModel
 
-    @State private var points: [CGPoint] = []
-    @State private var isActiveDrag = false
+    var body: some View {
+        Canvas { context, _ in
+            let points = viewModel.liveLassoPoints
+            guard points.count > 1 else { return }
+            var path = Path()
+            path.addLines(points)
+            if points.count > 2 {
+                path.addLine(to: points[0])
+            }
+            context.stroke(
+                path,
+                with: .color(Color(hex: "#D8B547").opacity(0.95)),
+                style: SwiftUI.StrokeStyle(
+                    lineWidth: 2,
+                    lineCap: SwiftUI.CGLineCap.round,
+                    lineJoin: SwiftUI.CGLineJoin.round,
+                    dash: [7, 5]
+                )
+            )
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Shape Snap Morph
+
+/// Brief overlay that animates the hand-drawn stroke morphing into the clean
+/// recognised shape. Rendered in screen space (projected from canvas space) so it
+/// sits above both canvas types regardless of their layer ordering.
+struct ShapeSnapMorphOverlay: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    let morph: ShapeSnapMorph
+    @State private var progress: CGFloat = 0
+
+    private func project(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: p.x * viewModel.canvasScale - viewModel.canvasOffset.width,
+                y: p.y * viewModel.canvasScale - viewModel.canvasOffset.height)
+    }
 
     var body: some View {
-        ZStack {
-            // Visible lasso path during drag
-            Canvas { context, _ in
-                guard points.count > 1 else { return }
-                var path = Path()
-                path.addLines(points)
-                if points.count > 2 {
-                    path.addLine(to: points[0])
-                }
-
-                context.stroke(
-                    path,
-                    with: .color(Color(hex: "#D8B547").opacity(0.95)),
-                    style: SwiftUI.StrokeStyle(
-                        lineWidth: 2,
-                        lineCap: SwiftUI.CGLineCap.round,
-                        lineJoin: SwiftUI.CGLineJoin.round,
-                        dash: [7, 5]
-                    )
-                )
-            }
-            .allowsHitTesting(false)
-
-            // Gesture capture layer
-            PencilOnlyPanCaptureView(
-                onBegan: { location in
-                    guard viewModel.selectedTool == .lasso,
-                          !viewModel.isRegionCaptureMode else { return }
-                    isActiveDrag = true
-                    points = [location]
-                },
-                onChanged: { location in
-                    guard viewModel.selectedTool == .lasso,
-                          !viewModel.isRegionCaptureMode,
-                          isActiveDrag else { return }
-                    points.append(location)
-                },
-                onEnded: {
-                    guard viewModel.selectedTool == .lasso,
-                          points.count > 2 else {
-                        points = []
-                        isActiveDrag = false
-                        return
-                    }
-                    viewModel.commitLassoSelection(polygon: points)
-                    points = []
-                    isActiveDrag = false
-                }
+        MorphShape(
+            from: morph.fromPoints.map(project),
+            to: morph.toPoints.map(project),
+            progress: progress,
+            closed: morph.closed
+        )
+        .stroke(
+            morph.color,
+            style: SwiftUI.StrokeStyle(
+                lineWidth: max(1.5, morph.width * viewModel.canvasScale),
+                lineCap: .round,
+                lineJoin: .round
             )
+        )
+        .allowsHitTesting(false)
+        .onAppear {
+            progress = 0
+            withAnimation(.easeOut(duration: 0.24)) { progress = 1 }
         }
     }
 }
 
-private struct PencilOnlyPanCaptureView: UIViewRepresentable {
-    var onBegan: (CGPoint) -> Void
-    var onChanged: (CGPoint) -> Void
-    var onEnded: () -> Void
+/// Linearly interpolates between two equal-length point arrays as `progress` 0→1.
+struct MorphShape: Shape {
+    var from: [CGPoint]
+    var to: [CGPoint]
+    var progress: CGFloat
+    var closed: Bool
 
-    func makeCoordinator() -> Coordinator { Coordinator(onBegan: onBegan, onChanged: onChanged, onEnded: onEnded) }
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-
-        let recognizer = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        recognizer.minimumNumberOfTouches = 1
-        recognizer.maximumNumberOfTouches = 1
-        recognizer.cancelsTouchesInView = true
-        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
-        view.addGestureRecognizer(recognizer)
-
-        return view
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {}
-
-    final class Coordinator: NSObject {
-        let onBegan: (CGPoint) -> Void
-        let onChanged: (CGPoint) -> Void
-        let onEnded: () -> Void
-
-        init(onBegan: @escaping (CGPoint) -> Void, onChanged: @escaping (CGPoint) -> Void, onEnded: @escaping () -> Void) {
-            self.onBegan = onBegan
-            self.onChanged = onChanged
-            self.onEnded = onEnded
+    func path(in rect: CGRect) -> Path {
+        guard from.count == to.count, from.count > 1 else { return Path() }
+        var path = Path()
+        func point(_ i: Int) -> CGPoint {
+            CGPoint(x: from[i].x + (to[i].x - from[i].x) * progress,
+                    y: from[i].y + (to[i].y - from[i].y) * progress)
         }
-
-        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
-            let location = gesture.location(in: gesture.view)
-            switch gesture.state {
-            case .began:
-                onBegan(location)
-            case .changed:
-                onChanged(location)
-            case .ended, .cancelled, .failed:
-                onEnded()
-            default:
-                break
-            }
-        }
+        path.move(to: point(0))
+        for i in 1..<from.count { path.addLine(to: point(i)) }
+        if closed { path.closeSubpath() }
+        return path
     }
 }
 

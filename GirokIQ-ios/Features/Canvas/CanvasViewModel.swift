@@ -10,6 +10,17 @@ extension Notification.Name {
     static let lassoDrawingMutated = Notification.Name("girokiq.lassoDrawingMutated")
 }
 
+/// Data driving the brief rough→clean morph shown when a stroke snaps to a shape.
+/// Points are in canvas space and projected to screen by the overlay.
+struct ShapeSnapMorph: Identifiable {
+    let id = UUID()
+    let fromPoints: [CGPoint]
+    let toPoints: [CGPoint]
+    let closed: Bool
+    let color: Color
+    let width: CGFloat
+}
+
 // MARK: - Canvas ViewModel
 
 // MARK: - Canvas ViewModel
@@ -79,7 +90,11 @@ final class CanvasViewModel: ObservableObject {
     @Published var isSaving: Bool = false
     @Published var palmRejectionEnabled: Bool = true
     @Published var isToolbarVisible: Bool = true
-    @Published var isShapeSnappingEnabled: Bool = false
+    @Published var isShapeSnappingEnabled: Bool = UserDefaults.standard.bool(forKey: "shapeSnapEnabled") {
+        didSet { UserDefaults.standard.set(isShapeSnappingEnabled, forKey: "shapeSnapEnabled") }
+    }
+    /// Active rough→clean morph for the shape-snap transition (nil when idle).
+    @Published var shapeSnapMorph: ShapeSnapMorph?
     @Published var forceDrawingUpdate: Bool = false
     @Published var isRegionCaptureMode: Bool = false
     @Published var showCanvasImagePicker: Bool = false
@@ -157,6 +172,7 @@ final class CanvasViewModel: ObservableObject {
     private var toolbarHideTask: Task<Void, Never>?
     private var thumbnailTask: Task<Void, Never>?
     private var drawingSerializationTask: Task<Void, Never>?
+    private var shapeSnapTask: Task<Void, Never>?
     private var liveDrawingCache: [UUID: PKDrawing] = [:]
     private var pendingSerializedDrawingData: [UUID: Data] = [:]
     private var lastKnownStrokeCounts: [UUID: Int] = [:]
@@ -378,6 +394,59 @@ final class CanvasViewModel: ObservableObject {
 
     func finalizeViewport(offset: CGSize, scale: CGFloat) {
         updateViewport(offset: offset, scale: scale)
+    }
+
+    /// Returns the viewport to the user's work. If the page has ink or elements the
+    /// view re-centers (and zooms to fit) their bounding box; otherwise it snaps back
+    /// to the centre of the canvas. Used by the "recenter" control so the user can
+    /// always find their content after panning/zooming away.
+    func recenterViewport(animated: Bool = true) {
+        guard let scrollView = viewportScrollView else { return }
+        let viewSize = scrollView.bounds.size
+        guard viewSize.width > 0, viewSize.height > 0 else { return }
+
+        // Union of ink bounds and element rects, in canvas space.
+        var content = currentDrawing.bounds
+        for el in currentPage.elements {
+            let rect = CGRect(
+                x: el.positionX, y: el.positionY,
+                width: CGFloat(el.width ?? 200), height: CGFloat(el.height ?? 200)
+            )
+            content = (content.isNull || content.isEmpty) ? rect : content.union(rect)
+        }
+
+        let minZoom = scrollView.minimumZoomScale
+        let maxZoom = scrollView.maximumZoomScale
+
+        let targetScale: CGFloat
+        let centerCanvas: CGPoint
+
+        if content.isNull || content.isEmpty {
+            // Nothing drawn yet — return to the middle of the canvas at a comfortable zoom.
+            targetScale = min(max(1.0, minZoom), maxZoom)
+            centerCanvas = CGPoint(x: scrollView.contentSize.width / 2,
+                                   y: scrollView.contentSize.height / 2)
+        } else {
+            let padding: CGFloat = 120
+            let fitScale = min(viewSize.width / (content.width + padding),
+                               viewSize.height / (content.height + padding))
+            // Never zoom past 1.5× when fitting a small amount of content.
+            targetScale = min(max(fitScale, minZoom), min(maxZoom, 1.5))
+            centerCanvas = CGPoint(x: content.midX, y: content.midY)
+        }
+
+        // screen = canvas * scale - contentOffset → solve for the offset that puts
+        // centerCanvas at the middle of the viewport.
+        let targetOffset = CGPoint(
+            x: centerCanvas.x * targetScale - viewSize.width / 2,
+            y: centerCanvas.y * targetScale - viewSize.height / 2
+        )
+
+        scrollView.setZoomScale(targetScale, animated: animated)
+        scrollView.setContentOffset(targetOffset, animated: animated)
+
+        finalizeViewport(offset: CGSize(width: targetOffset.x, height: targetOffset.y), scale: targetScale)
+        HapticEngine.light()
     }
 
     private static func viewportStorageKey(for notebookId: UUID) -> String {
@@ -646,9 +715,35 @@ final class CanvasViewModel: ObservableObject {
         removeElement(id: id)
     }
     
-    /// Called by CustomLassoGestureView when the user lifts their finger.
-    /// polygon is in screen space — this function converts to canvas space,
-    /// runs hit testing, and commits the selection.
+    // MARK: - Live Lasso (driven by a pencil-only recognizer on the canvas host)
+
+    /// In-progress lasso polygon in screen space. The visual overlay
+    /// (`CustomLassoGestureView`) renders this; commit happens on lift.
+    @Published var liveLassoPoints: [CGPoint] = []
+
+    func beginLiveLasso(at point: CGPoint) {
+        guard selectedTool == .lasso, !isRegionCaptureMode else { return }
+        liveLassoPoints = [point]
+    }
+
+    func appendLiveLasso(_ point: CGPoint) {
+        guard selectedTool == .lasso, !isRegionCaptureMode, !liveLassoPoints.isEmpty else { return }
+        liveLassoPoints.append(point)
+    }
+
+    func endLiveLasso() {
+        let pts = liveLassoPoints
+        liveLassoPoints = []
+        guard selectedTool == .lasso, pts.count > 2 else { return }
+        commitLassoSelection(polygon: pts)
+    }
+
+    func cancelLiveLasso() {
+        liveLassoPoints = []
+    }
+
+    /// Called when the user lifts the pencil. polygon is in screen space — this
+    /// function converts to canvas space, runs hit testing, and commits the selection.
     func commitLassoSelection(polygon: [CGPoint]) {
         guard polygon.count > 2 else {
             print("[Lasso] Polygon too small (\(polygon.count) points) — skipping")
@@ -1354,37 +1449,126 @@ final class CanvasViewModel: ObservableObject {
     /// `fromPencil` indicates whether the change came from Apple Pencil (true) or finger (false).
     func drawingDidChange(_ drawing: PKDrawing, fromPencil: Bool = true) {
         let pageId = pages[currentPageIndex].id
-        var modifiedDrawing = drawing
-        
-        // Shape snapping logic (post-processing method)
-        if isShapeSnappingEnabled, let lastStroke = modifiedDrawing.strokes.last {
-            let previousStrokeCount = lastKnownStrokeCounts[pageId] ?? liveDrawingCache[pageId]?.strokes.count ?? 0
-            // Only process if a new stroke was just added
-            if modifiedDrawing.strokes.count > previousStrokeCount {
-                let pts = lastStroke.path.compactMap { $0.location }
-                if let shape = ShapeSnapper.recognizeShape(from: pts) {
-                    let snappedShape = ShapeSnapper.straightenShape(shape)
-                    let newStroke = ShapeSnapper.createStroke(from: snappedShape, originalStroke: lastStroke)
-                    
-                    var newStrokes = modifiedDrawing.strokes
-                    newStrokes[newStrokes.count - 1] = newStroke
-                    modifiedDrawing = PKDrawing(strokes: newStrokes)
-                    
-                    // Trigger a view update so the canvas redrawns with the snapped stroke
-                    self.forceDrawingUpdate = true
+        let previousStrokeCount = lastKnownStrokeCounts[pageId] ?? liveDrawingCache[pageId]?.strokes.count ?? 0
+
+        // Any drawing change invalidates a pending snap. If the user keeps writing,
+        // the recognised stroke is no longer the last one, so don't snap it.
+        shapeSnapTask?.cancel()
+        if shapeSnapMorph != nil { shapeSnapMorph = nil }
+
+        cacheDrawing(drawing, for: pageId)
+        refreshUndoState()
+        scheduleDrawingPersistence(for: pageId, drawing: drawing)
+        scheduleThumbnailRegeneration(for: currentPageIndex)
+
+        // Shape snapping (GoodNotes-style): recognise the just-finished stroke and,
+        // if it's confidently a shape — or the user held the pencil at the end —
+        // snap it after a short pause so continuous handwriting is never disturbed.
+        if isShapeSnappingEnabled,
+           drawing.strokes.count > previousStrokeCount,
+           let lastStroke = drawing.strokes.last {
+            let pts = lastStroke.path.map { $0.location }
+            if let recognition = ShapeSnapper.recognize(from: pts) {
+                let hold = ShapeSnapper.endHoldDuration(of: lastStroke)
+                let heldToSnap = hold >= 0.25
+                let shouldSnap = recognition.confidence >= 0.62 || (heldToSnap && recognition.confidence >= 0.42)
+                if shouldSnap {
+                    scheduleShapeSnap(
+                        recognition: recognition,
+                        original: lastStroke,
+                        roughPoints: pts,
+                        strokeCount: drawing.strokes.count,
+                        pageId: pageId,
+                        immediate: heldToSnap
+                    )
                 }
             }
         }
 
-        cacheDrawing(modifiedDrawing, for: pageId)
-        refreshUndoState()
-        scheduleDrawingPersistence(for: pageId, drawing: modifiedDrawing)
-
-        // Regenerate cached thumbnail for the page strip — debounced so rapid
-        // stroke updates don't spawn hundreds of concurrent render tasks.
-        scheduleThumbnailRegeneration(for: currentPageIndex)
-
         // Toolbar auto-hide removed — hiding mid-session disrupts canvas rendering.
+    }
+
+    // MARK: - Shape Snap
+
+    private func scheduleShapeSnap(
+        recognition: ShapeSnapper.Recognition,
+        original: PKStroke,
+        roughPoints: [CGPoint],
+        strokeCount: Int,
+        pageId: UUID,
+        immediate: Bool
+    ) {
+        shapeSnapTask?.cancel()
+        shapeSnapTask = Task { [weak self] in
+            // Wait for a brief pause unless the user explicitly held to snap. A new
+            // stroke cancels this task, so writing flows never trigger a snap.
+            if !immediate {
+                try? await Task.sleep(for: .seconds(0.3))
+                if Task.isCancelled { return }
+            }
+            await MainActor.run {
+                self?.commitShapeSnap(
+                    recognition: recognition,
+                    original: original,
+                    roughPoints: roughPoints,
+                    strokeCount: strokeCount,
+                    pageId: pageId
+                )
+            }
+        }
+    }
+
+    private func commitShapeSnap(
+        recognition: ShapeSnapper.Recognition,
+        original: PKStroke,
+        roughPoints: [CGPoint],
+        strokeCount: Int,
+        pageId: UUID
+    ) {
+        // Bail if the page changed or strokes were added/removed in the meantime.
+        guard pages[currentPageIndex].id == pageId,
+              var strokes = liveDrawingCache[pageId]?.strokes,
+              strokes.count == strokeCount,
+              let lastIdx = strokes.indices.last else { return }
+
+        let shape = ShapeSnapper.straightenShape(recognition.shape)
+        let idealStroke = ShapeSnapper.createStroke(from: shape, originalStroke: original)
+
+        // Play a rough→clean morph on top while the page still shows the rough stroke.
+        let sampleCount = 48
+        let from = ShapeSnapper.resample(roughPoints, count: sampleCount)
+        let to = ShapeSnapper.outlinePoints(for: shape, count: sampleCount)
+        let inkColor = Color(original.ink.color)
+        let inkWidth = original.path.first?.size.width ?? 3
+        shapeSnapMorph = ShapeSnapMorph(
+            fromPoints: from,
+            toPoints: to,
+            closed: shape.isClosed,
+            color: inkColor,
+            width: inkWidth
+        )
+        HapticEngine.light()
+
+        // After the morph settles, swap the rough stroke for the clean one in a single
+        // step (preserves a clean undo: one undo restores the hand-drawn stroke).
+        shapeSnapTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(0.26))
+            if Task.isCancelled { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.shapeSnapMorph = nil
+                guard self.pages[self.currentPageIndex].id == pageId,
+                      var current = self.liveDrawingCache[pageId]?.strokes,
+                      current.count == strokeCount else { return }
+                current[lastIdx] = idealStroke
+                let snapped = PKDrawing(strokes: current)
+                self.cacheDrawing(snapped, for: pageId)
+                self.forceDrawingUpdate = true
+                self.refreshUndoState()
+                self.scheduleDrawingPersistence(for: pageId, drawing: snapped)
+                self.scheduleThumbnailRegeneration(for: self.currentPageIndex)
+            }
+        }
     }
 
     // MARK: - Thumbnail Cache

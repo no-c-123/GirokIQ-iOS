@@ -125,27 +125,79 @@ struct TextToolKeyboardBar: View {
 
     // MARK: - Strip
 
+    /// The toolbar adapts to available width. When the bar is wide enough (iPad,
+    /// most landscape layouts) the alignment + line-spacing controls live directly
+    /// in the bar. On narrow devices they collapse into the "•••" overflow panel.
     var strip: some View {
-        HStack(spacing: 2) {
-
-            // Color dot
-            Button {
-                closeAll(except: "color")
-                withAnimation(GAnimation.springFast) { showColorPicker.toggle() }
-            } label: {
-                Circle()
-                    .fill(currentColor)
-                    .frame(width: 22, height: 22)
-                    .overlay(Circle().strokeBorder(Color.gBorderStrong.opacity(0.4), lineWidth: 0.5))
-                    .overlay(Circle().stroke(Color.gPrimary, lineWidth: showColorPicker ? 2 : 0).frame(width: 28, height: 28))
+        ViewThatFits(in: .horizontal) {
+            expandedRow
+            compactRow
+        }
+        .padding(.horizontal, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: stripHeight)
+        .background(Color.gSurface.opacity(0.98))
+        .overlay(Rectangle().frame(height: 0.5).foregroundColor(Color.gBorderStrong), alignment: .bottom)
+        .background(
+            GeometryReader { g in
+                Color.clear.preference(key: TextBarFrameKey.self, value: ["_bar": g.frame(in: .named(barSpace))])
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 6)
-            .textBarFrame("color", in: barSpace)
+        )
+    }
 
+    /// Wide layout: formatting + alignment + spacing all inline, left-packed.
+    /// Duplicate/Delete stay reachable from the pill above the selected block.
+    private var expandedRow: some View {
+        HStack(spacing: 2) {
+            colorButton
             separator
+            styleToggles
+            separator
+            fontButton
+            separator
+            sizeStepper
+            separator
+            alignmentInline
+            separator
+            spacingInline
+        }
+    }
 
-            // B I U S
+    /// Narrow layout: formatting inline, everything else behind "•••".
+    private var compactRow: some View {
+        HStack(spacing: 2) {
+            colorButton
+            separator
+            styleToggles
+            separator
+            fontButton
+            separator
+            sizeStepper
+            Spacer(minLength: 8)
+            moreButton
+        }
+    }
+
+    // MARK: - Strip controls
+
+    private var colorButton: some View {
+        Button {
+            closeAll(except: "color")
+            withAnimation(GAnimation.springFast) { showColorPicker.toggle() }
+        } label: {
+            Circle()
+                .fill(currentColor)
+                .frame(width: 22, height: 22)
+                .overlay(Circle().strokeBorder(Color.gBorderStrong.opacity(0.4), lineWidth: 0.5))
+                .overlay(Circle().stroke(Color.gPrimary, lineWidth: showColorPicker ? 2 : 0).frame(width: 28, height: 28))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .textBarFrame("color", in: barSpace)
+    }
+
+    private var styleToggles: some View {
+        HStack(spacing: 2) {
             styleToggle("B", font: .system(size: 15, weight: .bold),
                         active: selectedElement?.style?.isBold ?? false) {
                 applyStyle { $0.isBold = !($0.isBold ?? false) }
@@ -162,92 +214,144 @@ struct TextToolKeyboardBar: View {
                         active: selectedElement?.style?.isStrikethrough ?? false) {
                 applyStyle { $0.isStrikethrough = !($0.isStrikethrough ?? false) }
             }
+        }
+    }
 
-            separator
+    private var fontButton: some View {
+        Button {
+            closeAll(except: "font")
+            withAnimation(GAnimation.springFast) { showFontPicker.toggle() }
+        } label: {
+            HStack(spacing: 4) {
+                Text(currentFontName)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(showFontPicker ? 180 : 0))
+            }
+            .foregroundColor(showFontPicker ? .gPrimary : .gTextSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 30)
+            .background(showFontPicker ? Color.gPrimaryMuted : Color.gElevated.opacity(0.5))
+            .overlay(RoundedRectangle(cornerRadius: 7).stroke(showFontPicker ? Color.gPrimary : .clear, lineWidth: 1))
+            .cornerRadius(7)
+        }
+        .buttonStyle(.plain)
+        .textBarFrame("font", in: barSpace)
+    }
 
-            // Font pill
-            Button {
-                closeAll(except: "font")
-                withAnimation(GAnimation.springFast) { showFontPicker.toggle() }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(currentFontName)
-                        .font(.system(size: 12, weight: .medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .rotationEffect(.degrees(showFontPicker ? 180 : 0))
-                }
-                .foregroundColor(showFontPicker ? .gPrimary : .gTextSecondary)
-                .padding(.horizontal, 10)
-                .frame(height: 30)
-                .background(showFontPicker ? Color.gPrimaryMuted : Color.gElevated.opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(showFontPicker ? Color.gPrimary : .clear, lineWidth: 1))
-                .cornerRadius(7)
+    private var sizeStepper: some View {
+        HStack(spacing: 0) {
+            Button { stepSize(by: -1) } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.gTextSecondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .textBarFrame("font", in: barSpace)
 
-            separator
+            Text("\(currentSize)")
+                .font(.system(size: 13, weight: .medium))
+                .monospacedDigit()
+                .foregroundColor(.gTextPrimary)
+                .frame(minWidth: 26)
 
-            // Size stepper
-            HStack(spacing: 0) {
-                Button { stepSize(by: -1) } label: {
-                    Image(systemName: "minus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.gTextSecondary)
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
+            Button { stepSize(by: 1) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.gTextSecondary)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(height: 30)
+        .background(Color.gElevated.opacity(0.5))
+        .cornerRadius(7)
+    }
+
+    /// Inline alignment segmented control (wide layouts only).
+    private var alignmentInline: some View {
+        let current = selectedElement?.style?.textAlignment ?? "left"
+        let options = [
+            ("left", "text.alignleft"),
+            ("center", "text.aligncenter"),
+            ("right", "text.alignright"),
+            ("justified", "text.justify")
+        ]
+        return HStack(spacing: 2) {
+            ForEach(options, id: \.0) { val, icon in
+                let isSelected = current == val
+                Button {
+                    applyStyle { $0.textAlignment = val }
+                } label: {
+                    Image(systemName: icon)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(isSelected ? .gPrimary : .gTextSecondary)
+                        .frame(width: 32, height: 30)
+                        .background(isSelected ? Color.gPrimaryMuted : .clear)
+                        .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
 
-                Text("\(currentSize)")
+    /// Inline line-spacing stepper (wide layouts only).
+    private var spacingInline: some View {
+        let spacing = selectedElement?.style?.lineSpacing ?? 0
+        return HStack(spacing: 0) {
+            Button { stepSpacing(by: -1) } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.gTextSecondary)
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            HStack(spacing: 2) {
+                Image(systemName: "arrow.up.and.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.gTextTertiary)
+                Text("\(String(format: "%.0f", spacing))")
                     .font(.system(size: 13, weight: .medium))
                     .monospacedDigit()
                     .foregroundColor(.gTextPrimary)
-                    .frame(minWidth: 26)
-
-                Button { stepSize(by: 1) } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.gTextSecondary)
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
             }
-            .frame(height: 30)
-            .background(Color.gElevated.opacity(0.5))
-            .cornerRadius(7)
+            .frame(minWidth: 34)
 
-            Spacer(minLength: 8)
-
-            // More button
-            Button {
-                closeAll(except: "more")
-                withAnimation(GAnimation.springFast) { showMore.toggle() }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(showMore ? .gPrimary : .gTextSecondary)
-                    .frame(width: 36, height: 36)
-                    .background(showMore ? Color.gPrimaryMuted : .clear)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(showMore ? Color.gPrimary.opacity(0.4) : .clear, lineWidth: 1))
-                    .cornerRadius(8)
+            Button { stepSpacing(by: 1) } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.gTextSecondary)
+                    .frame(width: 28, height: 30)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .textBarFrame("more", in: barSpace)
         }
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity)
-        .frame(height: stripHeight)
-        .background(Color.gSurface.opacity(0.98))
-        .overlay(Rectangle().frame(height: 0.5).foregroundColor(Color.gBorderStrong), alignment: .bottom)
-        .background(
-            GeometryReader { g in
-                Color.clear.preference(key: TextBarFrameKey.self, value: ["_bar": g.frame(in: .named(barSpace))])
-            }
-        )
+        .frame(height: 30)
+        .background(Color.gElevated.opacity(0.5))
+        .cornerRadius(7)
+    }
+
+    private var moreButton: some View {
+        Button {
+            closeAll(except: "more")
+            withAnimation(GAnimation.springFast) { showMore.toggle() }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(showMore ? .gPrimary : .gTextSecondary)
+                .frame(width: 36, height: 36)
+                .background(showMore ? Color.gPrimaryMuted : .clear)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(showMore ? Color.gPrimary.opacity(0.4) : .clear, lineWidth: 1))
+                .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+        .textBarFrame("more", in: barSpace)
     }
 
     // MARK: - Panels (inner content only — positioning/card handled by body)
@@ -496,6 +600,12 @@ struct TextToolKeyboardBar: View {
     private func stepSize(by delta: Int) {
         let newSize = max(8, min(72, currentSize + delta))
         applyStyle { $0.fontSize = Double(newSize) }
+    }
+
+    private func stepSpacing(by delta: Double) {
+        let current = selectedElement?.style?.lineSpacing ?? 0
+        let newSpacing = max(0, min(20, current + delta))
+        applyStyle { $0.lineSpacing = newSpacing }
     }
 
     private func closeAll(except: String) {

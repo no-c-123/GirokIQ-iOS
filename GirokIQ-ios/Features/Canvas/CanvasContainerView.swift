@@ -139,8 +139,10 @@ struct CanvasContainerView: View {
                             )
                         }
                         
+                        // Purely visual — the lasso pencil gesture is captured on the
+                        // canvas host so fingers can still pan/zoom while lassoing.
                         CustomLassoGestureView(viewModel: canvasVM)
-                            .allowsHitTesting(canvasVM.selectedTool == .lasso)
+                            .allowsHitTesting(false)
                     }
                     .ignoresSafeArea(edges: [.horizontal, .bottom])
 
@@ -216,6 +218,13 @@ struct CanvasContainerView: View {
                         canvasOffset: canvasVM.canvasOffset
                     )
                         .zIndex(11)
+
+                    if let morph = canvasVM.shapeSnapMorph {
+                        ShapeSnapMorphOverlay(viewModel: canvasVM, morph: morph)
+                            .id(morph.id)
+                            .allowsHitTesting(false)
+                            .zIndex(12)
+                    }
                 }
                 .zIndex(1)
             }

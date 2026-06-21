@@ -38,6 +38,10 @@ struct CanvasSidebar: View {
 
             Spacer()
 
+            SidebarButton(icon: "scope", label: "Recenter") {
+                viewModel.recenterViewport()
+            }
+
             SidebarButton(icon: "arrow.triangle.2.circlepath", label: "Sync") {
                 Task {
                     await viewModel.flushSave()

@@ -130,6 +130,16 @@ enum DrawingTool: String, CaseIterable, Codable {
         default:       return 1.0
         }
     }
+
+    /// Tools that lay down ink or erase it. While one of these is active the
+    /// block overlay must let pencil touches fall through to PencilKit so the
+    /// user can draw/erase freely over image and text blocks.
+    var isInkOrEraser: Bool {
+        switch self {
+        case .pen, .pencil, .marker, .eraser: return true
+        default:                              return false
+        }
+    }
 }
 
 // MARK: - Stroke Style

@@ -94,6 +94,12 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
 
         let isBlockTool = viewModel.selectedTool == .image || viewModel.selectedTool == .text
         let isLassoTool = viewModel.selectedTool == .lasso
+
+        // Let the pencil draw/erase over blocks: disable overlay hit-testing for ink tools.
+        hostView.blockOverlayHostView?.view.isUserInteractionEnabled = !viewModel.selectedTool.isInkOrEraser
+        // Pencil-only lasso capture lives on the host; enable it for the lasso tool.
+        hostView.setLassoActive(isLassoTool)
+
         if isBlockTool {
             // Never disable isUserInteractionEnabled for PKCanvasView during drawing.
             // Use drawingGestureRecognizer.isEnabled to toggle PencilKit input.
@@ -298,6 +304,17 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         recognizer.delegate = self
         return recognizer
     }()
+    /// Apple Pencil–only lasso capture. Lives on the host so finger touches still
+    /// reach the scroll view and pan/zoom the page while the lasso tool is active.
+    private lazy var lassoPanRecognizer: UIPanGestureRecognizer = {
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handleLassoPan(_:)))
+        recognizer.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        recognizer.maximumNumberOfTouches = 1
+        recognizer.cancelsTouchesInView = true
+        recognizer.delegate = self
+        recognizer.isEnabled = false
+        return recognizer
+    }()
 
     init(pageSize: CGSize, viewModel: CanvasViewModel?) {
         self.pageSize = pageSize
@@ -315,8 +332,8 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         scrollView.frame = bounds
         scrollView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         scrollView.contentSize = pageSize
-        scrollView.minimumZoomScale = 0.3
-        scrollView.maximumZoomScale = 5.0
+        scrollView.minimumZoomScale = 0.15
+        scrollView.maximumZoomScale = 7.0
         scrollView.showsVerticalScrollIndicator = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.delegate = self
@@ -369,6 +386,61 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
             pageContainerView.addSubview(blockHost.view)
             self.blockOverlayHostView = blockHost
         }
+
+        // Lasso capture sits on the host (above the page). The scroll view's pan must
+        // wait for it to fail: a pencil drag draws the lasso (and the pan fails); a
+        // finger drag fails the pencil-only lasso instantly, so the page pans normally.
+        addGestureRecognizer(lassoPanRecognizer)
+        scrollView.panGestureRecognizer.require(toFail: lassoPanRecognizer)
+    }
+
+    /// Enables the pencil-only lasso recognizer for the lasso tool.
+    func setLassoActive(_ active: Bool) {
+        if lassoPanRecognizer.isEnabled != active {
+            lassoPanRecognizer.isEnabled = active
+        }
+    }
+
+    @objc private func handleLassoPan(_ recognizer: UIPanGestureRecognizer) {
+        guard let viewModel, viewModel.selectedTool == .lasso, !viewModel.isRegionCaptureMode else { return }
+        let point = recognizer.location(in: self)
+        switch recognizer.state {
+        case .began:    viewModel.beginLiveLasso(at: point)
+        case .changed:  viewModel.appendLiveLasso(point)
+        case .ended:    viewModel.endLiveLasso()
+        case .cancelled, .failed: viewModel.cancelLiveLasso()
+        default: break
+        }
+    }
+
+    // MARK: - Hosting Controller Containment
+
+    /// Attach the block-overlay `UIHostingController` to the owning view controller.
+    /// Without this containment, SwiftUI presentations inside it (color picker, sheets,
+    /// edit/context menus) reparent their effect views into the hosting controller's
+    /// own view — the source of the "_UIReparentingView / _UIGravityWellEffectAnchorView
+    /// … not supported" console warnings.
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let blockHost = blockOverlayHostView else { return }
+        if window != nil {
+            if blockHost.parent == nil, let parentVC = parentViewController {
+                parentVC.addChild(blockHost)
+                blockHost.didMove(toParent: parentVC)
+            }
+        } else if blockHost.parent != nil {
+            blockHost.willMove(toParent: nil)
+            blockHost.removeFromParent()
+        }
+    }
+
+    private var parentViewController: UIViewController? {
+        var responder: UIResponder? = next
+        while let current = responder {
+            if let vc = current as? UIViewController { return vc }
+            responder = current.next
+        }
+        return nil
     }
 
     override func layoutSubviews() {
@@ -448,6 +520,13 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
     // MARK: - Hit Testing
     
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // While an ink or eraser tool is active the pencil must be able to draw or
+        // erase over image and text blocks. The overlay's interaction is disabled in
+        // updateUIView for these tools (so super.hitTest skips it), but we also bail
+        // here so the custom forwarding never claims the touch.
+        if viewModel?.selectedTool.isInkOrEraser == true {
+            return super.hitTest(point, with: event)
+        }
         if let blockView = blockOverlayHostView?.view {
             let blockPoint = self.convert(point, to: blockView)
             if let hit = blockView.hitTest(blockPoint, with: event) {

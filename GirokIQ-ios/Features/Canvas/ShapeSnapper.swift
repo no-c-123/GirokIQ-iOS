@@ -2,183 +2,389 @@ import Foundation
 import CoreGraphics
 import PencilKit
 
+/// Recognises hand-drawn shapes and turns them into clean geometry.
+///
+/// The recogniser is confidence-based so casual handwriting is left untouched:
+/// callers snap only when confidence is high, or when the user signals intent by
+/// holding the pencil still at the end of the stroke (see `endHoldDuration`).
 final class ShapeSnapper {
-    
+
     enum ShapeType {
         case line(start: CGPoint, end: CGPoint)
+        case triangle(corners: [CGPoint])
         case rect(corners: [CGPoint])
         case circle(center: CGPoint, radius: CGFloat)
-    }
-    
-    /// Analyzes a set of points and returns the recognized shape, if any.
-    static func recognizeShape(from points: [CGPoint]) -> ShapeType? {
-        guard points.count > 2 else { return nil }
-        
-        if let rect = recognizeRect(points) {
-            return .rect(corners: rect)
-        } else if let circle = recognizeCircle(points) {
-            return .circle(center: circle.center, radius: circle.radius)
-        } else if let line = recognizeLine(points) {
-            return .line(start: line.start, end: line.end)
+        case ellipse(center: CGPoint, rx: CGFloat, ry: CGFloat)
+
+        var isClosed: Bool {
+            if case .line = self { return false }
+            return true
         }
-        
-        return nil
     }
-    
-    // MARK: - Recognition Algorithms
-    
-    private static func recognizeLine(_ p: [CGPoint]) -> (start: CGPoint, end: CGPoint)? {
-        guard let f = p.first, let l = p.last else { return nil }
-        let direct = hypot(l.x - f.x, l.y - f.y)
-        let path = zip(p, p.dropFirst()).reduce(0.0) { $0 + hypot($1.1.x - $1.0.x, $1.1.y - $1.0.y) }
-        if direct > 20 && path / direct < 1.25 {
-            return (f, l)
-        }
-        return nil
+
+    struct Recognition {
+        let shape: ShapeType
+        /// 0...1 — how confidently the stroke matches the shape.
+        let confidence: CGFloat
     }
-    
-    private static func recognizeRect(_ p: [CGPoint]) -> [CGPoint]? {
-        guard let f = p.first, let l = p.last else { return nil }
-        
-        // For a closed shape like a rectangle, the start and end points should be relatively close
-        let startEndDist = hypot(l.x - f.x, l.y - f.y)
-        
-        let xs = p.map { $0.x }, ys = p.map { $0.y }
+
+    // MARK: - Public Recognition
+
+    /// Analyses a set of points and returns the best matching shape with a
+    /// confidence score, or `nil` if the stroke doesn't resemble a shape.
+    static func recognize(from rawPoints: [CGPoint]) -> Recognition? {
+        let points = dedupe(rawPoints, minSpacing: 1.0)
+        guard points.count >= 4, let first = points.first, let last = points.last else { return nil }
+
+        let xs = points.map(\.x), ys = points.map(\.y)
         guard let minX = xs.min(), let maxX = xs.max(),
               let minY = ys.min(), let maxY = ys.max() else { return nil }
         let w = maxX - minX, h = maxY - minY
-        guard w > 30, h > 30 else { return nil }
-        
-        // The start and end points must be closer together than the overall size of the shape
-        guard startEndDist < max(w, h) * 0.4 else { return nil }
-        
-        let corners = [CGPoint(x: minX, y: minY), CGPoint(x: maxX, y: minY),
-                       CGPoint(x: maxX, y: maxY), CGPoint(x: minX, y: maxY)]
-        
-        // Count how many points lie roughly along the 4 edges of the bounding box
-        let edgeTolerance = max(w, h) * 0.15
-        var pointsOnEdge = 0
-        
-        for pt in p {
-            let onTop = abs(pt.y - minY) < edgeTolerance
-            let onBottom = abs(pt.y - maxY) < edgeTolerance
-            let onLeft = abs(pt.x - minX) < edgeTolerance
-            let onRight = abs(pt.x - maxX) < edgeTolerance
-            
-            if onTop || onBottom || onLeft || onRight {
-                pointsOnEdge += 1
+        let maxDim = max(w, h)
+        // Too small — almost certainly handwriting or a stray dot.
+        guard maxDim > 24 else { return nil }
+
+        let pathLen = polylineLength(points)
+        guard pathLen > 1 else { return nil }
+        let startEndDist = distance(first, last)
+
+        var candidates: [Recognition] = []
+
+        // Closed if the trace returns near its start relative to the overall size.
+        let isClosed = startEndDist < maxDim * 0.28
+
+        if !isClosed {
+            // Open trace — only a straight line is plausible.
+            let straightness = startEndDist / pathLen
+            let conf = clamp((straightness - 0.85) / 0.13)
+            if conf > 0 && startEndDist > 24 {
+                candidates.append(Recognition(shape: .line(start: first, end: last), confidence: conf))
+            }
+        } else {
+            let eps = max(6, maxDim * 0.06)
+            var verts = rdp(points, epsilon: eps)
+            // Drop the closing vertex when it lands on the start vertex.
+            if verts.count > 1, distance(verts.first!, verts.last!) < eps * 1.6 {
+                verts.removeLast()
+            }
+            let corners = verts.count
+
+            let center = CGPoint(x: xs.reduce(0, +) / CGFloat(points.count),
+                                 y: ys.reduce(0, +) / CGFloat(points.count))
+
+            // Round shapes (smooth → many RDP vertices).
+            if corners >= 5 {
+                let elongation = maxDim > 0 ? abs(w - h) / maxDim : 0
+                if elongation < 0.18 {
+                    let radius = (w + h) / 4
+                    let conf = circleFit(points, center: center, radius: radius)
+                    if conf >= 0.55 {
+                        candidates.append(Recognition(shape: .circle(center: center, radius: radius), confidence: conf))
+                    }
+                } else {
+                    let bboxCenter = CGPoint(x: minX + w / 2, y: minY + h / 2)
+                    let conf = ellipseFit(points, center: bboxCenter, rx: w / 2, ry: h / 2)
+                    if conf >= 0.58 {
+                        candidates.append(Recognition(shape: .ellipse(center: bboxCenter, rx: w / 2, ry: h / 2), confidence: conf))
+                    }
+                }
+            }
+
+            // Triangle.
+            if corners == 3, w > 30, h > 30 {
+                let tri = Array(verts.prefix(3))
+                let conf = polygonFit(points, polygon: tri)
+                if conf >= 0.7 {
+                    candidates.append(Recognition(shape: .triangle(corners: tri), confidence: conf))
+                }
+            }
+
+            // Rectangle (axis-aligned). Allow a spare vertex from imperfect tracing.
+            if (corners == 4 || corners == 5), w > 30, h > 30 {
+                let rectCorners = [
+                    CGPoint(x: minX, y: minY), CGPoint(x: maxX, y: minY),
+                    CGPoint(x: maxX, y: maxY), CGPoint(x: minX, y: maxY)
+                ]
+                let conf = rectFit(points, minX: minX, maxX: maxX, minY: minY, maxY: maxY)
+                if conf >= 0.78 {
+                    candidates.append(Recognition(shape: .rect(corners: rectCorners), confidence: conf))
+                }
             }
         }
-        
-        // If a high percentage of the drawn points are near the bounding box edges, it's a rectangle
-        let edgeDensity = CGFloat(pointsOnEdge) / CGFloat(p.count)
-        
-        if edgeDensity > 0.85 {
-            return corners
-        }
-        return nil
+
+        return candidates.max(by: { $0.confidence < $1.confidence })
     }
-    
-    private static func recognizeCircle(_ p: [CGPoint]) -> (center: CGPoint, radius: CGFloat)? {
-        let cx = p.map { $0.x }.reduce(0, +) / CGFloat(p.count)
-        let cy = p.map { $0.y }.reduce(0, +) / CGFloat(p.count)
-        let radii = p.map { hypot($0.x - cx, $0.y - cy) }
-        let avg = radii.reduce(0, +) / CGFloat(radii.count)
-        let variance = radii.map { pow($0 - avg, 2) }.reduce(0, +) / CGFloat(radii.count)
-        
-        if variance < (avg * avg * 0.15) && avg > 15 {
-            return (CGPoint(x: cx, y: cy), avg)
+
+    /// Seconds the pencil was held roughly stationary at the end of the stroke.
+    /// A deliberate "hold" is the GoodNotes-style signal that the user wants the
+    /// stroke snapped immediately.
+    static func endHoldDuration(of stroke: PKStroke) -> TimeInterval {
+        let path = stroke.path
+        guard path.count >= 2 else { return 0 }
+        let endPoint = path[path.count - 1]
+        let endLoc = endPoint.location
+        let endTime = endPoint.timeOffset
+        let holdRadius: CGFloat = 6
+        var holdStart = endTime
+        var i = path.count - 2
+        while i >= 0 {
+            let p = path[i]
+            if distance(p.location, endLoc) <= holdRadius {
+                holdStart = p.timeOffset
+                i -= 1
+            } else {
+                break
+            }
         }
-        return nil
+        return max(0, endTime - holdStart)
     }
-    
-    // MARK: - Shape Straightening
-    
-    /// Straightens lines (perfectly horizontal or vertical) and passes through perfectly recognized circles/rectangles.
+
+    // MARK: - Straightening
+
+    /// Snaps near-horizontal/vertical lines flat. Closed shapes are already ideal.
     static func straightenShape(_ shape: ShapeType) -> ShapeType {
         switch shape {
         case .line(let start, let end):
-            var s = start
-            var e = end
-            
-            // Check for horizontal/vertical snapping first
-            let dx = abs(e.x - s.x)
-            let dy = abs(e.y - s.y)
+            var s = start, e = end
+            let dx = abs(e.x - s.x), dy = abs(e.y - s.y)
             let angle = atan2(dy, dx) * 180 / .pi
-            
-            // Snap to horizontal (close to 0 or 180 degrees)
-            if angle < 15 || angle > 165 {
+            if angle < 12 || angle > 168 {
                 let avgY = (s.y + e.y) / 2
-                s.y = avgY
-                e.y = avgY
-            } 
-            // Snap to vertical (close to 90 degrees)
-            else if abs(angle - 90) < 15 {
+                s.y = avgY; e.y = avgY
+            } else if abs(angle - 90) < 12 {
                 let avgX = (s.x + e.x) / 2
-                s.x = avgX
-                e.x = avgX
+                s.x = avgX; e.x = avgX
             }
-            // Diagonal lines remain unchanged (perfectly straight between start and end)
-            
             return .line(start: s, end: e)
-            
-        case .rect:
-            return shape // recognizeRect already generates a perfect axis-aligned rectangle
-
-        case .circle:
-            return shape // recognizeCircle already generates a perfect circle
+        default:
+            return shape
         }
     }
-    
+
+    // MARK: - Ideal outline (used for the snap animation & resampling)
+
+    /// Returns `count` points sampled evenly along the ideal shape outline.
+    static func outlinePoints(for shape: ShapeType, count: Int) -> [CGPoint] {
+        switch shape {
+        case .line(let start, let end):
+            return (0..<count).map { i in
+                let t = CGFloat(i) / CGFloat(max(count - 1, 1))
+                return CGPoint(x: start.x + (end.x - start.x) * t,
+                               y: start.y + (end.y - start.y) * t)
+            }
+        case .triangle(let corners):
+            return sampleClosedPolygon(corners, count: count)
+        case .rect(let corners):
+            return sampleClosedPolygon(corners, count: count)
+        case .circle(let center, let radius):
+            return (0..<count).map { i in
+                let a = CGFloat(i) / CGFloat(count) * .pi * 2
+                return CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a))
+            }
+        case .ellipse(let center, let rx, let ry):
+            return (0..<count).map { i in
+                let a = CGFloat(i) / CGFloat(count) * .pi * 2
+                return CGPoint(x: center.x + rx * cos(a), y: center.y + ry * sin(a))
+            }
+        }
+    }
+
+    /// Arc-length resample of an arbitrary polyline into exactly `count` points.
+    static func resample(_ pts: [CGPoint], count: Int) -> [CGPoint] {
+        guard pts.count > 1, count > 1 else {
+            return Array(repeating: pts.first ?? .zero, count: count)
+        }
+        let total = polylineLength(pts)
+        guard total > 0 else { return Array(repeating: pts[0], count: count) }
+        let step = total / CGFloat(count - 1)
+        var result: [CGPoint] = [pts[0]]
+        var prev = pts[0]
+        var idx = 1
+        var accumulated: CGFloat = 0
+        while result.count < count && idx < pts.count {
+            let next = pts[idx]
+            let segLen = distance(prev, next)
+            if accumulated + segLen >= step, segLen > 0 {
+                let t = (step - accumulated) / segLen
+                let p = CGPoint(x: prev.x + (next.x - prev.x) * t,
+                                y: prev.y + (next.y - prev.y) * t)
+                result.append(p)
+                prev = p
+                accumulated = 0
+            } else {
+                accumulated += segLen
+                prev = next
+                idx += 1
+            }
+        }
+        while result.count < count { result.append(pts[pts.count - 1]) }
+        return result
+    }
+
     // MARK: - PKStroke Generation
-    
+
     static func createStroke(from shape: ShapeType, originalStroke: PKStroke) -> PKStroke {
         var points: [PKStrokePoint] = []
         let creationDate = Date()
-        
         let baseInk = originalStroke.ink
         let baseSize = originalStroke.path.first?.size ?? CGSize(width: 4, height: 4)
-        
+
         let makePoint = { (pt: CGPoint) -> PKStrokePoint in
             PKStrokePoint(location: pt, timeOffset: 0, size: baseSize, opacity: 1.0, force: 1.0, azimuth: 0, altitude: .pi / 2)
         }
-        
+
+        func appendSegment(_ start: CGPoint, _ end: CGPoint, steps: Int) {
+            for j in 0...steps {
+                let t = CGFloat(j) / CGFloat(steps)
+                points.append(makePoint(CGPoint(x: start.x + (end.x - start.x) * t,
+                                                 y: start.y + (end.y - start.y) * t)))
+            }
+        }
+
         switch shape {
         case .line(let start, let end):
-            // Generate multiple points along the line for a smooth stroke path
-            let steps = 10
-            for i in 0...steps {
-                let t = CGFloat(i) / CGFloat(steps)
-                let pt = CGPoint(x: start.x + (end.x - start.x) * t,
-                                 y: start.y + (end.y - start.y) * t)
-                points.append(makePoint(pt))
-            }
-            
-        case .rect(let corners):
-            let allCorners = corners + [corners[0]] // close the loop
+            appendSegment(start, end, steps: 10)
+
+        case .triangle(let corners), .rect(let corners):
+            let loop = corners + [corners[0]]
             for i in 0..<corners.count {
-                let start = allCorners[i]
-                let end = allCorners[i+1]
-                let steps = 10
-                for j in 0...steps {
-                    let t = CGFloat(j) / CGFloat(steps)
-                    let pt = CGPoint(x: start.x + (end.x - start.x) * t,
-                                     y: start.y + (end.y - start.y) * t)
-                    points.append(makePoint(pt))
-                }
+                appendSegment(loop[i], loop[i + 1], steps: 10)
             }
-            
+
         case .circle(let center, let radius):
             let steps = 60
             for i in 0...steps {
-                let angle = CGFloat(i) / CGFloat(steps) * .pi * 2
-                let pt = CGPoint(x: center.x + radius * cos(angle),
-                                 y: center.y + radius * sin(angle))
-                points.append(makePoint(pt))
+                let a = CGFloat(i) / CGFloat(steps) * .pi * 2
+                points.append(makePoint(CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a))))
+            }
+
+        case .ellipse(let center, let rx, let ry):
+            let steps = 64
+            for i in 0...steps {
+                let a = CGFloat(i) / CGFloat(steps) * .pi * 2
+                points.append(makePoint(CGPoint(x: center.x + rx * cos(a), y: center.y + ry * sin(a))))
             }
         }
-        
+
         let path = PKStrokePath(controlPoints: points, creationDate: creationDate)
         return PKStroke(ink: baseInk, path: path)
+    }
+
+    // MARK: - Geometry Helpers
+
+    private static func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        hypot(a.x - b.x, a.y - b.y)
+    }
+
+    private static func polylineLength(_ pts: [CGPoint]) -> CGFloat {
+        guard pts.count > 1 else { return 0 }
+        return zip(pts, pts.dropFirst()).reduce(0) { $0 + distance($1.0, $1.1) }
+    }
+
+    private static func clamp(_ v: CGFloat, _ lo: CGFloat = 0, _ hi: CGFloat = 1) -> CGFloat {
+        min(hi, max(lo, v))
+    }
+
+    private static func dedupe(_ pts: [CGPoint], minSpacing: CGFloat) -> [CGPoint] {
+        guard let first = pts.first else { return [] }
+        var result = [first]
+        for p in pts.dropFirst() where distance(p, result[result.count - 1]) >= minSpacing {
+            result.append(p)
+        }
+        return result
+    }
+
+    private static func sampleClosedPolygon(_ corners: [CGPoint], count: Int) -> [CGPoint] {
+        guard corners.count >= 2 else { return Array(repeating: corners.first ?? .zero, count: count) }
+        let loop = corners + [corners[0]]
+        return resample(loop, count: count)
+    }
+
+    /// Perpendicular distance from a point to the line through `a`–`b`.
+    private static func perpendicularDistance(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let len = hypot(dx, dy)
+        if len == 0 { return distance(p, a) }
+        return abs(dy * p.x - dx * p.y + b.x * a.y - b.y * a.x) / len
+    }
+
+    /// Distance from a point to a segment `a`–`b`.
+    private static func segmentDistance(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {
+        let dx = b.x - a.x, dy = b.y - a.y
+        let lenSq = dx * dx + dy * dy
+        if lenSq == 0 { return distance(p, a) }
+        var t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq
+        t = clamp(t)
+        let proj = CGPoint(x: a.x + t * dx, y: a.y + t * dy)
+        return distance(p, proj)
+    }
+
+    private static func rdp(_ points: [CGPoint], epsilon: CGFloat) -> [CGPoint] {
+        guard points.count > 2 else { return points }
+        let end = points.count - 1
+        var index = 0
+        var dmax: CGFloat = 0
+        for i in 1..<end {
+            let d = perpendicularDistance(points[i], points[0], points[end])
+            if d > dmax { index = i; dmax = d }
+        }
+        if dmax > epsilon {
+            let left = rdp(Array(points[0...index]), epsilon: epsilon)
+            let right = rdp(Array(points[index...end]), epsilon: epsilon)
+            return Array(left.dropLast()) + right
+        }
+        return [points[0], points[end]]
+    }
+
+    // MARK: - Confidence Scoring
+
+    private static func circleFit(_ pts: [CGPoint], center: CGPoint, radius: CGFloat) -> CGFloat {
+        guard radius > 12 else { return 0 }
+        let radii = pts.map { distance($0, center) }
+        let mean = radii.reduce(0, +) / CGFloat(radii.count)
+        guard mean > 0 else { return 0 }
+        let variance = radii.map { ($0 - mean) * ($0 - mean) }.reduce(0, +) / CGFloat(radii.count)
+        let cv = sqrt(variance) / mean
+        return clamp(1 - cv / 0.18)
+    }
+
+    private static func ellipseFit(_ pts: [CGPoint], center: CGPoint, rx: CGFloat, ry: CGFloat) -> CGFloat {
+        guard rx > 10, ry > 10 else { return 0 }
+        let err = pts.map { p -> CGFloat in
+            let nx = (p.x - center.x) / rx
+            let ny = (p.y - center.y) / ry
+            return abs(nx * nx + ny * ny - 1)
+        }.reduce(0, +) / CGFloat(pts.count)
+        return clamp(1 - err / 0.55)
+    }
+
+    /// Fraction of points lying close to the polygon's edges.
+    private static func polygonFit(_ pts: [CGPoint], polygon: [CGPoint]) -> CGFloat {
+        guard polygon.count >= 3 else { return 0 }
+        let xs = polygon.map(\.x), ys = polygon.map(\.y)
+        let span = max((xs.max() ?? 0) - (xs.min() ?? 0), (ys.max() ?? 0) - (ys.min() ?? 0))
+        let tol = max(8, span * 0.09)
+        let loop = polygon + [polygon[0]]
+        var onEdge = 0
+        for p in pts {
+            var best = CGFloat.greatestFiniteMagnitude
+            for i in 0..<polygon.count {
+                best = min(best, segmentDistance(p, loop[i], loop[i + 1]))
+            }
+            if best <= tol { onEdge += 1 }
+        }
+        return CGFloat(onEdge) / CGFloat(pts.count)
+    }
+
+    private static func rectFit(_ pts: [CGPoint], minX: CGFloat, maxX: CGFloat, minY: CGFloat, maxY: CGFloat) -> CGFloat {
+        let w = maxX - minX, h = maxY - minY
+        let tol = max(w, h) * 0.12
+        var onEdge = 0
+        for p in pts {
+            let near = abs(p.y - minY) < tol || abs(p.y - maxY) < tol ||
+                       abs(p.x - minX) < tol || abs(p.x - maxX) < tol
+            if near { onEdge += 1 }
+        }
+        return CGFloat(onEdge) / CGFloat(pts.count)
     }
 }

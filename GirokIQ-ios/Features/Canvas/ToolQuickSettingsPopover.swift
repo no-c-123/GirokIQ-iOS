@@ -32,7 +32,16 @@ struct ToolQuickSettingsPopover: View {
                 colorRow
 
                 VStack(alignment: .leading, spacing: 6) {
-                    label("Width")
+                    HStack {
+                        label("Width")
+                        Spacer()
+                        // Live width readout so the current stroke size is visible
+                        // while dragging, independent of the presets.
+                        Text(formatPx(viewModel.strokeWidth))
+                            .font(.gMonoCaption)
+                            .monospacedDigit()
+                            .foregroundColor(.gTextSecondary)
+                    }
                     widthPresetRow
                     Slider(value: $viewModel.strokeWidth, in: 0.5...20)
                         .tint(.gPrimary)

@@ -1,0 +1,172 @@
+2026-06-20 09:18:44 +0000  Initial pipeline context: <IDEDistributionProcessingPipelineContext: 0x9e5ed7c00; archive(resolved)="<IDEArchive: 0x9d83eb2c0>", distributionTask(resolved)="2", distributionDestination(resolved)="1", distributionMethod(resolved)="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team(resolved)="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	Chain (16, self inclusive):
+	<IDEDistributionProcessingPipelineContext: 0x9e5ed7c00; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionProcessingPipelineContext: 0x9f82df600; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9d5cc8c80; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc32b980; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc32bc00; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc32b200; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc329400; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc381900; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc383700; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="<IDEProvisioningDisambiguatableBasicTeam: 0x9e85bfac0; teamID='965LN23U3C', teamName='Hector Leal', teamType='Individual', username='prieto.hector.018@icloud.com', isFreeProvisioningTeam='0'>">
+	<IDEDistributionContext: 0x9dc381e00; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="(null)">
+	<IDEDistributionContext: 0x9dbc12580; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="(null)">
+	<IDEDistributionContext: 0x9d63cf980; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="(null)">
+	<IDEDistributionContext: 0x9d63c7200; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="<IDEDistributionMethodiOSAdHoc: 0x9dbbd5fc0>", team="(null)">
+	<IDEDistributionContext: 0x9d63c6800; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="(null)", team="(null)">
+	<IDEDistributionContext: 0x9dc329680; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="(null)", team="(null)">
+	<IDEDistributionContext: 0x9dc328f00; archive = "<IDEArchive: 0x9d83eb2c0>", distributionMethod="(null)", team="(null)">
+</IDEDistributionProcessingPipelineContext: 0x9e5ed7c00>
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionCreateDestRootStep
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionCopyItemStep
+2026-06-20 09:18:44 +0000  Running /usr/bin/ditto '-V' '/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app' '/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root/Payload/GirokIQ-ios.app'
+2026-06-20 09:18:44 +0000  >>> Copying /Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app 
+2026-06-20 09:18:44 +0000  copying file ./_CodeSignature/CodeResources ... 
+2026-06-20 09:18:44 +0000  4501 bytes for ./_CodeSignature/CodeResources
+2026-06-20 09:18:44 +0000  copying file ./.swiftlint.yml ... 
+2026-06-20 09:18:44 +0000  2307 bytes for ./.swiftlint.yml
+2026-06-20 09:18:44 +0000  copying file ./GirokIQ-ios ... 
+2026-06-20 09:18:44 +0000  7311008 bytes for ./GirokIQ-ios
+2026-06-20 09:18:44 +0000  copying file ./AppIcon60x60@2x.png ... 
+17829 bytes for ./AppIcon60x60@2x.png
+copying file ./swift-crypto_Crypto.bundle/PrivacyInfo.xcprivacy ... 
+398 bytes for ./swift-crypto_Crypto.bundle/PrivacyInfo.xcprivacy
+copying file ./swift-crypto_Crypto.bundle/Info.plist ... 
+686 bytes for ./swift-crypto_Crypto.bundle/Info.plist
+copying file ./InstrumentSerif-Regular.ttf ... 
+2026-06-20 09:18:44 +0000  301776 bytes for ./InstrumentSerif-Regular.ttf
+2026-06-20 09:18:44 +0000  copying file ./Assets.car ... 
+2026-06-20 09:18:44 +0000  2659832 bytes for ./Assets.car
+2026-06-20 09:18:44 +0000  copying file ./AppIcon76x76@2x~ipad.png ... 
+26229 bytes for ./AppIcon76x76@2x~ipad.png
+copying file ./PrivacyInfo.xcprivacy ... 
+1580 bytes for ./PrivacyInfo.xcprivacy
+2026-06-20 09:18:44 +0000  copying file ./GRDB_GRDB.bundle/PrivacyInfo.xcprivacy ... 
+2026-06-20 09:18:44 +0000  397 bytes for ./GRDB_GRDB.bundle/PrivacyInfo.xcprivacy
+2026-06-20 09:18:44 +0000  copying file ./GRDB_GRDB.bundle/Info.plist ... 
+2026-06-20 09:18:44 +0000  670 bytes for ./GRDB_GRDB.bundle/Info.plist
+2026-06-20 09:18:44 +0000  copying file ./embedded.mobileprovision ... 
+2026-06-20 09:18:44 +0000  14704 bytes for ./embedded.mobileprovision
+2026-06-20 09:18:44 +0000  copying file ./Info.plist ... 
+2026-06-20 09:18:44 +0000  2203 bytes for ./Info.plist
+2026-06-20 09:18:44 +0000  copying file ./PkgInfo ... 
+2026-06-20 09:18:44 +0000  8 bytes for ./PkgInfo
+2026-06-20 09:18:44 +0000  /usr/bin/ditto exited with 0
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionEmbedProfileStep
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionInfoPlistStep
+2026-06-20 09:18:44 +0000  Skipping step: IDEDistributionInfoPlistStep because it said so
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionAppThinningPlistStep
+2026-06-20 09:18:44 +0000  Skipping step: IDEDistributionAppThinningPlistStep because it said so
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionSymbolsStep
+2026-06-20 09:18:44 +0000  Skipping step: IDEDistributionSymbolsStep because it said so
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionAppThinningStep
+2026-06-20 09:18:44 +0000  Skipping step: IDEDistributionAppThinningStep because it said so
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionArchThinningStep
+2026-06-20 09:18:44 +0000  Archs to thin for item /Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app are []
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionODRStep
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionStripXattrsStep
+2026-06-20 09:18:44 +0000  Skipping stripping extended attributes because the codesign step will strip them.
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionCodesignStep
+2026-06-20 09:18:44 +0000  Entitlements for <IDEDistributionItem: 0x9d8733480; bundleID='com.hectorleal.GirokIQ-ios', path='<DVTFilePath:0x9d8b0cf60:'/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0x9d8733300; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0x9f81d80c0; name='Apple Development: prieto.hector.018@icloud.com (Y3M4MP75NP)', hash='D94469E8F751D987328B51289481150EE7E7DDCD', serialNumber='B3379D7DC0BAB9DC12D9E32F81464F5', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2026-03-29 16:47:34 +0000''>', entitlements='{
+    "application-identifier" = "965LN23U3C.com.hectorleal.GirokIQ-ios";
+    "com.apple.developer.applesignin" =     (
+        Default
+    );
+    "com.apple.developer.team-identifier" = 965LN23U3C;
+    "get-task-allow" = 1;
+}', teamID='965LN23U3C', identifier='com.hectorleal.GirokIQ-ios', executablePath='<DVTFilePath:0x9d803a520:'/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app/GirokIQ-ios'>', hardenedRuntime='0'>'>: {
+    "application-identifier" = "965LN23U3C.com.hectorleal.GirokIQ-ios";
+    "com.apple.developer.applesignin" =     (
+        Default
+    );
+    "com.apple.developer.team-identifier" = 965LN23U3C;
+    "get-task-allow" = 0;
+}
+2026-06-20 09:18:44 +0000  Associated App Clip Identifiers Filter: Skipping because "com.apple.developer.associated-appclip-app-identifiers" is not present
+2026-06-20 09:18:44 +0000  Entitlements for <IDEDistributionItem: 0x9d8733480; bundleID='com.hectorleal.GirokIQ-ios', path='<DVTFilePath:0x9d8b0cf60:'/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0x9d8733300; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0x9f81d9a40; name='Apple Development: prieto.hector.018@icloud.com (Y3M4MP75NP)', hash='D94469E8F751D987328B51289481150EE7E7DDCD', serialNumber='B3379D7DC0BAB9DC12D9E32F81464F5', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2026-03-29 16:47:34 +0000''>', entitlements='{
+    "application-identifier" = "965LN23U3C.com.hectorleal.GirokIQ-ios";
+    "com.apple.developer.applesignin" =     (
+        Default
+    );
+    "com.apple.developer.team-identifier" = 965LN23U3C;
+    "get-task-allow" = 1;
+}', teamID='965LN23U3C', identifier='com.hectorleal.GirokIQ-ios', executablePath='<DVTFilePath:0x9d803a520:'/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app/GirokIQ-ios'>', hardenedRuntime='0'>'> are: {
+    "application-identifier" = "965LN23U3C.com.hectorleal.GirokIQ-ios";
+    "com.apple.developer.applesignin" =     (
+        Default
+    );
+    "com.apple.developer.team-identifier" = 965LN23U3C;
+    "get-task-allow" = 0;
+}
+2026-06-20 09:18:44 +0000  Writing entitlements for <IDEDistributionItem: 0x9d8733480; bundleID='com.hectorleal.GirokIQ-ios', path='<DVTFilePath:0x9d8b0cf60:'/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app'>', codeSigningInfo='<_DVTCodeSigningInformation_Path: 0x9d8733300; isSigned='1', isAdHocSigned='0', signingCertificate='<DVTSigningCertificate: 0x9f81d9a40; name='Apple Development: prieto.hector.018@icloud.com (Y3M4MP75NP)', hash='D94469E8F751D987328B51289481150EE7E7DDCD', serialNumber='B3379D7DC0BAB9DC12D9E32F81464F5', certificateKinds='(
+    "1.2.840.113635.100.6.1.12",
+    "1.2.840.113635.100.6.1.2"
+), issueDate='2026-03-29 16:47:34 +0000''>', entitlements='{
+    "application-identifier" = "965LN23U3C.com.hectorleal.GirokIQ-ios";
+    "com.apple.developer.applesignin" =     (
+        Default
+    );
+    "com.apple.developer.team-identifier" = 965LN23U3C;
+    "get-task-allow" = 1;
+}', teamID='965LN23U3C', identifier='com.hectorleal.GirokIQ-ios', executablePath='<DVTFilePath:0x9d803a520:'/Users/hectorprieto/Library/Developer/Xcode/Archives/2026-06-20/GirokIQ-ios 6-20-26, 3.13 AM.xcarchive/Products/Applications/GirokIQ-ios.app/GirokIQ-ios'>', hardenedRuntime='0'>'> to: /var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/entitlements~~~byEcR0
+2026-06-20 09:18:44 +0000  invoking codesign: <NSConcreteTask: 0x9d86a75c0; launchPath='/usr/bin/codesign', arguments='(
+    "-f",
+    "-s",
+    6D7C743C0A2B68917BDFDFDDA1204B795590C2E5,
+    "--entitlements",
+    "/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/entitlements~~~byEcR0",
+    "--preserve-metadata=identifier,flags,runtime,launch-constraints,library-constraints",
+    "--generate-entitlement-der",
+    "--strip-disallowed-xattrs",
+    "-vvv",
+    "/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root/Payload/GirokIQ-ios.app"
+)'>
+2026-06-20 09:18:44 +0000  codesign output: /var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root/Payload/GirokIQ-ios.app: replacing existing signature
+/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root/Payload/GirokIQ-ios.app: signed app bundle with Mach-O thin (arm64) [com.hectorleal.GirokIQ-ios]
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionZipODRItemStep
+2026-06-20 09:18:44 +0000  Skipping step: IDEDistributionZipODRItemStep because it said so
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionCreateIPAStep
+2026-06-20 09:18:44 +0000  Running /usr/bin/ditto '-V' '-c' '-k' '--norsrc' '/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root' '/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Packages/GirokIQ-ios.ipa'
+2026-06-20 09:18:44 +0000  >>> Copying /var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root 
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/_CodeSignature/CodeResources ... 
+2026-06-20 09:18:44 +0000  4501 bytes for ./Payload/GirokIQ-ios.app/_CodeSignature/CodeResources
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/.swiftlint.yml ... 
+2026-06-20 09:18:44 +0000  2307 bytes for ./Payload/GirokIQ-ios.app/.swiftlint.yml
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/GirokIQ-ios ... 
+2026-06-20 09:18:44 +0000  7310992 bytes for ./Payload/GirokIQ-ios.app/GirokIQ-ios
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/AppIcon60x60@2x.png ... 
+2026-06-20 09:18:44 +0000  17829 bytes for ./Payload/GirokIQ-ios.app/AppIcon60x60@2x.png
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/swift-crypto_Crypto.bundle/PrivacyInfo.xcprivacy ... 
+2026-06-20 09:18:44 +0000  398 bytes for ./Payload/GirokIQ-ios.app/swift-crypto_Crypto.bundle/PrivacyInfo.xcprivacy
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/swift-crypto_Crypto.bundle/Info.plist ... 
+2026-06-20 09:18:44 +0000  686 bytes for ./Payload/GirokIQ-ios.app/swift-crypto_Crypto.bundle/Info.plist
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/InstrumentSerif-Regular.ttf ... 
+2026-06-20 09:18:44 +0000  301776 bytes for ./Payload/GirokIQ-ios.app/InstrumentSerif-Regular.ttf
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/Assets.car ... 
+2026-06-20 09:18:44 +0000  2659832 bytes for ./Payload/GirokIQ-ios.app/Assets.car
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/AppIcon76x76@2x~ipad.png ... 
+2026-06-20 09:18:44 +0000  26229 bytes for ./Payload/GirokIQ-ios.app/AppIcon76x76@2x~ipad.png
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/PrivacyInfo.xcprivacy ... 
+2026-06-20 09:18:44 +0000  1580 bytes for ./Payload/GirokIQ-ios.app/PrivacyInfo.xcprivacy
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/GRDB_GRDB.bundle/PrivacyInfo.xcprivacy ... 
+2026-06-20 09:18:44 +0000  397 bytes for ./Payload/GirokIQ-ios.app/GRDB_GRDB.bundle/PrivacyInfo.xcprivacy
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/GRDB_GRDB.bundle/Info.plist ... 
+2026-06-20 09:18:44 +0000  670 bytes for ./Payload/GirokIQ-ios.app/GRDB_GRDB.bundle/Info.plist
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/embedded.mobileprovision ... 
+2026-06-20 09:18:44 +0000  14752 bytes for ./Payload/GirokIQ-ios.app/embedded.mobileprovision
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/Info.plist ... 
+2026-06-20 09:18:44 +0000  2203 bytes for ./Payload/GirokIQ-ios.app/Info.plist
+2026-06-20 09:18:44 +0000  copying file ./Payload/GirokIQ-ios.app/PkgInfo ... 
+2026-06-20 09:18:44 +0000  8 bytes for ./Payload/GirokIQ-ios.app/PkgInfo
+2026-06-20 09:18:44 +0000  /usr/bin/ditto exited with 0
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionAppStoreInformationStep
+2026-06-20 09:18:44 +0000  Skipping step: IDEDistributionAppStoreInformationStep because it said so
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionGenerateProcessedDistributionItems
+2026-06-20 09:18:44 +0000  IDEDistributionItem init <DVTFilePath:0x9d8733420:'/var/folders/b_/4_m632893pvds_d1gp6tg3wm0000gn/T/XcodeDistPipeline.~~~4gK6d3/Root/Payload/GirokIQ-ios.app'>
+2026-06-20 09:18:44 +0000  Processing step: IDEDistributionCreateManifestStep
