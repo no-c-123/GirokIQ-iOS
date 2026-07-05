@@ -1,4 +1,5 @@
 import SwiftUI
+internal import UniformTypeIdentifiers
 
 // MARK: - Sidebar View (iPad NavigationSplitView sidebar)
 
@@ -15,6 +16,10 @@ struct SidebarView: View {
     @State private var showSettings = false
     @State private var folderToRename: Folder?
     @State private var renameFolderText = ""
+    @State private var showArchiveExporter = false
+    @State private var archiveDocument = ExportedBinaryDocument(data: Data())
+    @State private var archiveContentType: UTType = .girokIQFolder
+    @State private var archiveDefaultFilename = "Folder.girokfolder"
 
     var body: some View {
         List(selection: $selectedFolderId) {
@@ -25,6 +30,8 @@ struct SidebarView: View {
                 } label: {
                     Label("All Notebooks", systemImage: "book.closed")
                         .foregroundColor(selectedFolderId == nil ? .gPrimary : .gTextPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .accessibilityLabel("All Notebooks")
                 .accessibilityHint("Double tap to show all notebooks")
@@ -46,22 +53,33 @@ struct SidebarView: View {
                                     .foregroundColor(.gTextTertiary)
                             }
                             .foregroundColor(selectedFolderId == folder.id ? .gPrimary : .gTextPrimary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
                         .accessibilityLabel("\(folder.name) folder, \(viewModel.notebooksInFolder(folder.id).count) notebooks")
                         .accessibilityHint("Double tap to filter by this folder")
                         .accessibilityAddTraits(selectedFolderId == folder.id ? .isSelected : [])
-                        .contextMenu {
+                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 renameFolderText = folder.name
                                 folderToRename = folder
                             } label: {
                                 Label("Rename", systemImage: "pencil")
                             }
-                            Divider()
+                            .tint(.gPrimary)
+
+                            Button {
+                                Task { await exportFolderArchive(folder) }
+                            } label: {
+                                Label("Export", systemImage: "square.and.arrow.up")
+                            }
+                            .tint(Color(hex: "#6FB5A5"))
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
                                 Task { await viewModel.deleteFolder(folder) }
                             } label: {
-                                Label("Delete Folder", systemImage: "trash")
+                                Label("Delete", systemImage: "trash")
                             }
                         }
                     }
@@ -82,13 +100,12 @@ struct SidebarView: View {
                                     .font(.gSubheadline)
                                     .foregroundColor(.gTextPrimary)
                                     .lineLimit(1)
-                                Text(notebook.updatedAt.formatted(.relative(presentation: .named)))
-                                    .font(.gCaption2)
-                                    .foregroundColor(.gTextTertiary)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
-                    .accessibilityLabel("\(notebook.name), updated \(notebook.updatedAt.formatted(.relative(presentation: .named)))")
+                    .accessibilityLabel("\(notebook.name)")
                     .accessibilityHint("Double tap to open this notebook")
                 }
             }
@@ -106,6 +123,12 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .navigationTitle("GirokIQ")
+        .fileExporter(
+            isPresented: $showArchiveExporter,
+            document: archiveDocument,
+            contentType: archiveContentType,
+            defaultFilename: archiveDefaultFilename
+        ) { _ in }
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
@@ -130,6 +153,19 @@ struct SidebarView: View {
     }
 
     // MARK: - Helpers
+
+    private func exportFolderArchive(_ folder: Folder) async {
+        guard let url = await viewModel.exportFolderArchive(folder),
+              let data = try? Data(contentsOf: url) else { return }
+
+        let safeName = folder.name
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        archiveContentType = .girokIQFolder
+        archiveDocument = ExportedBinaryDocument(data: data)
+        archiveDefaultFilename = "\(safeName.isEmpty ? "Folder" : safeName).girokfolder"
+        showArchiveExporter = true
+    }
 
     private func recentNotebookIcon(for notebook: Notebook) -> some View {
         let colors: [Color] = [.gPrimary, Color(hex: "#8B5CF6"), Color(hex: "#06B6D4"), Color(hex: "#10B981"), Color(hex: "#F59E0B"), Color(hex: "#EC4899")]

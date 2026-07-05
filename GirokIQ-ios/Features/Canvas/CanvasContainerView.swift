@@ -10,7 +10,10 @@ struct CanvasContainerView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.dismiss) var dismiss
     @Environment(\.horizontalSizeClass) var sizeClass
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("aiPanelDockSide") private var aiPanelDockSide: AIChatPanelSide = .right
+    @AppStorage("aiEnabled") private var aiEnabled: Bool = true
 
     @State private var showPageStrip = false
     @State private var showPatternPicker = false
@@ -18,18 +21,20 @@ struct CanvasContainerView: View {
     @State private var pickedCanvasImageData: Data? = nil
 
     var body: some View {
-        HStack(spacing: 0) {
-            if sizeClass == .regular && showAIPanel && aiPanelDockSide == .left {
-                aiPanel
-                    .transition(.move(edge: .leading))
-            }
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                if aiEnabled && sizeClass == .regular && showAIPanel && aiPanelDockSide == .left {
+                    aiPanel(for: proxy.size)
+                        .transition(.move(edge: .leading))
+                }
 
-            // Main canvas area
-            canvasArea
+                // Main canvas area
+                canvasArea
 
-            if sizeClass == .regular && showAIPanel && aiPanelDockSide == .right {
-                aiPanel
-                    .transition(.move(edge: .trailing))
+                if aiEnabled && sizeClass == .regular && showAIPanel && aiPanelDockSide == .right {
+                    aiPanel(for: proxy.size)
+                        .transition(.move(edge: .trailing))
+                }
             }
         }
         .animation(GAnimation.motionSafe(), value: showAIPanel)
@@ -62,7 +67,7 @@ struct CanvasContainerView: View {
         }
         // iPhone: sheet for AI
         .sheet(isPresented: Binding(
-            get: { sizeClass == .compact && showAIPanel },
+            get: { aiEnabled && sizeClass == .compact && showAIPanel },
             set: { if !$0 { showAIPanel = false } }
         )) {
             AIChatView(viewModel: aiVM, drawing: canvasVM.currentDrawing, onRegionCapture: {
@@ -75,7 +80,8 @@ struct CanvasContainerView: View {
         .task {
             if let userId = authViewModel.currentUserId {
                 await canvasVM.loadNotebook(notebook: notebook, userId: userId)
-                
+                canvasVM.joinPresence(notebookId: notebook.id, userId: userId)
+
                 aiVM.contextProvider = { [weak canvasVM] in
                     canvasVM?.canvasContextSummary() ?? ""
                 }
@@ -88,7 +94,27 @@ struct CanvasContainerView: View {
                     canvasVM?.inlineAIHighlightRect = nil
                 }
                 
-                await aiVM.startSession(userId: userId, notebookId: notebook.id)
+                if aiEnabled {
+                    await aiVM.startSession(userId: userId, notebookId: notebook.id)
+                }
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task {
+                guard let userId = authViewModel.currentUserId else { return }
+                let shouldRefresh = await canvasVM.shouldRefreshFromSceneActivation(userId: userId)
+                guard shouldRefresh else {
+                    await authViewModel.syncMonitor.pushPending()
+                    return
+                }
+                await refreshNotebookContents(pushPendingFirst: true, flushBeforeRefresh: true)
+            }
+        }
+        .onChange(of: aiEnabled) { _, enabled in
+            if !enabled {
+                showAIPanel = false
+                canvasVM.isRegionCaptureMode = false
             }
         }
         .onChange(of: pickedCanvasImageData) { _, newValue in
@@ -100,8 +126,23 @@ struct CanvasContainerView: View {
             // Force save any pending strokes immediately before the view model is destroyed
             Task {
                 await canvasVM.flushSave()
+                canvasVM.leavePresence()
             }
         }
+    }
+
+    private func refreshNotebookContents(pushPendingFirst: Bool, flushBeforeRefresh: Bool) async {
+        guard authViewModel.currentUserId != nil else { return }
+
+        if flushBeforeRefresh {
+            await canvasVM.flushSave()
+        }
+
+        if pushPendingFirst {
+            await authViewModel.syncMonitor.pushPending()
+        }
+
+        await canvasVM.refreshNotebookFromRemote()
     }
 
     // MARK: - Canvas Area
@@ -112,16 +153,41 @@ struct CanvasContainerView: View {
                 CanvasToolbar(
                     notebook: notebook,
                     viewModel: canvasVM,
+                    syncEngine: authViewModel.syncMonitor,
                     onBack: { dismiss() }
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .zIndex(2)
 
+                if Configuration.cloudSyncEnabled, let quotaNotice = canvasVM.quotaNoticeMessage {
+                    HStack(spacing: 8) {
+                        Image(systemName: "externaldrive.badge.exclamationmark")
+                            .foregroundColor(.orange)
+                        Text(quotaNotice)
+                            .font(.gCaption)
+                            .foregroundColor(.gTextPrimary)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color.gElevated)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.gBorder.opacity(0.5), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(3)
+                }
+
                 // Text tool formatting bar — full width, just below the top toolbar
                 if canvasVM.selectedTool == .text {
                     TextToolKeyboardBar(viewModel: canvasVM)
                         .transition(.move(edge: .top).combined(with: .opacity))
-                        .zIndex(3)
+                        .zIndex(4)
                 }
 
                 ZStack(alignment: .leading) {
@@ -152,11 +218,19 @@ struct CanvasContainerView: View {
                             viewModel: canvasVM,
                             onShowPages: { withAnimation { showPageStrip.toggle() } },
                             onShowPatterns: { showPatternPicker = true },
-                            onShowAI: { withAnimation(GAnimation.spring) { showAIPanel.toggle() } },
+                            onShowAI: { animateMotionSafe(GAnimation.spring) { showAIPanel.toggle() } },
                             isAIPanelVisible: showAIPanel,
+                            isAIEnabled: aiEnabled,
                             onRegionCapture: {
                                 showAIPanel = false
                                 canvasVM.isRegionCaptureMode = true
+                            },
+                            onManualSync: {
+                                Task {
+                                    await canvasVM.flushSave()
+                                    await authViewModel.syncMonitor.pushPending()
+                                    HapticEngine.success()
+                                }
                             }
                         )
                         .padding(.leading, 12)
@@ -174,7 +248,7 @@ struct CanvasContainerView: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                     .zIndex(5)
                     
-                    if canvasVM.isRegionCaptureMode {
+                    if aiEnabled && canvasVM.isRegionCaptureMode {
                         RegionCaptureOverlay(
                             canvasVM: canvasVM,
                             aiVM: aiVM,
@@ -196,11 +270,9 @@ struct CanvasContainerView: View {
                             viewModel: canvasVM,
                             box: box,
                             onAskAI: { canvasRect, imageData in
+                                guard aiEnabled else { return }
                                 canvasVM.inlineAIHighlightRect = canvasRect
-                                inlineAIVM.present(
-                                    anchorCanvasRect: canvasRect,
-                                    imageData: imageData
-                                )
+                                inlineAIVM.present(anchorCanvasRect: canvasRect, imageData: imageData)
                             }
                         )
                             .zIndex(8)
@@ -233,17 +305,32 @@ struct CanvasContainerView: View {
         }
     }
 
-    private var aiPanel: some View {
+    private func aiPanel(for size: CGSize) -> some View {
         AIChatView(viewModel: aiVM, drawing: canvasVM.currentDrawing, onRegionCapture: {
             showAIPanel = false
             canvasVM.isRegionCaptureMode = true
         })
-            .frame(width: UIScreen.main.bounds.width * 0.3)
-            .background(Color.gSurface)
+            .frame(width: aiPanelWidth(for: size))
+            .background(aiPanelBackground)
             .overlay(alignment: aiPanelDockSide == .left ? .trailing : .leading) {
                 Rectangle()
-                    .fill(Color.gBorder)
+                    .fill(aiPanelDivider)
                     .frame(width: 0.5)
             }
+    }
+
+    private func aiPanelWidth(for size: CGSize) -> CGFloat {
+        let isLandscape = size.width > size.height
+        let ratio: CGFloat = isLandscape ? 0.27 : 0.36
+        let rawWidth = size.width * ratio
+        return min(max(rawWidth, 300), isLandscape ? 390 : 420)
+    }
+
+    private var aiPanelBackground: Color {
+        colorScheme == .dark ? Color(hex: "#12100D") : Color(hex: "#F6F1E7")
+    }
+
+    private var aiPanelDivider: Color {
+        colorScheme == .dark ? Color(hex: "#2B241B") : Color(hex: "#DDD2BE")
     }
 }

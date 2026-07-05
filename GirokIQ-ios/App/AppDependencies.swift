@@ -18,50 +18,85 @@ final class AppDependencies: ObservableObject {
     let auth: AuthViewModel
     let theme: ThemeManager
     let biometricAuth: BiometricAuthService
+    let syncEngine: SyncEngine
 
     /// Lazy-initialized services — deferred until first use after auth
     lazy var localDB: LocalDatabase = LocalDatabase.shared
-    lazy var syncEngine: SyncEngine = SyncEngine()
     lazy var aiService: AIService = AIService()
 
     @Published var isLocked: Bool = false
-    var lastBackgroundDate: Date?
+    @Published var shouldPromptForUnlock: Bool = false
+    private let biometricLockDefaultsKey = "biometricLockEnabled"
 
     // MARK: - Lifecycle
 
     init() {
         // Only initialize what's needed for the first frame
         let syncEngine = SyncEngine()
+        self.syncEngine = syncEngine
         self.auth = AuthViewModel(syncEngine: syncEngine)
         self.theme = ThemeManager()
         self.biometricAuth = BiometricAuthService()
+        if Configuration.cloudSyncEnabled {
+            syncEngine.startAutoSync()
+        }
+    }
+
+    deinit {
+        syncEngine.stopAutoSync()
     }
 
     // MARK: - Public Methods
 
-    /// Call when app enters background
-    func recordBackgroundTime() {
-        lastBackgroundDate = Date()
+    private var isBiometricLockEnabled: Bool {
+        UserDefaults.standard.bool(forKey: biometricLockDefaultsKey)
     }
 
-    /// Call when app returns to foreground. Locks if >5 minutes elapsed.
-    func checkLockOnForeground() {
-        guard auth.isAuthenticated,
-              biometricAuth.canUseBiometrics(),
-              let lastDate = lastBackgroundDate else { return }
+    private var shouldRequirePrivacyLock: Bool {
+        auth.isAuthenticated &&
+        isBiometricLockEnabled &&
+        biometricAuth.canAuthenticate()
+    }
 
-        let elapsed = Date().timeIntervalSince(lastDate)
-        if elapsed > 300 { // 5 minutes
-            isLocked = true
+    /// Call as soon as the app is moving away from the foreground so the
+    /// App Switcher snapshot never captures notebook content.
+    func protectContentForBackground() {
+        guard shouldRequirePrivacyLock else { return }
+        isLocked = true
+        shouldPromptForUnlock = false
+    }
+
+    /// Call when app becomes active. Keeps the shield in place until the user
+    /// authenticates, or clears it if lock requirements no longer apply.
+    func handleAppDidBecomeActive() {
+        guard shouldRequirePrivacyLock else {
+            isLocked = false
+            shouldPromptForUnlock = false
+            return
         }
-        lastBackgroundDate = nil
+
+        if isLocked {
+            shouldPromptForUnlock = true
+        }
     }
 
     /// Attempt biometric unlock
     func unlockWithBiometrics() async {
-        let success = await biometricAuth.authenticate()
-        if success {
+        guard shouldRequirePrivacyLock else {
             isLocked = false
+            shouldPromptForUnlock = false
+            return
+        }
+
+        await MainActor.run {
+            shouldPromptForUnlock = false
+        }
+
+        let success = await biometricAuth.authenticate()
+        await MainActor.run {
+            if success {
+                isLocked = false
+            }
         }
     }
 }

@@ -227,47 +227,80 @@ final class ShapeSnapper {
         var points: [PKStrokePoint] = []
         let creationDate = Date()
         let baseInk = originalStroke.ink
-        let baseSize = originalStroke.path.first?.size ?? CGSize(width: 4, height: 4)
+        let originalPath = originalStroke.path
+        let originalCount = max(originalPath.count, 1)
 
-        let makePoint = { (pt: CGPoint) -> PKStrokePoint in
-            PKStrokePoint(location: pt, timeOffset: 0, size: baseSize, opacity: 1.0, force: 1.0, azimuth: 0, altitude: .pi / 2)
+        let originalSample = { (normalizedT: CGFloat) -> PKStrokePoint? in
+            guard originalPath.count > 0 else { return nil }
+            let clamped = min(max(normalizedT, 0), 1)
+            let index = min(Int(round(clamped * CGFloat(originalCount - 1))), originalCount - 1)
+            return originalPath[index]
         }
 
-        func appendSegment(_ start: CGPoint, _ end: CGPoint, steps: Int) {
+        let makePoint = { (pt: CGPoint, normalizedT: CGFloat) -> PKStrokePoint in
+            let originalPoint = originalSample(normalizedT) ?? originalPath.first
+            return PKStrokePoint(
+                location: pt,
+                timeOffset: Double(normalizedT),
+                size: originalPoint?.size ?? CGSize(width: 4, height: 4),
+                opacity: originalPoint?.opacity ?? 1.0,
+                force: originalPoint?.force ?? 1.0,
+                azimuth: originalPoint?.azimuth ?? 0,
+                altitude: originalPoint?.altitude ?? (.pi / 2)
+            )
+        }
+
+        func appendSegment(_ start: CGPoint, _ end: CGPoint, steps: Int, segmentIndex: Int, segmentCount: Int) {
             for j in 0...steps {
                 let t = CGFloat(j) / CGFloat(steps)
-                points.append(makePoint(CGPoint(x: start.x + (end.x - start.x) * t,
-                                                 y: start.y + (end.y - start.y) * t)))
+                let globalT = (CGFloat(segmentIndex) + t) / CGFloat(max(segmentCount, 1))
+                points.append(
+                    makePoint(
+                        CGPoint(x: start.x + (end.x - start.x) * t,
+                                y: start.y + (end.y - start.y) * t),
+                        globalT
+                    )
+                )
             }
         }
 
         switch shape {
         case .line(let start, let end):
-            appendSegment(start, end, steps: 10)
+            appendSegment(start, end, steps: 10, segmentIndex: 0, segmentCount: 1)
 
         case .triangle(let corners), .rect(let corners):
             let loop = corners + [corners[0]]
             for i in 0..<corners.count {
-                appendSegment(loop[i], loop[i + 1], steps: 10)
+                appendSegment(loop[i], loop[i + 1], steps: 10, segmentIndex: i, segmentCount: corners.count)
             }
 
         case .circle(let center, let radius):
             let steps = 60
             for i in 0...steps {
                 let a = CGFloat(i) / CGFloat(steps) * .pi * 2
-                points.append(makePoint(CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a))))
+                points.append(
+                    makePoint(
+                        CGPoint(x: center.x + radius * cos(a), y: center.y + radius * sin(a)),
+                        CGFloat(i) / CGFloat(steps)
+                    )
+                )
             }
 
         case .ellipse(let center, let rx, let ry):
             let steps = 64
             for i in 0...steps {
                 let a = CGFloat(i) / CGFloat(steps) * .pi * 2
-                points.append(makePoint(CGPoint(x: center.x + rx * cos(a), y: center.y + ry * sin(a))))
+                points.append(
+                    makePoint(
+                        CGPoint(x: center.x + rx * cos(a), y: center.y + ry * sin(a)),
+                        CGFloat(i) / CGFloat(steps)
+                    )
+                )
             }
         }
 
         let path = PKStrokePath(controlPoints: points, creationDate: creationDate)
-        return PKStroke(ink: baseInk, path: path)
+        return PKStroke(ink: baseInk, path: path, transform: originalStroke.transform, mask: originalStroke.mask)
     }
 
     // MARK: - Geometry Helpers

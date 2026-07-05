@@ -11,15 +11,46 @@ struct AIChatView: View {
     @ObservedObject var viewModel: AIChatViewModel
     var drawing: PKDrawing?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showImagePicker = false
     @State private var showFileImporter = false
     @State private var attachedContextKind: AttachmentContextKind = .none
+    @State private var chatPendingDeletion: Chat?
     var onRegionCapture: (() -> Void)? = nil
+
+    private var railBackground: Color {
+        colorScheme == .dark ? Color(hex: "#12100D") : Color(hex: "#F6F1E7")
+    }
+
+    private var railSurface: Color {
+        colorScheme == .dark ? Color(hex: "#171410") : Color(hex: "#FBF8F2")
+    }
+
+    private var railElevated: Color {
+        colorScheme == .dark ? Color(hex: "#211C15") : Color(hex: "#EFE8DB")
+    }
+
+    private var railStroke: Color {
+        colorScheme == .dark ? Color(hex: "#2B241B") : Color(hex: "#DDD2BE")
+    }
+
+    private var railText: Color {
+        colorScheme == .dark ? Color(hex: "#F4EFE6") : Color(hex: "#241F18")
+    }
+
+    private var railSubtext: Color {
+        colorScheme == .dark ? Color(hex: "#9D9488") : Color(hex: "#7D7367")
+    }
+
+    private var railAccent: Color { Color(hex: "#C9A84C") }
+
+    private var isNarrowRail: Bool {
+        horizontalSizeClass == .compact
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             chatHeader
-            Divider().opacity(0.16)
 
             if viewModel.showHistory {
                 historyList
@@ -28,7 +59,7 @@ struct AIChatView: View {
                 composerSection
             }
         }
-        .background(Color.gSurface)
+        .background(railBackground)
         .onChange(of: viewModel.attachedImageData) { _, newValue in
             if newValue == nil {
                 attachedContextKind = .none
@@ -48,6 +79,26 @@ struct AIChatView: View {
                 }
             }
         }
+        .confirmationDialog(
+            "Delete chat?",
+            isPresented: Binding(
+                get: { chatPendingDeletion != nil },
+                set: { if !$0 { chatPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Chat", role: .destructive) {
+                if let chat = chatPendingDeletion {
+                    Task { await viewModel.deleteChat(chat) }
+                }
+                chatPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                chatPendingDeletion = nil
+            }
+        } message: {
+            Text("This will permanently remove the chat and its messages.")
+        }
     }
 
     // MARK: - Header
@@ -57,19 +108,19 @@ struct AIChatView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.gPrimary)
+                    .foregroundColor(.black.opacity(0.72))
                     .frame(width: 22, height: 22)
-                    .background(Color.gPrimary.opacity(0.1))
+                    .background(railAccent)
                     .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Notebook assistant")
-                        .font(.custom("InstrumentSerif-Regular", size: 22))
-                        .foregroundColor(.gTextPrimary)
+                    Text("Assistant")
+                        .font(.gSubheadline.weight(.semibold))
+                        .foregroundColor(railText)
 
-                    Text(chatSubtitle)
+                    Text("This notebook")
                         .font(.gCaption)
-                        .foregroundColor(.gTextTertiary)
+                        .foregroundColor(railSubtext)
                         .lineLimit(1)
                 }
             }
@@ -80,24 +131,21 @@ struct AIChatView: View {
                 Button {
                     Task { await viewModel.startNewChat() }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 13, weight: .semibold))
-                        Text("New chat")
-                            .font(.gSubheadline)
-                    }
-                    .foregroundColor(.gPrimary)
+                    Image(systemName: "plus")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(viewModel.showHistory ? railSubtext : railText)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("New chat")
 
                 Button {
-                    withAnimation(GAnimation.springFast) {
+                    animateMotionSafe(GAnimation.springFast) {
                         viewModel.showHistory.toggle()
                     }
                 } label: {
                     Image(systemName: "clock")
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundColor(viewModel.showHistory ? .gPrimary : .gTextTertiary)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(viewModel.showHistory ? railAccent : railSubtext)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Chat History")
@@ -125,53 +173,73 @@ struct AIChatView: View {
                         Spacer()
                     }
                     .font(.gSubheadline)
-                    .foregroundColor(.gPrimary)
+                    .foregroundColor(railText)
                     .padding(.horizontal, GSpacing.md)
                     .padding(.vertical, 14)
                     .background(
                         RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                            .fill(Color.gPrimary.opacity(0.12))
+                            .fill(railElevated)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                                    .stroke(railStroke, lineWidth: 1)
+                            )
                     )
                 }
                 .buttonStyle(.plain)
                 
                 ForEach(viewModel.chatHistory) { chat in
-                    Button {
-                        Task { await viewModel.selectChat(chat) }
-                    } label: {
-                        let isSelected = viewModel.chat?.id == chat.id
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(chat.title)
-                                    .font(.gSubheadline)
-                                    .foregroundColor(.gTextPrimary)
-                                    .lineLimit(1)
-                                Text(historyTimestamp(for: chat))
-                                    .font(.gCaption.weight(.medium))
-                                    .foregroundColor(.gTextTertiary)
+                    let isSelected = viewModel.chat?.id == chat.id
+
+                    HStack(spacing: 10) {
+                        Button {
+                            Task { await viewModel.selectChat(chat) }
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(chat.title)
+                                        .font(.gSubheadline)
+                                        .foregroundColor(railText)
+                                        .lineLimit(1)
+                                    Text(historyTimestamp(for: chat))
+                                        .font(.gCaption.weight(.medium))
+                                        .foregroundColor(railSubtext)
+                                }
+                                Spacer()
+                                Circle()
+                                    .fill(isSelected ? railAccent : Color.clear)
+                                    .frame(width: 10, height: 10)
                             }
-                            Spacer()
-                            Circle()
-                                .fill(isSelected ? Color.gPrimary : Color.clear)
-                                .frame(width: 10, height: 10)
+                            .padding(.horizontal, GSpacing.md)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                                    .fill(isSelected ? railAccent.opacity(0.16) : railElevated)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                                            .stroke(isSelected ? railAccent.opacity(0.8) : railStroke, lineWidth: 1)
+                                    )
+                            )
                         }
-                        .padding(.horizontal, GSpacing.md)
-                        .padding(.vertical, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                                .fill(isSelected ? Color.gPrimary.opacity(0.07) : Color.gElevated.opacity(0.65))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                                        .stroke(isSelected ? Color.gPrimary.opacity(0.9) : Color.gBorder.opacity(0.35), lineWidth: 1)
-                                )
-                        )
+                        .buttonStyle(.plain)
+
+                        Button {
+                            chatPendingDeletion = chat
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.gCaption.weight(.semibold))
+                                .foregroundColor(.red.opacity(0.9))
+                                .frame(width: 34, height: 34)
+                                .background(Color.red.opacity(0.12))
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Delete chat")
                     }
-                    .buttonStyle(.plain)
                 }
 
                 Text("Chats are saved with this notebook")
                     .font(.gSubheadline)
-                    .foregroundColor(.gTextTertiary)
+                    .foregroundColor(railSubtext)
                     .padding(.top, GSpacing.md)
             }
             .padding(GSpacing.md)
@@ -207,6 +275,7 @@ struct AIChatView: View {
                 .padding(.horizontal, GSpacing.md)
                 .padding(.vertical, GSpacing.md)
             }
+            .scrollIndicators(.hidden)
             .onChange(of: viewModel.messages.count) { _, _ in
                 if let lastId = viewModel.messages.last?.id {
                     withAnimation { proxy.scrollTo(lastId, anchor: .bottom) }
@@ -222,22 +291,22 @@ struct AIChatView: View {
 
     var welcomeMessage: some View {
         VStack(spacing: 14) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 26, weight: .regular))
-                .foregroundColor(.gPrimary.opacity(0.9))
-                .frame(width: 54, height: 54)
-                .background(Color.gPrimary.opacity(0.08))
+            Image(systemName: "plus")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.black.opacity(0.72))
+                .frame(width: 46, height: 46)
+                .background(railAccent)
                 .clipShape(Circle())
 
             VStack(spacing: 8) {
                 Text("Ask anything about your notes")
-                    .font(.gSubheadline.weight(.medium))
-                    .foregroundColor(.gTextSecondary)
-                Text("Use the current page, a captured region, or an attached image to get grounded answers.")
+                    .font(.gHeadline.weight(.semibold))
+                    .foregroundColor(railText)
+                Text("Grounded in the current page, a captured region, or an attached image.")
                     .font(.gCaption)
-                    .foregroundColor(.gTextTertiary)
+                    .foregroundColor(railSubtext)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 240)
+                    .frame(maxWidth: 250)
             }
 
             VStack(spacing: 10) {
@@ -248,7 +317,7 @@ struct AIChatView: View {
             }
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 68)
+        .padding(.top, isNarrowRail ? 44 : 72)
         .padding(.bottom, 22)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Ask anything about your notes")
@@ -263,17 +332,35 @@ struct AIChatView: View {
                 Task { await viewModel.sendMessage() }
             }
         } label: {
-            Text(text)
-                .font(.gSubheadline)
-                .foregroundColor(.gPrimary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.gPrimary.opacity(0.1))
-                )
+            HStack(spacing: GSpacing.sm) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(railAccent)
+                    .frame(width: 18)
+
+                Text(text)
+                    .font(.gSubheadline)
+                    .foregroundColor(railText)
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(railSubtext)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                    .fill(railElevated)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                            .stroke(railStroke, lineWidth: 1)
+                    )
+            )
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: isNarrowRail ? 280 : 320, alignment: .center)
     }
 
     var streamingBubble: some View {
@@ -281,10 +368,10 @@ struct AIChatView: View {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.gPrimary)
+                    .foregroundColor(railAccent)
                 Text("Thinking about your notes…")
                     .font(.gSubheadline.weight(.medium))
-                    .foregroundColor(.gTextTertiary)
+                    .foregroundColor(railSubtext)
             }
 
             AIFormattedText(text: viewModel.streamingText, emphasis: .regular)
@@ -293,10 +380,10 @@ struct AIChatView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                .fill(Color.gElevated.opacity(0.95))
+                .fill(railElevated)
                 .overlay(
                     RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                        .stroke(Color.gBorder.opacity(0.3), lineWidth: 0.8)
+                        .stroke(railStroke, lineWidth: 0.8)
                 )
         )
         .accessibilityElement(children: .combine)
@@ -304,13 +391,26 @@ struct AIChatView: View {
     }
 
     func errorBubble(_ text: String) -> some View {
-        HStack(spacing: GSpacing.xs) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.gCaption)
-                .foregroundColor(.red)
-            Text(text)
-                .font(.gCaption)
-                .foregroundColor(.red)
+        VStack(alignment: .leading, spacing: GSpacing.sm) {
+            HStack(spacing: GSpacing.xs) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.gCaption)
+                    .foregroundColor(.red)
+                Text(text)
+                    .font(.gCaption)
+                    .foregroundColor(.red)
+            }
+
+            if viewModel.canRetryLastRequest {
+                Button {
+                    Task { await viewModel.retryLastRequest() }
+                } label: {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .font(.gCaption.weight(.semibold))
+                        .foregroundColor(.gPrimary)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(GSpacing.sm)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -332,10 +432,10 @@ struct AIChatView: View {
         .padding(.horizontal, GSpacing.md)
         .padding(.top, 12)
         .padding(.bottom, GSpacing.md)
-        .background(Color.gSurface)
+        .background(railBackground)
         .overlay(alignment: .top) {
             Rectangle()
-                .fill(Color.gBorder.opacity(0.18))
+                .fill(railStroke)
                 .frame(height: 0.5)
         }
     }
@@ -353,16 +453,17 @@ struct AIChatView: View {
     }
 
     var contextChipRow: some View {
-        HStack {
-            Label("Current page", systemImage: "square.on.square")
-                .font(.gSubheadline)
-                .foregroundColor(.gPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    Capsule(style: .continuous)
-                        .fill(Color.gPrimary.opacity(0.08))
-                )
+        HStack(spacing: GSpacing.xs) {
+            railContextChip(title: "Current page", icon: "square.on.square", isAccent: true)
+
+            Button {
+                attachedContextKind = .capturedRegion
+                onRegionCapture?()
+            } label: {
+                railContextChip(title: "Add context", icon: "plus", isAccent: false)
+            }
+            .buttonStyle(.plain)
+
             Spacer(minLength: 0)
         }
     }
@@ -382,10 +483,10 @@ struct AIChatView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(attachedContextKind.title)
                     .font(.gSubheadline.weight(.medium))
-                    .foregroundColor(.gTextPrimary)
+                    .foregroundColor(railText)
                 Text(attachedContextKind.subtitle)
                     .font(.gCaption)
-                    .foregroundColor(.gTextTertiary)
+                    .foregroundColor(railSubtext)
             }
 
             Spacer()
@@ -395,17 +496,17 @@ struct AIChatView: View {
             } label: {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 20))
-                    .foregroundColor(.gTextTertiary.opacity(0.85))
+                    .foregroundColor(railSubtext.opacity(0.85))
             }
             .buttonStyle(.plain)
         }
         .padding(12)
         .background(
             RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                .fill(Color.gElevated.opacity(0.85))
+                .fill(railElevated)
                 .overlay(
                     RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                        .stroke(Color.gBorder.opacity(0.35), lineWidth: 0.8)
+                        .stroke(railStroke, lineWidth: 0.8)
                 )
         )
     }
@@ -446,7 +547,7 @@ struct AIChatView: View {
             HStack(spacing: 0) {
                 TextField(inputPlaceholder, text: $viewModel.inputText, axis: .vertical)
                     .font(.gSubheadline)
-                    .foregroundColor(.gTextPrimary)
+                    .foregroundColor(railText)
                     .textFieldStyle(.plain)
                     .lineLimit(1...4)
                     .padding(.horizontal, 16)
@@ -456,10 +557,10 @@ struct AIChatView: View {
             }
             .background(
                 Capsule(style: .continuous)
-                    .fill(Color.gElevated.opacity(0.75))
+                    .fill(railElevated)
                     .overlay(
                         Capsule(style: .continuous)
-                            .stroke(Color.gBorder.opacity(0.35), lineWidth: 0.8)
+                            .stroke(railStroke, lineWidth: 0.8)
                     )
             )
 
@@ -495,6 +596,26 @@ struct AIChatView: View {
         viewModel.isStreaming ? "Ask a follow-up…" : "Ask your notes…"
     }
 
+    private func railContextChip(title: String, icon: String, isAccent: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .font(.system(size: 10, weight: .semibold))
+            Text(title)
+                .font(.gCaption.weight(.medium))
+        }
+        .foregroundColor(isAccent ? railAccent : railSubtext)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            Capsule(style: .continuous)
+                .fill(isAccent ? railAccent.opacity(0.14) : railElevated)
+                .overlay(
+                    Capsule(style: .continuous)
+                        .stroke(isAccent ? railAccent.opacity(0.22) : railStroke, lineWidth: 0.8)
+                )
+        )
+    }
+
     private var chatSubtitle: String {
         if viewModel.showHistory {
             return "This notebook · History"
@@ -520,9 +641,13 @@ struct AIChatView: View {
     private func circularComposerButton(icon: String, isFilled: Bool) -> some View {
         Image(systemName: icon)
             .font(.system(size: 18, weight: .semibold))
-            .foregroundColor(isFilled ? .white : .gPrimary)
+            .foregroundColor(isFilled ? .black.opacity(0.72) : railAccent)
             .frame(width: 42, height: 42)
-            .background(isFilled ? Color.gPrimary : Color.gPrimary.opacity(0.08))
+            .background(isFilled ? railAccent : railElevated)
+            .overlay(
+                Circle()
+                    .stroke(isFilled ? railAccent.opacity(0.35) : railStroke, lineWidth: 0.8)
+            )
             .clipShape(Circle())
     }
 }
@@ -538,6 +663,7 @@ final class InlineAIOverlayViewModel: ObservableObject {
     @Published var answer: String = ""
     @Published var isStreaming: Bool = false
     @Published var errorMessage: String? = nil
+    @Published var canRetry: Bool = false
     
     var contextProvider: (() -> String)?
     var onDismiss: (() -> Void)?
@@ -553,6 +679,7 @@ final class InlineAIOverlayViewModel: ObservableObject {
         self.prompt = defaultPrompt
         self.answer = ""
         self.errorMessage = nil
+        self.canRetry = false
         self.isVisible = true
         
         if autoSend {
@@ -568,6 +695,7 @@ final class InlineAIOverlayViewModel: ObservableObject {
         lastImageData = nil
         answer = ""
         errorMessage = nil
+        canRetry = false
         onDismiss?()
     }
     
@@ -575,6 +703,7 @@ final class InlineAIOverlayViewModel: ObservableObject {
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
+        canRetry = false
     }
     
     func send() async {
@@ -587,6 +716,13 @@ final class InlineAIOverlayViewModel: ObservableObject {
         errorMessage = nil
         answer = ""
         isStreaming = true
+        canRetry = false
+
+        if imageData.isStillTooLargeForVisionRequest {
+            answer = Self.oversizedVisionFallbackText
+            isStreaming = false
+            return
+        }
         
         let basePrompt = """
         You are GirokIQ Assistant, an AI embedded in a handwritten canvas note-taking app. \
@@ -622,15 +758,38 @@ final class InlineAIOverlayViewModel: ObservableObject {
                 }
             } catch {
                 if !Task.isCancelled {
-                    errorMessage = error.localizedDescription
+                    if let aiError = error as? AIError, aiError.isOversizedVisionFailure {
+                        errorMessage = nil
+                        answer = Self.oversizedVisionFallbackText
+                    } else if error.localizedDescription.lowercased().contains("image")
+                                && (error.localizedDescription.lowercased().contains("too large")
+                                    || error.localizedDescription.lowercased().contains("too big")
+                                    || error.localizedDescription.lowercased().contains("payload")
+                                    || error.localizedDescription.lowercased().contains("dimension")
+                                    || error.localizedDescription.lowercased().contains("max allowed size")
+                                    || error.localizedDescription.lowercased().contains("8000 pixel")
+                                    || error.localizedDescription.lowercased().contains("exceed max allowed size")) {
+                        errorMessage = nil
+                        answer = Self.oversizedVisionFallbackText
+                    } else {
+                        errorMessage = error.localizedDescription
+                        canRetry = true
+                    }
                 }
             }
             isStreaming = false
         }
     }
+
+    private static let oversizedVisionFallbackText =
+        "This page is too large for me to read reliably in one pass. I didn’t analyze the full image, so please capture a smaller region or zoom into the part you want me to help with."
 }
 
 private extension Data {
+    var isStillTooLargeForVisionRequest: Bool {
+        count > 3_500_000
+    }
+
     func anthropicSafeImageData(
         maxDimension: CGFloat = 4096,
         targetByteCount: Int = 3_500_000,
@@ -639,17 +798,20 @@ private extension Data {
         guard let image = UIImage(data: self) else { return self }
         
         func resizedImage(from source: UIImage, maxDimension: CGFloat) -> UIImage {
-            let sourceSize = source.size
-            let largestDimension = Swift.max(sourceSize.width, sourceSize.height)
+            let pixelWidth = CGFloat(source.cgImage?.width ?? Int(source.size.width * source.scale))
+            let pixelHeight = CGFloat(source.cgImage?.height ?? Int(source.size.height * source.scale))
+            let largestDimension = Swift.max(pixelWidth, pixelHeight)
             guard largestDimension > maxDimension else { return source }
             
             let scale = maxDimension / largestDimension
             let resizedSize = CGSize(
-                width: Swift.max(1, floor(sourceSize.width * scale)),
-                height: Swift.max(1, floor(sourceSize.height * scale))
+                width: Swift.max(1, floor(pixelWidth * scale)),
+                height: Swift.max(1, floor(pixelHeight * scale))
             )
             
-            let renderer = UIGraphicsImageRenderer(size: resizedSize)
+            let format = UIGraphicsImageRendererFormat.default()
+            format.scale = 1
+            let renderer = UIGraphicsImageRenderer(size: resizedSize, format: format)
             return renderer.image { _ in
                 source.draw(in: CGRect(origin: .zero, size: resizedSize))
             }
@@ -760,6 +922,11 @@ struct InlineAIAnswerOverlay: View {
                         .opacity(interpolate(from: 0.82, to: 1, progress: morphProgress))
                         .position(x: interpolatedCenter.x, y: interpolatedCenter.y)
                 }
+                    .genieTransitionProgress(
+                        morphProgress,
+                        from: genieEdge(for: placement.side),
+                        travel: 34
+                    )
                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                     .transaction { transaction in
                         if dragTranslation != .zero {
@@ -866,10 +1033,23 @@ struct InlineAIAnswerOverlay: View {
             }
             
             if let error = viewModel.errorMessage {
-                Text(error)
-                    .font(.gCaption)
-                    .foregroundColor(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(error)
+                        .font(.gCaption)
+                        .foregroundColor(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    if viewModel.canRetry {
+                        Button {
+                            Task { await viewModel.send() }
+                        } label: {
+                            Label("Retry", systemImage: "arrow.clockwise")
+                                .font(.gCaption.weight(.semibold))
+                                .foregroundColor(.gPrimary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             } else if !viewModel.answer.isEmpty {
                 AIFormattedText(text: viewModel.answer, emphasis: .regular)
                     .fixedSize(horizontal: false, vertical: true)
@@ -968,8 +1148,22 @@ struct InlineAIAnswerOverlay: View {
 
         return InlinePopupPlacement(
             center: CGPoint(x: centerX, y: centerYResolved),
-            maxBubbleHeight: maxBubbleHeight
+            maxBubbleHeight: maxBubbleHeight,
+            side: side
         )
+    }
+
+    private func genieEdge(for side: InlinePopupSide) -> Edge {
+        switch side {
+        case .left:
+            return .trailing
+        case .right:
+            return .leading
+        case .below:
+            return .top
+        case .above:
+            return .bottom
+        }
     }
     
     private func morphSourceFrame(for anchor: CGRect, in viewport: CGSize) -> CGRect {
@@ -1003,7 +1197,7 @@ struct InlineAIAnswerOverlay: View {
     
     private func startMorphAnimation() {
         morphProgress = 0
-        withAnimation(GAnimation.springGentle) {
+        animateMotionSafe(GAnimation.springGentle) {
             morphProgress = 1
         }
     }
@@ -1125,6 +1319,7 @@ struct InlineAIAnswerOverlay: View {
 private struct InlinePopupPlacement {
     let center: CGPoint
     let maxBubbleHeight: CGFloat
+    let side: InlinePopupSide
 }
 
 private enum InlinePopupSide {
@@ -1449,6 +1644,28 @@ struct MessageBubble: View {
     let message: AIMessage
     let colorScheme: ColorScheme
 
+    private var assistantBackground: Color {
+        colorScheme == .dark ? Color(hex: "#1A1611") : Color(hex: "#F1EADC")
+    }
+
+    private var userBackground: Color {
+        colorScheme == .dark ? Color(hex: "#2A2113") : Color(hex: "#E8D7AE")
+    }
+
+    private var assistantStroke: Color {
+        colorScheme == .dark ? Color(hex: "#2E271D") : Color(hex: "#D8CBB4")
+    }
+
+    private let accent = Color(hex: "#C9A84C")
+
+    private var bubbleText: Color {
+        colorScheme == .dark ? Color(hex: "#F4EFE6") : Color(hex: "#241F18")
+    }
+
+    private var bubbleSubtext: Color {
+        colorScheme == .dark ? Color(hex: "#9D9488") : Color(hex: "#7D7367")
+    }
+
     var isUser: Bool { message.role == .user }
 
     var body: some View {
@@ -1458,9 +1675,9 @@ struct MessageBubble: View {
             if !isUser {
                 Image(systemName: "sparkles")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.gPrimary)
+                    .foregroundColor(.black.opacity(0.72))
                     .frame(width: 24, height: 24)
-                    .background(Color.gPrimary.opacity(0.08))
+                    .background(accent)
                     .clipShape(Circle())
             }
 
@@ -1478,32 +1695,32 @@ struct MessageBubble: View {
                             Text("Canvas context attached")
                                 .font(.gCaption2)
                         }
-                        .foregroundColor(.gTextTertiary)
+                        .foregroundColor(bubbleSubtext)
                     }
                 }
 
                 if isUser {
                     Text(message.content.markdownAttributed)
                         .font(.gSubheadline)
-                        .foregroundColor(.gTextPrimary)
+                        .foregroundColor(bubbleText)
                         .lineSpacing(4)
                         .textSelection(.enabled)
                 } else {
                     AIFormattedText(text: message.content, emphasis: .regular)
                 }
             }
+            .frame(maxWidth: isUser ? 320 : .infinity, alignment: isUser ? .trailing : .leading)
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                    .fill(isUser ? Color.gPrimary.opacity(0.14) : Color.gElevated.opacity(0.95))
+                    .fill(isUser ? userBackground : assistantBackground)
                     .overlay(
                         RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
-                            .stroke(isUser ? Color.gPrimary.opacity(0.18) : Color.gBorder.opacity(0.28), lineWidth: 0.8)
+                            .stroke(isUser ? accent.opacity(0.3) : assistantStroke, lineWidth: 0.8)
                     )
             )
-
-            if !isUser { Spacer(minLength: 56) }
         }
+        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(isUser ? "You" : "AI"): \(message.content)")
     }

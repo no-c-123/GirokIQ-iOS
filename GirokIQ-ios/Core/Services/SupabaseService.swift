@@ -23,6 +23,23 @@ final class SupabaseService {
     static let shared = SupabaseService()
     private init() {}
 
+    private struct TrashStatePayload: Encodable {
+        let trashedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case trashedAt = "trashed_at"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            if let trashedAt {
+                try container.encode(trashedAt, forKey: .trashedAt)
+            } else {
+                try container.encodeNil(forKey: .trashedAt)
+            }
+        }
+    }
+
     // MARK: - Notebooks
 
     func fetchNotebooks(userId: UUID) async throws -> [Notebook] {
@@ -43,6 +60,12 @@ final class SupabaseService {
             .value
     }
 
+    func upsertNotebook(_ notebook: Notebook) async throws {
+        try await supabase.from("notebooks")
+            .upsert(notebook)
+            .execute()
+    }
+
     func updateNotebook(_ notebook: Notebook) async throws {
         try await supabase.from("notebooks")
             .update(notebook)
@@ -55,6 +78,35 @@ final class SupabaseService {
             .delete()
             .eq("id", value: id.uuidString)
             .execute()
+    }
+
+    func moveNotebookToTrash(id: UUID, trashedAt: Date) async throws {
+        try await supabase.from("notebooks")
+            .update(TrashStatePayload(trashedAt: trashedAt))
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    func restoreNotebook(id: UUID) async throws {
+        try await supabase.from("notebooks")
+            .update(TrashStatePayload(trashedAt: nil))
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    func fetchExpiredNotebookIDs(userId: UUID, before date: Date) async throws -> [UUID] {
+        struct NotebookIDRow: Decodable {
+            let id: UUID
+        }
+
+        let rows: [NotebookIDRow] = try await supabase.from("notebooks")
+            .select("id")
+            .eq("user_id", value: userId.uuidString)
+            .lt("trashed_at", value: ISO8601DateFormatter().string(from: date))
+            .execute()
+            .value
+
+        return rows.map(\.id)
     }
 
     // MARK: - Folders
@@ -77,6 +129,12 @@ final class SupabaseService {
             .value
     }
 
+    func upsertFolder(_ folder: Folder) async throws {
+        try await supabase.from("folders")
+            .upsert(folder)
+            .execute()
+    }
+
     func updateFolder(_ folder: Folder) async throws {
         try await supabase.from("folders")
             .update(folder)
@@ -91,6 +149,35 @@ final class SupabaseService {
             .execute()
     }
 
+    func moveFolderToTrash(id: UUID, trashedAt: Date) async throws {
+        try await supabase.from("folders")
+            .update(TrashStatePayload(trashedAt: trashedAt))
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    func restoreFolder(id: UUID) async throws {
+        try await supabase.from("folders")
+            .update(TrashStatePayload(trashedAt: nil))
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
+    func fetchExpiredFolderIDs(userId: UUID, before date: Date) async throws -> [UUID] {
+        struct FolderIDRow: Decodable {
+            let id: UUID
+        }
+
+        let rows: [FolderIDRow] = try await supabase.from("folders")
+            .select("id")
+            .eq("user_id", value: userId.uuidString)
+            .lt("trashed_at", value: ISO8601DateFormatter().string(from: date))
+            .execute()
+            .value
+
+        return rows.map(\.id)
+    }
+
     // MARK: - Pages
 
     func fetchPages(notebookId: UUID) async throws -> [Page] {
@@ -98,6 +185,15 @@ final class SupabaseService {
             .select()
             .eq("notebook_id", value: notebookId.uuidString)
             .order("page_index", ascending: true)
+            .execute()
+            .value
+    }
+
+    func fetchPage(id: UUID) async throws -> Page {
+        try await supabase.from("pages")
+            .select()
+            .eq("id", value: id.uuidString)
+            .single()
             .execute()
             .value
     }
@@ -111,6 +207,12 @@ final class SupabaseService {
             .value
     }
 
+    func upsertPage(_ page: Page) async throws {
+        try await supabase.from("pages")
+            .upsert(page)
+            .execute()
+    }
+
     func updatePage(_ page: Page) async throws {
         try await supabase.from("pages")
             .update(page)
@@ -121,33 +223,6 @@ final class SupabaseService {
     func deletePage(id: UUID) async throws {
         try await supabase.from("pages")
             .delete()
-            .eq("id", value: id.uuidString)
-            .execute()
-    }
-
-    // MARK: - Strokes
-
-    func fetchStrokes(pageId: UUID) async throws -> [RemoteStroke] {
-        try await supabase.from("strokes")
-            .select()
-            .eq("page_id", value: pageId.uuidString)
-            .eq("deleted", value: false)
-            .execute()
-            .value
-    }
-
-    func upsertStrokes(_ strokes: [RemoteStroke]) async throws {
-        try await supabase.from("strokes")
-            .upsert(strokes)
-            .execute()
-    }
-
-    func softDeleteStroke(id: UUID) async throws {
-        struct DeletePayload: Encodable {
-            let deleted = true
-        }
-        try await supabase.from("strokes")
-            .update(DeletePayload())
             .eq("id", value: id.uuidString)
             .execute()
     }
@@ -167,6 +242,24 @@ final class SupabaseService {
         try await supabase.from("canvas_elements")
             .upsert(element)
             .execute()
+    }
+
+    // MARK: - Canvas Images
+
+    func uploadCanvasImage(data: Data, path: String, contentType: String = "image/jpeg") async throws {
+        try await supabase.storage
+            .from("canvas-images")
+            .upload(
+                path,
+                data: data,
+                options: FileOptions(contentType: contentType, upsert: true)
+            )
+    }
+
+    func downloadCanvasImage(path: String) async throws -> Data {
+        try await supabase.storage
+            .from("canvas-images")
+            .download(path: path)
     }
 
     // MARK: - Chats
@@ -189,6 +282,24 @@ final class SupabaseService {
             .value
     }
 
+    func upsertChat(_ chat: Chat) async throws {
+        try await supabase.from("chats")
+            .upsert(chat)
+            .execute()
+    }
+
+    func deleteChat(id: UUID) async throws {
+        try await supabase.from("messages")
+            .delete()
+            .eq("chat_id", value: id.uuidString)
+            .execute()
+
+        try await supabase.from("chats")
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
+    }
+
     // MARK: - Messages
 
     func fetchMessages(chatId: UUID) async throws -> [Message] {
@@ -209,17 +320,17 @@ final class SupabaseService {
             .value
     }
 
-    // MARK: - Web Strokes
-
-    /// Fetch web-format strokes for a page from the `strokes_web` table.
-    /// Used as fallback when a page has no PKDrawing `drawing_data`.
-    func fetchWebStrokes(pageId: UUID) async throws -> [WebStroke] {
-        try await supabase.from("strokes_web")
-            .select()
-            .eq("page_id", value: pageId.uuidString)
-            .order("created_at", ascending: true)
+    func upsertMessage(_ message: Message) async throws {
+        try await supabase.from("messages")
+            .upsert(message)
             .execute()
-            .value
+    }
+
+    func deleteMessage(id: UUID) async throws {
+        try await supabase.from("messages")
+            .delete()
+            .eq("id", value: id.uuidString)
+            .execute()
     }
 
     // MARK: - Presence
@@ -269,10 +380,15 @@ final class SupabaseService {
         }
 
         Task {
-            try await channel.subscribeWithError()
-
-            // Track this device in the presence channel
-            try? await channel.track(["user_id": userId.uuidString, "platform": platform])
+            do {
+                try await channel.subscribe()
+                try await trackPresenceWithRetry(
+                    on: channel,
+                    state: ["user_id": userId.uuidString, "platform": platform]
+                )
+            } catch {
+                print("[Presence] Failed to join notebook presence: \(error)")
+            }
         }
 
         return channel
@@ -281,6 +397,30 @@ final class SupabaseService {
     /// Leave a notebook presence channel.
     func leaveNotebookPresence(_ channel: RealtimeChannelV2) async {
         await supabase.realtimeV2.removeChannel(channel)
+    }
+
+    private func trackPresenceWithRetry(
+        on channel: RealtimeChannelV2,
+        state: [String: String],
+        attempts: Int = 5
+    ) async throws {
+        var lastError: Error?
+
+        for attempt in 0..<attempts {
+            do {
+                try await channel.track(state)
+                return
+            } catch {
+                lastError = error
+                if attempt < attempts - 1 {
+                    try? await Task.sleep(for: .milliseconds(350))
+                }
+            }
+        }
+
+        if let lastError {
+            throw lastError
+        }
     }
 
     // MARK: - App State

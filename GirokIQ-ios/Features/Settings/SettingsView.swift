@@ -4,11 +4,18 @@ struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.dismiss) var dismiss
-    @Environment(\.colorScheme) private var colorScheme
 
     @State private var showExportShare = false
     @State private var exportURL: URL?
     @State private var showDeleteConfirm = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountErrorMessage: String?
+    @State private var showEditDisplayName = false
+    @State private var editedDisplayName = ""
+    @State private var isUpdatingDisplayName = false
+    @State private var displayNameErrorMessage: String?
+    @State private var isForceBackfillRunning = false
+    @State private var forceBackfillErrorMessage: String?
 
     var body: some View {
         NavigationStack {
@@ -24,6 +31,10 @@ struct SettingsView: View {
 
                 // MARK: - AI Assistant
                 aiSection
+
+                if Configuration.cloudSyncEnabled {
+                    syncSection
+                }
 
                 // MARK: - Data & Export
                 dataSection
@@ -44,6 +55,75 @@ struct SettingsView: View {
                 if let url = exportURL {
                     ShareSheet(items: [url])
                 }
+            }
+            .alert("Edit Display Name", isPresented: $showEditDisplayName) {
+                TextField("Display Name", text: $editedDisplayName)
+                Button("Save") {
+                    Task {
+                        isUpdatingDisplayName = true
+                        defer { isUpdatingDisplayName = false }
+
+                        do {
+                            try await authViewModel.updateDisplayName(editedDisplayName)
+                        } catch {
+                            displayNameErrorMessage = error.localizedDescription
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Choose the name shown in your account and settings.")
+            }
+            .confirmationDialog("Delete Account?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+                Button("Delete Account", role: .destructive) {
+                    Task {
+                        isDeletingAccount = true
+                        defer { isDeletingAccount = false }
+
+                        do {
+                            try await authViewModel.deleteAccount()
+                            dismiss()
+                        } catch {
+                            deleteAccountErrorMessage = error.localizedDescription
+                        }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes your account and all notebooks, pages, strokes, elements, and chats. This action cannot be undone.")
+            }
+            .alert(
+                "Couldn’t Delete Account",
+                isPresented: Binding(
+                    get: { deleteAccountErrorMessage != nil },
+                    set: { if !$0 { deleteAccountErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteAccountErrorMessage ?? "")
+            }
+            .alert(
+                "Couldn’t Update Display Name",
+                isPresented: Binding(
+                    get: { displayNameErrorMessage != nil },
+                    set: { if !$0 { displayNameErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(displayNameErrorMessage ?? "")
+            }
+            .alert(
+                "Couldn’t Rebuild Cloud Backup",
+                isPresented: Binding(
+                    get: { forceBackfillErrorMessage != nil },
+                    set: { if !$0 { forceBackfillErrorMessage = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(forceBackfillErrorMessage ?? "")
             }
         }
     }
@@ -73,6 +153,26 @@ struct SettingsView: View {
                 }
             }
 
+            Button {
+                editedDisplayName = authViewModel.displayName == authViewModel.currentUserEmail ? "" : authViewModel.displayName
+                showEditDisplayName = true
+            } label: {
+                HStack {
+                    Text("Display Name")
+                    Spacer()
+                    if isUpdatingDisplayName {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text(authViewModel.displayName)
+                            .foregroundColor(.gTextSecondary)
+                    }
+                }
+            }
+            .disabled(isUpdatingDisplayName || isDeletingAccount)
+            .accessibilityLabel("Edit display name")
+            .accessibilityHint("Double tap to change the display name shown on your account")
+
             if viewModel.canUseBiometrics {
                 Toggle("\(viewModel.biometricName) Lock", isOn: $viewModel.biometricLockEnabled)
                     .accessibilityLabel("\(viewModel.biometricName) lock")
@@ -82,10 +182,26 @@ struct SettingsView: View {
             Button("Sign Out", role: .destructive) {
                 Task { await authViewModel.signOut() }
             }
+            .disabled(isDeletingAccount)
             .accessibilityLabel("Sign out")
             .accessibilityHint("Double tap to sign out of your account")
+
+            Button(role: .destructive) {
+                showDeleteConfirm = true
+            } label: {
+                if isDeletingAccount {
+                    Label("Deleting Account…", systemImage: "trash")
+                } else {
+                    Label("Delete Account", systemImage: "trash")
+                }
+            }
+            .disabled(isDeletingAccount)
+            .accessibilityLabel("Delete account")
+            .accessibilityHint("Permanently delete your account and all synced data")
         } header: {
             Text("Account")
+        } footer: {
+            Text("Account deletion is permanent and removes all synced notebooks, pages, strokes, elements, and chats.")
         }
     }
 
@@ -156,19 +272,69 @@ struct SettingsView: View {
                 Spacer()
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(Color.green)
+                        .fill(viewModel.aiAvailabilityStatus.tintColor)
                         .frame(width: 7, height: 7)
-                    Text("Connected")
+                    Text(viewModel.aiAvailabilityStatus.title)
                         .font(.gCaption)
                         .foregroundColor(.gTextSecondary)
                 }
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("AI status: Connected")
+            .accessibilityLabel("AI status: \(viewModel.aiAvailabilityStatus.title)")
         } header: {
             Text("AI Assistant")
         } footer: {
-            Text("AI features are built in — no setup required.")
+            Text("AI requests are sent through the signed-in app server proxy. No model API key is stored in the app bundle.")
+        }
+    }
+
+    // MARK: - Sync Section
+
+    var syncSection: some View {
+        Section {
+            Toggle("Auto Sync", isOn: $viewModel.autoSync)
+                .accessibilityHint("Automatically push pending changes to cloud in the background")
+
+            Toggle("Sync on Wi-Fi Only", isOn: $viewModel.syncOnWiFiOnly)
+                .accessibilityHint("Restrict automatic cloud sync to Wi-Fi connections")
+
+            Button {
+                Task {
+                    isForceBackfillRunning = true
+                    defer { isForceBackfillRunning = false }
+
+                    do {
+                        try await authViewModel.forceCloudBackfill()
+                    } catch {
+                        forceBackfillErrorMessage = error.localizedDescription
+                    }
+                }
+            } label: {
+                HStack {
+                    if isForceBackfillRunning {
+                        Label("Rebuilding Cloud Backup…", systemImage: "arrow.clockwise.icloud")
+                    } else {
+                        Label("Rebuild Cloud Backup", systemImage: "arrow.clockwise.icloud")
+                    }
+                    Spacer()
+                    if isForceBackfillRunning {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+            }
+            .disabled(isForceBackfillRunning || isDeletingAccount || authViewModel.currentUserId == nil)
+            .accessibilityHint("Re-enqueue all local content for upload after a remote reset or migration")
+
+            if let status = authViewModel.backfillStatusMessage, !status.isEmpty {
+                Text(status)
+                    .font(.gCaption)
+                    .foregroundColor(.gTextSecondary)
+            }
+        } header: {
+            Text("Sync")
+        } footer: {
+            Text("Use Rebuild Cloud Backup after resetting Supabase tables or when you need to re-upload the full local library without reinstalling the app.")
         }
     }
 
@@ -176,11 +342,6 @@ struct SettingsView: View {
 
     var dataSection: some View {
         Section {
-            Toggle("Auto Sync", isOn: $viewModel.autoSync)
-                .accessibilityHint("Automatically sync notebooks to the cloud")
-            Toggle("Wi-Fi Only", isOn: $viewModel.syncOnWiFiOnly)
-                .accessibilityHint("Only sync when connected to Wi-Fi")
-
             Button {
                 Task {
                     if let userId = authViewModel.currentUserId {
@@ -193,7 +354,7 @@ struct SettingsView: View {
             }
             .accessibilityHint("Double tap to export all notebooks as an archive")
         } header: {
-            Text("Data & Sync")
+            Text("Data")
         }
     }
 
@@ -233,7 +394,24 @@ struct ShareSheet: UIViewControllerRepresentable {
     let items: [Any]
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        // iPad: UIActivityViewController is presented as a popover and requires an anchor.
+        // Without this, presenting from a sheet/navigation stack can crash.
+        if let popover = controller.popoverPresentationController {
+            let anchorView = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first(where: { $0.isKeyWindow })
+            popover.sourceView = anchorView
+            popover.sourceRect = CGRect(
+                x: anchorView?.bounds.midX ?? 0,
+                y: anchorView?.bounds.midY ?? 0,
+                width: 0,
+                height: 0
+            )
+            popover.permittedArrowDirections = []
+        }
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}

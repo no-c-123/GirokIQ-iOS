@@ -1,10 +1,13 @@
 import SwiftUI
 import PencilKit
+internal import UniformTypeIdentifiers
 
 // MARK: - Page Strip View
 
 struct PageStripView: View {
     @ObservedObject var canvasVM: CanvasViewModel
+    @State private var pagePendingDeletion: Int?
+    @State private var draggedPageID: UUID?
 
     var body: some View {
         ScrollView(.vertical, showsIndicators: false) {
@@ -21,6 +24,28 @@ struct PageStripView: View {
         .background(Color.gBackground.opacity(0.96))
         .overlay(alignment: .trailing) {
             Divider().opacity(0.2)
+        }
+        .confirmationDialog(
+            "Delete this page?",
+            isPresented: Binding(
+                get: { pagePendingDeletion != nil },
+                set: { if !$0 { pagePendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete Page", role: .destructive) {
+                if let index = pagePendingDeletion {
+                    withAnimation {
+                        canvasVM.deletePage(at: index)
+                    }
+                }
+                pagePendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pagePendingDeletion = nil
+            }
+        } message: {
+            Text("This page has content. Deleting it will permanently remove its drawing, text, and images.")
         }
     }
 
@@ -62,14 +87,50 @@ struct PageStripView: View {
             }
         }
         .minTapTarget()
+        .onDrag {
+            draggedPageID = page.id
+            return NSItemProvider(object: page.id.uuidString as NSString)
+        }
+        .onDrop(
+            of: [UTType.text],
+            delegate: PageReorderDropDelegate(
+                targetPageID: page.id,
+                canvasVM: canvasVM,
+                draggedPageID: $draggedPageID
+            )
+        )
         .accessibilityLabel("Page \(index + 1)")
         .accessibilityHint(isSelected ? "Currently selected" : "Double tap to switch to page \(index + 1)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .contextMenu {
+            if index > 0 {
+                Button {
+                    withAnimation {
+                        canvasVM.movePage(from: index, to: index - 1)
+                    }
+                } label: {
+                    Label("Move Up", systemImage: "arrow.up")
+                }
+            }
+
+            if index < canvasVM.pages.count - 1 {
+                Button {
+                    withAnimation {
+                        canvasVM.movePage(from: index, to: index + 1)
+                    }
+                } label: {
+                    Label("Move Down", systemImage: "arrow.down")
+                }
+            }
+
             if canvasVM.pages.count > 1 {
                 Button(role: .destructive) {
-                    withAnimation {
-                        canvasVM.deletePage(at: index)
+                    if canvasVM.pageHasContent(at: index) {
+                        pagePendingDeletion = index
+                    } else {
+                        withAnimation {
+                            canvasVM.deletePage(at: index)
+                        }
                     }
                 } label: {
                     Label("Delete Page", systemImage: "trash")
@@ -101,6 +162,32 @@ struct PageStripView: View {
         .accessibilityHint("Double tap to add a new page")
         .accessibilityAddTraits(.isButton)
         .keyboardShortcut("n", modifiers: .command)
+    }
+}
+
+private struct PageReorderDropDelegate: DropDelegate {
+    let targetPageID: UUID
+    let canvasVM: CanvasViewModel
+    @Binding var draggedPageID: UUID?
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedPageID,
+              draggedPageID != targetPageID,
+              let fromIndex = canvasVM.pages.firstIndex(where: { $0.id == draggedPageID }),
+              let toIndex = canvasVM.pages.firstIndex(where: { $0.id == targetPageID }) else { return }
+
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.88)) {
+            canvasVM.movePage(from: fromIndex, to: toIndex)
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedPageID = nil
+        return true
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
     }
 }
 

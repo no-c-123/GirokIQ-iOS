@@ -14,6 +14,7 @@ struct Notebook: Codable, Identifiable, Hashable {
 
     let createdAt: Date
     var updatedAt: Date
+    var trashedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -26,6 +27,7 @@ struct Notebook: Codable, Identifiable, Hashable {
         case backgroundColorHex = "background_color_hex"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case trashedAt = "trashed_at"
     }
 
     init(
@@ -38,7 +40,8 @@ struct Notebook: Codable, Identifiable, Hashable {
         backgroundPattern: String = "blank",
         backgroundColorHex: String = "#0F0F0E",
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        trashedAt: Date? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -50,6 +53,34 @@ struct Notebook: Codable, Identifiable, Hashable {
         self.backgroundColorHex = backgroundColorHex
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.trashedAt = trashedAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(userId, forKey: .userId)
+        if let folderId {
+            try container.encode(folderId, forKey: .folderId)
+        } else {
+            try container.encodeNil(forKey: .folderId)
+        }
+        try container.encode(name, forKey: .name)
+        try container.encode(canvasType, forKey: .canvasType)
+        if let pageDimensions {
+            try container.encode(pageDimensions, forKey: .pageDimensions)
+        } else {
+            try container.encodeNil(forKey: .pageDimensions)
+        }
+        try container.encode(backgroundPattern, forKey: .backgroundPattern)
+        try container.encode(backgroundColorHex, forKey: .backgroundColorHex)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        if let trashedAt {
+            try container.encode(trashedAt, forKey: .trashedAt)
+        } else {
+            try container.encodeNil(forKey: .trashedAt)
+        }
     }
 }
 
@@ -81,6 +112,7 @@ struct Folder: Codable, Identifiable, Hashable {
     var name: String
     let createdAt: Date
     var updatedAt: Date
+    var trashedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -89,6 +121,7 @@ struct Folder: Codable, Identifiable, Hashable {
         case name
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case trashedAt = "trashed_at"
     }
 
     init(
@@ -97,7 +130,8 @@ struct Folder: Codable, Identifiable, Hashable {
         parentId: UUID? = nil,
         name: String,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        trashedAt: Date? = nil
     ) {
         self.id = id
         self.userId = userId
@@ -105,5 +139,25 @@ struct Folder: Codable, Identifiable, Hashable {
         self.name = name
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.trashedAt = trashedAt
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(userId, forKey: .userId)
+        if let parentId {
+            try container.encode(parentId, forKey: .parentId)
+        } else {
+            try container.encodeNil(forKey: .parentId)
+        }
+        try container.encode(name, forKey: .name)
+        try container.encode(createdAt, forKey: .createdAt)
+        try container.encode(updatedAt, forKey: .updatedAt)
+        if let trashedAt {
+            try container.encode(trashedAt, forKey: .trashedAt)
+        } else {
+            try container.encodeNil(forKey: .trashedAt)
+        }
     }
 }

@@ -16,10 +16,12 @@ struct GirokIQ_iosApp: App {
         }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
+            case .inactive:
+                deps.protectContentForBackground()
             case .background:
-                deps.recordBackgroundTime()
+                deps.protectContentForBackground()
             case .active:
-                deps.checkLockOnForeground()
+                deps.handleAppDidBecomeActive()
             default:
                 break
             }
@@ -36,7 +38,9 @@ struct RootView: View {
     var body: some View {
         ZStack {
             Group {
-                if authViewModel.isAuthenticated {
+                if authViewModel.isRestoringSession {
+                    LaunchLoadingView()
+                } else if authViewModel.isAuthenticated {
                     AdaptiveNavigationView()
                 } else {
                     AuthView()
@@ -45,12 +49,35 @@ struct RootView: View {
             .animation(GAnimation.spring, value: authViewModel.isAuthenticated)
 
             // Biometric lock overlay
-            if deps.isLocked {
+            if deps.isLocked && authViewModel.isAuthenticated {
                 LockOverlayView()
-                    .transition(.opacity)
+                    .zIndex(1)
             }
         }
-        .animation(GAnimation.spring, value: deps.isLocked)
+        .task(id: deps.shouldPromptForUnlock) {
+            guard deps.shouldPromptForUnlock else { return }
+            await deps.unlockWithBiometrics()
+        }
+    }
+}
+
+// MARK: - Launch Loading
+
+struct LaunchLoadingView: View {
+    var body: some View {
+        ZStack {
+            Color.gBackground
+                .ignoresSafeArea()
+
+            VStack(spacing: GSpacing.lg) {
+                ProgressView()
+                    .tint(.gPrimary)
+
+                Text("Restoring your session…")
+                    .font(.gSubheadline)
+                    .foregroundColor(.gTextSecondary)
+            }
+        }
     }
 }
 
@@ -72,7 +99,6 @@ struct AdaptiveNavigationView: View {
 
 struct LockOverlayView: View {
     @EnvironmentObject var deps: AppDependencies
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
@@ -109,10 +135,6 @@ struct LockOverlayView: View {
                 }
                 .padding(.top, GSpacing.sm)
             }
-        }
-        .task {
-            // Auto-prompt biometrics when overlay appears
-            await deps.unlockWithBiometrics()
         }
     }
 }

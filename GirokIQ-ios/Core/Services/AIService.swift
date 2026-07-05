@@ -1,28 +1,24 @@
 import Foundation
+import Supabase
 
 // MARK: - AI Service
 
-/// Calls the Anthropic Messages API via direct URLSession.
-/// API key is sourced from Configuration (xcconfig → Info.plist).
+/// Calls the server-side `ai-chat` Supabase Edge Function.
+/// The user's auth session is forwarded as a Bearer token; the Anthropic key stays server-side.
 final class AIService {
-    private static let endpointURL: URL = {
-        guard let url = URL(string: "https://api.anthropic.com/v1/messages") else {
-            preconditionFailure("Invalid static API endpoint URL")
-        }
-        return url
-    }()
-    private var endpoint: URL { Self.endpointURL }
+    private var endpoint: URL {
+        Configuration.supabaseFunctionsBaseURL.appendingPathComponent("ai-chat")
+    }
     private let defaultModel = "claude-sonnet-4-6"
-
-    private var resolvedAPIKey: String { Configuration.anthropicAPIKey }
 
     // MARK: - API Key Management
 
     var hasAPIKey: Bool {
-        !resolvedAPIKey.isEmpty
+        true
     }
 
     func setAPIKey(_ key: String) {
+        _ = key
     }
 
     func removeAPIKey() {
@@ -38,22 +34,13 @@ final class AIService {
         imageData: Data? = nil,
         model: String? = nil
     ) async throws -> String {
-        let apiKey = resolvedAPIKey
-        guard !apiKey.isEmpty else { throw AIError.noAPIKey }
-
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-
-        let body = buildRequestBody(
+        let request = try await authorizedRequest(
             systemPrompt: systemPrompt,
             messages: messages,
             imageData: imageData,
-            model: model ?? defaultModel
+            model: model ?? defaultModel,
+            stream: false
         )
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -61,8 +48,10 @@ final class AIService {
             throw AIError.invalidResponse
         }
         guard (200...299).contains(httpResponse.statusCode) else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw AIError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
+            throw AIError.apiError(
+                statusCode: httpResponse.statusCode,
+                message: extractErrorBody(from: data)
+            )
         }
 
         return try parseResponse(data)
@@ -79,40 +68,22 @@ final class AIService {
     ) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
-                let apiKey = self.resolvedAPIKey
-                guard !apiKey.isEmpty else {
-                    continuation.finish(throwing: AIError.noAPIKey)
-                    return
-                }
-
-                var request = URLRequest(url: self.endpoint)
-                request.httpMethod = "POST"
-                request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-
-                var body = self.buildRequestBody(
-                    systemPrompt: systemPrompt,
-                    messages: messages,
-                    imageData: imageData,
-                    model: model ?? self.defaultModel
-                )
-                body["stream"] = true
-                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
                 do {
+                    let request = try await self.authorizedRequest(
+                        systemPrompt: systemPrompt,
+                        messages: messages,
+                        imageData: imageData,
+                        model: model ?? self.defaultModel,
+                        stream: true
+                    )
+
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: AIError.invalidResponse)
                         return
                     }
                     guard (200...299).contains(httpResponse.statusCode) else {
-                        // Read the error body so the real reason (401 bad key, 400 no
-                        // credits, 404 model, 429 rate limit) surfaces instead of a
-                        // generic "Invalid response" message.
-                        var errorBody = ""
-                        for try await line in bytes.lines { errorBody += line }
-                        if errorBody.isEmpty { errorBody = "Unknown error" }
+                        let errorBody = try await self.extractErrorBody(from: bytes)
                         continuation.finish(throwing: AIError.apiError(
                             statusCode: httpResponse.statusCode,
                             message: errorBody
@@ -143,6 +114,36 @@ final class AIService {
     }
 
     // MARK: - Private
+
+    private func authorizedRequest(
+        systemPrompt: String,
+        messages: [AIMessage],
+        imageData: Data?,
+        model: String,
+        stream: Bool
+    ) async throws -> URLRequest {
+        let session = try await supabase.auth.session
+        guard !session.isExpired else {
+            throw AIError.unauthorized
+        }
+
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(session.accessToken)", forHTTPHeaderField: "Authorization")
+
+        var body = buildRequestBody(
+            systemPrompt: systemPrompt,
+            messages: messages,
+            imageData: imageData,
+            model: model
+        )
+        if stream {
+            body["stream"] = true
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return request
+    }
 
     private func buildRequestBody(
         systemPrompt: String,
@@ -215,6 +216,13 @@ final class AIService {
 
 
     private func parseResponse(_ data: Data) throws -> String {
+        if
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let error = (json["error"] as? String) ?? (json["message"] as? String)
+        {
+            throw AIError.apiError(statusCode: 500, message: error)
+        }
+
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = json["content"] as? [[String: Any]],
               let firstBlock = content.first,
@@ -223,6 +231,35 @@ final class AIService {
         }
         return text
     }
+
+    private func extractErrorBody(from data: Data) -> String {
+        if
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let error = (json["error"] as? String) ?? (json["message"] as? String),
+            !error.isEmpty
+        {
+            return error
+        }
+
+        if let text = String(data: data, encoding: .utf8), !text.isEmpty {
+            return text
+        }
+
+        return "Unknown error"
+    }
+
+    private func extractErrorBody(from bytes: URLSession.AsyncBytes) async throws -> String {
+        var errorBody = ""
+        for try await line in bytes.lines {
+            errorBody += line
+        }
+
+        if let data = errorBody.data(using: .utf8) {
+            return extractErrorBody(from: data)
+        }
+
+        return errorBody.isEmpty ? "Unknown error" : errorBody
+    }
 }
 
 // MARK: - AI Errors
@@ -230,16 +267,39 @@ final class AIService {
 enum AIError: LocalizedError {
     case noAPIKey
     case invalidResponse
+    case unauthorized
     case apiError(statusCode: Int, message: String)
 
     var errorDescription: String? {
         switch self {
         case .noAPIKey:
-            return "AI service is not configured (missing ANTHROPIC_API_KEY). Please rebuild the app or contact support."
+            return "AI service is not configured."
         case .invalidResponse:
             return "Invalid response from AI service."
+        case .unauthorized:
+            return "Your session expired. Please sign in again."
         case .apiError(let code, let message):
             return "AI error (\(code)): \(message)"
+        }
+    }
+
+    var isOversizedVisionFailure: Bool {
+        switch self {
+        case .apiError(let statusCode, let message):
+            let lowered = message.lowercased()
+            return statusCode == 413
+                || lowered.contains("image too large")
+                || lowered.contains("request too large")
+                || lowered.contains("too many bytes")
+                || lowered.contains("maximum context length")
+                || lowered.contains("payload too large")
+                || lowered.contains("dimension")
+                || lowered.contains("max allowed size")
+                || lowered.contains("8000 pixel")
+                || lowered.contains("exceed max allowed size")
+                || lowered.contains("too large")
+        default:
+            return false
         }
     }
 }

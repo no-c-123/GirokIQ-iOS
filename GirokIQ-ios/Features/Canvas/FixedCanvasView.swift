@@ -34,10 +34,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
 
         // Configure background pattern
         hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
-        if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
-            hostView.backgroundPatternView.pageBackgroundColor = color
-        }
+        hostView.backgroundPatternView.pageBackgroundColor = .gBackground
 
         context.coordinator.hostView = hostView
         context.coordinator.canvasView = canvasView
@@ -69,14 +66,10 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         let menuBlocker = MenuBlockerGestureRecognizer(canvas: canvasView)
         canvasView.addGestureRecognizer(menuBlocker)
 
-        // Forward UndoManager to viewModel
-        Task { @MainActor in
+        // Defer published-state writes until after UIKit finishes this update cycle.
+        DispatchQueue.main.async {
             viewModel.pkUndoManager = canvasView.undoManager
             viewModel.refreshUndoState()
-        }
-
-        // Used by #5: allow the view model to scroll the viewport when the keyboard covers text.
-        Task { @MainActor in
             viewModel.setViewportScrollView(hostView.scrollView)
         }
 
@@ -86,6 +79,11 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
     func updateUIView(_ hostView: FixedCanvasHostView, context: Context) {
         let canvasView = hostView.canvasView
         viewModel.setCanvasViewSizeIfNeeded(hostView.bounds.size)
+
+        if context.coordinator.lastViewportRestoreToken != viewModel.viewportRestoreToken {
+            context.coordinator.lastViewportRestoreToken = viewModel.viewportRestoreToken
+            hostView.resetViewportRestoreState()
+        }
 
         let newTool = currentPKTool()
         if !toolsEqual(canvasView.tool, newTool) {
@@ -127,11 +125,8 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         if hostView.backgroundPatternView.pattern != viewModel.backgroundPattern {
             hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
         }
-        if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
-            if hostView.backgroundPatternView.pageBackgroundColor != color {
-                hostView.backgroundPatternView.pageBackgroundColor = color
-            }
+        if hostView.backgroundPatternView.pageBackgroundColor != .gBackground {
+            hostView.backgroundPatternView.pageBackgroundColor = .gBackground
         }
 
         // Sync drawing data when page changes
@@ -141,7 +136,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
             let pageDrawing = viewModel.currentDrawing
             
             if viewModel.forceDrawingUpdate {
-                if let undoManager = canvasView.undoManager {
+                if !viewModel.isPreviewingLassoMove, let undoManager = canvasView.undoManager {
                     let oldDrawing = canvasView.drawing
                     undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
                         coordinator.setDrawing(oldDrawing, on: canvasView)
@@ -156,7 +151,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
                 context.coordinator.setDrawing(pageDrawing, on: canvasView)
             }
             
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 viewModel.pkUndoManager = canvasView.undoManager
                 viewModel.refreshUndoState()
             }
@@ -169,7 +164,10 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
                    aInk.color == bInk.color &&
                    aInk.width == bInk.width
         }
-        if a is PKEraserTool && b is PKEraserTool { return true }
+        if let aEraser = a as? PKEraserTool, let bEraser = b as? PKEraserTool {
+            return aEraser.eraserType == bEraser.eraserType &&
+                   abs(aEraser.width - bEraser.width) < 0.01
+        }
         if a is PKLassoTool && b is PKLassoTool { return true }
         return false
     }
@@ -179,7 +177,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         return PencilKitBridge.pkTool(
             for: viewModel.selectedTool,
             color: uiColor.withAlphaComponent(viewModel.strokeOpacity),
-            width: viewModel.strokeWidth,
+            width: viewModel.selectedTool == .eraser ? viewModel.eraserWidth : viewModel.strokeWidth,
             penStyle: viewModel.penStyle,
             eraserType: viewModel.eraserType
         )
@@ -193,6 +191,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         weak var hostView: FixedCanvasHostView?
         var currentPageIndex: Int = 0
         var currentPageId: UUID?
+        var lastViewportRestoreToken: UUID?
 
         private var isUpdatingDrawing = false
         private var lastStrokeFromPencil = true
@@ -200,6 +199,7 @@ struct FixedCanvasRepresentable: UIViewRepresentable {
         init(viewModel: CanvasViewModel) {
             self.viewModel = viewModel
             self.currentPageIndex = viewModel.currentPageIndex
+            self.lastViewportRestoreToken = viewModel.viewportRestoreToken
         }
 
         func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
@@ -288,6 +288,13 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
     private let pageSize: CGSize
     private var viewModel: CanvasViewModel?
     private var didSetInitialZoom = false
+    private var pendingRestoredViewport: CanvasViewportState?
+
+    func resetViewportRestoreState() {
+        didSetInitialZoom = false
+        pendingRestoredViewport = nil
+        setNeedsLayout()
+    }
     private lazy var textTapRecognizer: UITapGestureRecognizer = {
         let recognizer = UITapGestureRecognizer(target: self, action: #selector(handleCanvasTap(_:)))
         // Do NOT swallow touches: the UITextView inside text blocks must receive
@@ -385,6 +392,7 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
             blockHost.view.clipsToBounds = false
             pageContainerView.addSubview(blockHost.view)
             self.blockOverlayHostView = blockHost
+            viewModel.setCanvasCoordinateViews(hostView: self, contentView: blockHost.view)
         }
 
         // Lasso capture sits on the host (above the page). The scroll view's pan must
@@ -403,10 +411,11 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
 
     @objc private func handleLassoPan(_ recognizer: UIPanGestureRecognizer) {
         guard let viewModel, viewModel.selectedTool == .lasso, !viewModel.isRegionCaptureMode else { return }
-        let point = recognizer.location(in: self)
+        let screenPoint = recognizer.location(in: self)
+        let canvasPoint = blockOverlayHostView?.view.map { self.convert(screenPoint, to: $0) } ?? screenPoint
         switch recognizer.state {
-        case .began:    viewModel.beginLiveLasso(at: point)
-        case .changed:  viewModel.appendLiveLasso(point)
+        case .began:    viewModel.beginLiveLasso(at: screenPoint, canvasPoint: canvasPoint)
+        case .changed:  viewModel.appendLiveLasso(screenPoint, canvasPoint: canvasPoint)
         case .ended:    viewModel.endLiveLasso()
         case .cancelled, .failed: viewModel.cancelLiveLasso()
         default: break
@@ -450,13 +459,16 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
         }
         if let state = viewModel?.restoredViewport {
             let restoredScale = max(scrollView.minimumZoomScale, min(state.scale, scrollView.maximumZoomScale))
-            scrollView.zoomScale = restoredScale
-            centerPage()
-            scrollView.contentOffset = CGPoint(x: state.offsetX, y: state.offsetY)
-            viewModel?.finalizeViewport(
-                offset: CGSize(width: state.offsetX, height: state.offsetY),
+            pendingRestoredViewport = CanvasViewportState(
+                offsetX: state.offsetX,
+                offsetY: state.offsetY,
                 scale: restoredScale
             )
+            scrollView.zoomScale = restoredScale
+            centerPage()
+            DispatchQueue.main.async { [weak self] in
+                self?.applyPendingRestoredViewportIfNeeded()
+            }
         } else {
             let fitZoom = (bounds.width - 80) / pageSize.width
             scrollView.zoomScale = max(scrollView.minimumZoomScale, min(fitZoom, scrollView.maximumZoomScale))
@@ -467,6 +479,16 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
             )
         }
         didSetInitialZoom = true
+    }
+
+    private func applyPendingRestoredViewportIfNeeded() {
+        guard let state = pendingRestoredViewport else { return }
+        scrollView.setContentOffset(CGPoint(x: state.offsetX, y: state.offsetY), animated: false)
+        viewModel?.finalizeViewport(
+            offset: CGSize(width: state.offsetX, height: state.offsetY),
+            scale: state.scale
+        )
+        pendingRestoredViewport = nil
     }
 
     private func centerPage() {

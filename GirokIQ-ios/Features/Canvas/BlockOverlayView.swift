@@ -28,7 +28,10 @@ struct BlockOverlayView: View {
                             let w = CGFloat(element.width ?? 200)
                             let h = CGFloat(element.height ?? 200)
                             var rect = CGRect(x: element.positionX, y: element.positionY, width: w, height: h)
-                            if viewModel.selectedElementIds.contains(element.id) {
+                            let showsDirectSelectionChrome =
+                                viewModel.selectedElementIds.contains(element.id) &&
+                                !viewModel.isLassoSelectionActive
+                            if showsDirectSelectionChrome {
                                 rect = rect.insetBy(dx: -18, dy: -18)
                                 rect.origin.y -= 58
                                 rect.size.height += 76
@@ -85,6 +88,12 @@ struct BlockOverlayView: View {
 
                 ForEach(viewModel.pages[viewModel.currentPageIndex].elements) { element in
                     BlockElementView(element: element, viewModel: viewModel)
+                        .opacity(
+                            (viewModel.isPreviewingLassoMove || viewModel.isPreviewingLassoResize) &&
+                            viewModel.selectedElementIds.contains(element.id)
+                                ? 0
+                                : 1
+                        )
                 }
                 
                 if let highlightRect = viewModel.inlineAIHighlightRect {
@@ -348,10 +357,18 @@ struct BlockElementView: View {
         viewModel.selectedElementIds.contains(element.id)
     }
 
+    var isSelectedByLasso: Bool {
+        viewModel.isLassoSelectionActive && isSelected
+    }
+
+    var showsDirectSelectionChrome: Bool {
+        isSelected && !isSelectedByLasso
+    }
+
     var selectionTopPadding: CGFloat {
-        guard isSelected else { return 0 }
+        guard showsDirectSelectionChrome else { return 0 }
         if element.type == "text" { return 50 }
-        return 58
+        return 34
     }
 
     var selectionYOffsetCompensation: CGFloat {
@@ -369,7 +386,7 @@ struct BlockElementView: View {
         .overlay(selectionOverlay)
         // Padding exposes the overhanging handles to hit-testing without
         // shifting the visual frame. Compensated in .position() below.
-        .padding(isSelected ? .init(top: selectionTopPadding, leading: 14, bottom: 16, trailing: 14) : .init())
+        .padding(showsDirectSelectionChrome ? .init(top: selectionTopPadding, leading: 14, bottom: 16, trailing: 14) : .init())
         .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectedElementIds = [element.id]
@@ -382,13 +399,6 @@ struct BlockElementView: View {
         .transaction { transaction in
             if dragOffset != .zero {
                 transaction.animation = nil
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            // System keyboard dismiss button was tapped — deselect the block
-            // so isEditable becomes false and the keyboard stays down
-            if isSelected && viewModel.selectedTool == .text {
-                viewModel.selectedElementIds = []
             }
         }
         .task(id: element.id) {
@@ -405,13 +415,7 @@ struct BlockElementView: View {
                 return
             }
 
-            let fileURL = FileManager.default
-                .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(fileName)
-
-            let img = await Task.detached(priority: .userInitiated) {
-                UIImage(contentsOfFile: fileURL.path)
-            }.value
+            let img = await viewModel.resolveImage(for: element)
 
             guard let img else { return }
 
@@ -424,7 +428,7 @@ struct BlockElementView: View {
         if element.type == "text" && !element.userResized {
             return max(200, naturalContentSize.width + 16)
         }
-        return max(60, CGFloat(element.width ?? 200) + (isSelected ? resizeDelta.width : 0))
+        return max(60, CGFloat(element.width ?? 200) + (showsDirectSelectionChrome ? resizeDelta.width : 0))
     }
 
     var frameHeight: CGFloat {
@@ -437,9 +441,9 @@ struct BlockElementView: View {
                 60,
                 naturalContentSize.height + TextElementMetrics.caretBottomAllowance
             )
-            return max(storedHeight, liveMeasuredHeight) + (isSelected ? resizeDelta.height : 0)
+            return max(storedHeight, liveMeasuredHeight) + (showsDirectSelectionChrome ? resizeDelta.height : 0)
         }
-        return max(60, CGFloat(element.height ?? 200) + (isSelected ? resizeDelta.height : 0))
+        return max(60, CGFloat(element.height ?? 200) + (showsDirectSelectionChrome ? resizeDelta.height : 0))
     }
 
     // MARK: - Content
@@ -450,6 +454,7 @@ struct BlockElementView: View {
             if let img = loadedImage {
                 Image(uiImage: img)
                     .resizable()
+                    .interpolation(.high)
                     .scaledToFill()
                     .clipped()
             } else {
@@ -483,10 +488,10 @@ struct BlockElementView: View {
                     isEditable: isEditingNow,
                     isUserResized: element.userResized,
                     fixedWidth: frameWidth,
-                    onEditingBegan: { isEditing = true },
-                    onEditingEnded: { isEditing = false },
+                    onEditingBegan: { DispatchQueue.main.async { isEditing = true } },
+                    onEditingEnded: { DispatchQueue.main.async { isEditing = false } },
                     onNaturalSizeChanged: { size in
-                        naturalContentSize = size
+                        DispatchQueue.main.async { naturalContentSize = size }
                     }
                 )
                 .frame(width: frameWidth, height: frameHeight, alignment: .topLeading)
@@ -576,19 +581,24 @@ struct BlockElementView: View {
     // MARK: - Resize Gesture
 
     /// Uniform scale factor for the diagonal (corner) handle so images keep their
-    /// aspect ratio while resizing. The dominant drag axis drives the scale, which
-    /// keeps the dashed border locked to the image instead of letterboxing/cropping.
+    /// aspect ratio while resizing. We project the drag translation onto the
+    /// image's diagonal resize vector, which avoids the rapid "big/small" flicker
+    /// that happens when switching back and forth between width-driven and
+    /// height-driven scaling near the diagonal threshold.
     private func imageResizeScale(dw: CGFloat, dh: CGFloat) -> CGFloat {
         let oldW = CGFloat(element.width ?? 200)
         let oldH = CGFloat(element.height ?? 200)
         guard oldW > 0, oldH > 0 else { return 1 }
-        let aspect = oldW / oldH
-        // Convert whichever axis the user is dragging more into an equivalent width delta.
-        let widthDelta = abs(dw) >= abs(dh * aspect) ? dw : dh * aspect
-        let proposedW = oldW + widthDelta
+
+        let diagonalMagnitudeSquared = (oldW * oldW) + (oldH * oldH)
+        guard diagonalMagnitudeSquared > 0 else { return 1 }
+
+        let projectedScaleDelta = ((dw * oldW) + (dh * oldH)) / diagonalMagnitudeSquared
+        let proposedScale = 1 + projectedScaleDelta
+
         // Don't let either dimension drop below the 60pt minimum.
         let minScale = max(60 / oldW, 60 / oldH)
-        return max(minScale, proposedW / oldW)
+        return max(minScale, proposedScale)
     }
 
     var resizeGesture: some Gesture {
@@ -611,10 +621,6 @@ struct BlockElementView: View {
                 isCommittingResize = true
 
                 var updated = element
-                // Shift center so the top-left remains fixed
-                updated.positionX += (newW - oldW) / 2
-                updated.positionY += (newH - oldH) / 2
-
                 updated.width = newW
                 updated.height = newH
                 updated.userResized = true
@@ -680,7 +686,7 @@ struct BlockElementView: View {
 
     @ViewBuilder
     var selectionOverlay: some View {
-        if isSelected && element.type == "text" {
+        if showsDirectSelectionChrome && element.type == "text" {
             ZStack {
                 // Gold border
                 Rectangle()
@@ -751,21 +757,14 @@ struct BlockElementView: View {
                     .zIndex(10)
                 }
             }
-        } else if isSelected {
-            // Non-text elements (images) keep the original overlay
+        } else if showsDirectSelectionChrome {
+            // Direct image selection: border + drag pill + top-right delete only
             ZStack {
                 // Dashed border
                 Rectangle()
                     .stroke(Color.blue, style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [5]))
 
                 VStack {
-                    ObjectActionPill(
-                        onDuplicate: { viewModel.duplicateSelectedElement() },
-                        onDelete: { viewModel.deleteSelectedElement() }
-                    )
-                    .offset(y: -48)
-                    .zIndex(11)
-
                     ZStack {
                         Capsule()
                             .fill(Color.blue)
@@ -780,6 +779,18 @@ struct BlockElementView: View {
                     .highPriorityGesture(dragGesture)
                     .zIndex(10)
 
+                    Spacer()
+                }
+
+                VStack {
+                    HStack {
+                        Spacer()
+                        DeleteCornerButton {
+                            viewModel.deleteSelectedElement()
+                        }
+                        .offset(x: 10, y: -10)
+                        .zIndex(11)
+                    }
                     Spacer()
                 }
 
@@ -867,41 +878,88 @@ private struct ObjectActionPill: View {
     }
 }
 
+private struct DeleteCornerButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 24, height: 24)
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white)
+            }
+        }
+        .buttonStyle(.plain)
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 1)
+    }
+}
+
 struct LassoSelectionOverlay: View {
     @ObservedObject var viewModel: CanvasViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("aiEnabled") private var aiEnabled: Bool = true
     let box: CGRect
     let onAskAI: (CGRect, Data) -> Void
+    @State private var isMenuVisible = false
     @State private var showColorPicker = false
+    @State private var showSecondaryActions = false
     @State private var pickedColor: Color = .white
     @State private var screenshotImage: UIImage? = nil
     @State private var showScreenshotPreview = false
     @GestureState private var resizeDelta: CGSize = .zero
-    @GestureState private var moveDelta: CGSize = .zero
+    private let selectionPadding: CGFloat = 12
+    private let handleHitTargetSize: CGFloat = 56
+    private let handleVisualSize: CGFloat = 28
+    private let moveGestureThreshold: CGFloat = 6
 
     // Convert canvas-space box to screen-space for rendering
     // Since this view is now in CanvasContainerView (screen space), we must project.
     var screenBox: CGRect {
-        let s = viewModel.canvasScale
-        let ox = viewModel.canvasOffset.width
-        let oy = viewModel.canvasOffset.height
+        let projectedTranslation = viewModel.isPreviewingLassoMove
+            ? viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
+            : .zero
+        let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
+        let scaledWidth = box.width * scale
+        let scaledHeight = box.height * scale
+        let baseRect = CGRect(
+            x: box.midX - scaledWidth / 2,
+            y: box.midY - scaledHeight / 2,
+            width: scaledWidth,
+            height: scaledHeight
+        )
+        return viewModel.projectCanvasRectToViewport(baseRect)
+            .offsetBy(dx: projectedTranslation.width, dy: projectedTranslation.height)
+    }
+
+    var floatingScreenRect: CGRect? {
+        guard let floatingRect = viewModel.lassoFloatingCanvasRect else { return nil }
+        let projectedTranslation = viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
+        let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
+        let projected = viewModel.projectCanvasRectToViewport(floatingRect)
         return CGRect(
-            x: box.minX * s - ox,
-            y: box.minY * s - oy,
-            width: box.width * s,
-            height: box.height * s
+            x: projected.midX - projected.width * scale / 2 + projectedTranslation.width,
+            y: projected.midY - projected.height * scale / 2 + projectedTranslation.height,
+            width: projected.width * scale,
+            height: projected.height * scale
         )
     }
 
     var liveScale: CGFloat {
         guard screenBox.width > 0 else { return 1 }
+        if viewModel.isPreviewingLassoResize {
+            return 1.0
+        }
         return max(0.1, (screenBox.width + resizeDelta.width) / screenBox.width)
     }
 
     var liveBox: CGRect {
         let sb = screenBox
         return CGRect(
-            x: sb.minX + moveDelta.width,
-            y: sb.minY + moveDelta.height,
+            x: sb.minX,
+            y: sb.minY,
             width: max(40, sb.width * liveScale),
             height: max(40, sb.height * liveScale)
         )
@@ -923,62 +981,193 @@ struct LassoSelectionOverlay: View {
         isNearTop ? liveBox.maxY + 124 : liveBox.minY - 144
     }
 
+    private var needsSideMenuLayout: Bool {
+        let topClearance = liveBox.minY - 120
+        let bottomClearance = UIScreen.main.bounds.height - liveBox.maxY - 120
+        return topClearance < 0 && bottomClearance < 0
+    }
+
+    private var prefersRightSideMenu: Bool {
+        liveBox.maxX < UIScreen.main.bounds.width * 0.58
+    }
+
+    private var genieEdge: Edge {
+        if needsSideMenuLayout {
+            return prefersRightSideMenu ? .leading : .trailing
+        }
+        return isNearTop ? .top : .bottom
+    }
+
+    private var isPreviewingSelectionInteraction: Bool {
+        viewModel.isPreviewingLassoMove || viewModel.isPreviewingLassoResize
+    }
+
+    private var shouldRenderMenu: Bool {
+        isMenuVisible && !isPreviewingSelectionInteraction
+    }
+
+    private func closeMenu() {
+        isMenuVisible = false
+        showColorPicker = false
+        showSecondaryActions = false
+    }
+
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Draggable hit area inside the bounding box (invisible, for moving selection)
-            Rectangle()
-                .fill(Color.clear)
-                .contentShape(Rectangle())
-                .frame(width: liveBox.width, height: liveBox.height)
-                .position(x: liveBox.midX, y: liveBox.midY)
-                .gesture(
-                    DragGesture(minimumDistance: 2)
-                        .updating($moveDelta) { value, state, _ in
-                            state = CGSize(
-                                width: value.translation.width,
-                                height: value.translation.height
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(shouldRenderMenu)
+                    .onTapGesture {
+                        closeMenu()
+                    }
+
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .frame(width: liveBox.width + 18, height: liveBox.height + 18)
+                    .position(x: liveBox.midX, y: liveBox.midY)
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            guard !isPreviewingSelectionInteraction else { return }
+                            isMenuVisible = true
+                        }
+                    )
+                    .gesture(
+                        DragGesture(minimumDistance: moveGestureThreshold)
+                            .onChanged { value in
+                                if isMenuVisible || showColorPicker { closeMenu() }
+                                viewModel.beginLassoMoveIfNeeded()
+                                viewModel.previewLassoMove(
+                                    translation: CGSize(
+                                        width: value.translation.width / viewModel.canvasScale,
+                                        height: value.translation.height / viewModel.canvasScale
+                                    )
+                                )
+                            }
+                            .onEnded { _ in
+                                viewModel.finalizeLassoMove()
+                            }
+                    )
+
+                Rectangle()
+                    .stroke(Color(hex: "#C9A84C"), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
+                    .frame(width: liveBox.width, height: liveBox.height)
+                    .position(x: liveBox.midX, y: liveBox.midY)
+                    .allowsHitTesting(false)
+
+                if let image = viewModel.lassoFloatingImage,
+                   let rect = floatingScreenRect {
+                    Image(uiImage: image)
+                        .resizable()
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                        .allowsHitTesting(false)
+                }
+
+                if shouldRenderMenu {
+                    if needsSideMenuLayout {
+                        singleRowMenu(proxy: proxy)
+                    } else {
+                        primaryPill
+                            .position(
+                                x: clampedX(liveBox.midX, viewWidth: proxy.size.width, menuWidth: currentMenuWidth),
+                                y: clampedY(primaryPillY, viewHeight: proxy.size.height, menuHeight: 44)
                             )
-                        }
-                        .onEnded { value in
-                            let dx = value.translation.width / viewModel.canvasScale
-                            let dy = value.translation.height / viewModel.canvasScale
-                            viewModel.applyLassoMove(translation: CGSize(width: dx, height: dy))
-                        }
-                )
+                            .transition(.genie(edge: genieEdge, travel: 34).combined(with: .opacity))
+                    }
 
-            // Dashed bounding box (not hit-testable — ink must be tappable through it)
-            Rectangle()
-                .stroke(Color(hex: "#C9A84C"), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .frame(width: liveBox.width, height: liveBox.height)
-                .position(x: liveBox.midX, y: liveBox.midY)
-                .allowsHitTesting(false)
+                    if showSecondaryActions && showColorPicker {
+                        colorPickerStrip
+                            .position(
+                                x: colorPickerX(in: proxy),
+                                y: colorPickerY(in: proxy)
+                            )
+                            .transition(.genie(edge: genieEdge, travel: 46).combined(with: .opacity))
+                    }
+                }
 
-            // PRIMARY pill — Cut / Copy / Paste / Duplicate / Delete
-            // Styled exactly like Apple's native edit menu: dark pill, text only
-            HStack(spacing: 0) {
-                pillButton("Cut") { viewModel.cutSelection() }
-                pillDivider()
-                pillButton("Copy") { viewModel.copySelection() }
-                pillDivider()
-                pillButton("Paste") { viewModel.pasteSelection() }
+                Circle()
+                    .fill(Color.clear)
+                    .contentShape(Circle())
+                    .frame(width: handleHitTargetSize, height: handleHitTargetSize)
+                    .overlay {
+                        Circle()
+                            .fill(Color(hex: "#C9A84C"))
+                            .frame(width: handleVisualSize, height: handleVisualSize)
+                    }
+                    .position(x: liveBox.maxX, y: liveBox.maxY)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                if isMenuVisible || showColorPicker { closeMenu() }
+                                let sb = screenBox
+                                guard sb.width > 0 else { return }
+                                viewModel.beginLassoResizeIfNeeded()
+                                let scale = max(0.1, (sb.width + value.translation.width) / sb.width)
+                                viewModel.previewLassoResize(scale: scale)
+                            }
+                            .updating($resizeDelta) { value, state, _ in
+                                state = CGSize(
+                                    width: value.translation.width,
+                                    height: value.translation.height
+                                )
+                            }
+                            .onEnded { value in
+                                let sb = screenBox
+                                guard sb.width > 0 else { return }
+                                let finalScale = max(0.1, (sb.width + value.translation.width) / sb.width)
+                                viewModel.previewLassoResize(scale: finalScale)
+                                viewModel.finalizeLassoResize()
+                            }
+                    )
+            }
+            .sheet(isPresented: $showScreenshotPreview) {
+                if let img = screenshotImage {
+                    LassoScreenshotPreview(image: img)
+                }
+            }
+            .onAppear {
+                closeMenu()
+            }
+            .onChange(of: box) { _, _ in
+                closeMenu()
+            }
+            .onChange(of: viewModel.isPreviewingLassoMove) { _, isPreviewing in
+                if isPreviewing { closeMenu() }
+            }
+            .onChange(of: viewModel.isPreviewingLassoResize) { _, isPreviewing in
+                if isPreviewing { closeMenu() }
+            }
+            .animation(GAnimation.motionSafe(GAnimation.springFast), value: shouldRenderMenu)
+            .animation(GAnimation.motionSafe(GAnimation.springFast), value: showSecondaryActions)
+            .animation(GAnimation.motionSafe(GAnimation.springFast), value: showColorPicker)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var currentMenuWidth: CGFloat {
+        showSecondaryActions ? (aiEnabled ? 380 : 310) : 430
+    }
+
+    private var primaryPill: some View {
+        HStack(spacing: 0) {
+            if showSecondaryActions {
+                pillIconButton(systemName: "chevron.left") {
+                    showSecondaryActions = false
+                    showColorPicker = false
+                }
                 pillDivider()
                 pillButton("Duplicate") { viewModel.duplicateSelection() }
                 pillDivider()
-                pillButton("Delete", tint: .red) { viewModel.deleteSelectedLassoContent() }
-            }
-            .background(Color(hex: "#1A1A18").opacity(0.93))
-            .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
-            .position(x: liveBox.midX, y: primaryPillY)
-
-            // SECONDARY pill — Color / Resize / Screenshot
-            HStack(spacing: 0) {
                 pillButton("Color") { showColorPicker.toggle() }
-                pillDivider()
-                pillButton("Ask AI") {
-                    if let img = viewModel.screenshotSelection(),
-                       let data = img.pngData() {
-                        onAskAI(box, data)
+                if aiEnabled {
+                    pillDivider()
+                    pillButton("Ask AI") {
+                        if let img = viewModel.screenshotSelection(),
+                           let data = img.pngData() {
+                            onAskAI(box, data)
+                        }
                     }
                 }
                 pillDivider()
@@ -988,96 +1177,130 @@ struct LassoSelectionOverlay: View {
                         showScreenshotPreview = true
                     }
                 }
-            }
-            .background(Color(hex: "#1A1A18").opacity(0.93))
-            .clipShape(Capsule())
-            .shadow(color: .black.opacity(0.2), radius: 6, y: 1)
-            .position(x: liveBox.midX, y: secondaryPillY)
-            .sheet(isPresented: $showScreenshotPreview) {
-                if let img = screenshotImage {
-                    LassoScreenshotPreview(image: img)
+            } else {
+                pillButton("Cut") { viewModel.cutSelection() }
+                pillDivider()
+                pillButton("Copy") { viewModel.copySelection() }
+                pillDivider()
+                pillButton("Paste") { viewModel.pasteSelection() }
+                pillDivider()
+                pillButton("Delete", tint: .red) { viewModel.deleteSelectedLassoContent() }
+                pillDivider()
+                pillIconButton(systemName: "chevron.right") {
+                    showSecondaryActions = true
                 }
             }
-
-            // Color picker popover (appears above or below secondary pill)
-            if showColorPicker {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(Color.strokePresets, id: \.self) { preset in
-                            Circle()
-                                .fill(preset)
-                                .frame(width: 28, height: 28)
-                                .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
-                                .onTapGesture {
-                                    viewModel.applyLassoColorChange(preset)
-                                    showColorPicker = false
-                                }
-                        }
-                        
-                        // Custom Color Picker disguised as rainbow swatch
-                        ZStack {
-                            Circle()
-                                .fill(
-                                    AngularGradient(
-                                        colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
-                                        center: .center
-                                    )
-                                )
-                                .frame(width: 28, height: 28)
-                            
-                            ColorPicker("Custom", selection: $pickedColor, supportsOpacity: false)
-                                .labelsHidden()
-                                .frame(width: 28, height: 28)
-                                .opacity(0.01) // transparent but tappable
-                                .onChange(of: pickedColor) { _, newColor in
-                                    viewModel.applyLassoColorChange(newColor)
-                                }
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                }
-                .frame(maxWidth: 320)
-                .background(Color(hex: "#1A1A18").opacity(0.95))
-                .clipShape(Capsule())
-                .shadow(color: .black.opacity(0.4), radius: 12)
-                .position(x: liveBox.midX, y: colorPickerY)
-            }
-
-            // Resize handle — bottom right corner, gold circle
-            Circle()
-                .fill(Color(hex: "#C9A84C"))
-                .frame(width: 28, height: 28)
-                .position(x: liveBox.maxX, y: liveBox.maxY)
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .updating($resizeDelta) { value, state, _ in
-                            state = CGSize(
-                                width: value.translation.width,
-                                height: value.translation.height
-                            )
-                        }
-                        .onEnded { value in
-                            // Compute scale from the final translation directly —
-                            // liveScale cannot be used here because @GestureState
-                            // resets to .zero before onEnded fires.
-                            let sb = screenBox
-                            guard sb.width > 0 else { return }
-                            let finalScale = max(0.1, (sb.width + value.translation.width) / sb.width)
-                            viewModel.applyLassoResize(scale: finalScale)
-                        }
-                )
         }
+        .glassPill()
+    }
+
+    @ViewBuilder
+    private func singleRowMenu(proxy: GeometryProxy) -> some View {
+        primaryPill
+        .frame(width: min(proxy.size.width - 24, 560))
+        .position(
+            x: sidePillX(in: proxy),
+            y: clampedY(liveBox.midY, viewHeight: proxy.size.height, menuHeight: 44)
+        )
+        .transition(.genie(edge: genieEdge, travel: 34).combined(with: .opacity))
+    }
+
+    private var colorPickerStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(viewModel.lassoRecolorPalette(), id: \.hexString) { preset in
+                    Circle()
+                        .fill(preset)
+                        .frame(width: 28, height: 28)
+                        .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
+                        .onTapGesture {
+                            viewModel.applyLassoColorChange(preset)
+                            showColorPicker = false
+                        }
+                }
+
+                ZStack {
+                    Circle()
+                        .fill(
+                            AngularGradient(
+                                colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
+                                center: .center
+                            )
+                        )
+                        .frame(width: 28, height: 28)
+
+                    ColorPicker("Custom", selection: $pickedColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .frame(width: 28, height: 28)
+                        .opacity(0.01)
+                        .onChange(of: pickedColor) { _, newColor in
+                            viewModel.applyLassoColorChange(newColor)
+                        }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .frame(maxWidth: 320)
+        .glassPill()
+    }
+
+    private func clampedX(_ preferred: CGFloat, viewWidth: CGFloat, menuWidth: CGFloat) -> CGFloat {
+        let safeHalfWidth = min(menuWidth / 2, max(0, viewWidth / 2 - 16))
+        return min(max(preferred, safeHalfWidth + 12), viewWidth - safeHalfWidth - 12)
+    }
+
+    private func clampedY(_ preferred: CGFloat, viewHeight: CGFloat, menuHeight: CGFloat) -> CGFloat {
+        let safeHalfHeight = menuHeight / 2
+        return min(max(preferred, safeHalfHeight + 12), viewHeight - safeHalfHeight - 12)
+    }
+
+    private func sidePillX(in proxy: GeometryProxy) -> CGFloat {
+        let width = min(proxy.size.width - 24, 560)
+        let preferred = prefersRightSideMenu
+            ? liveBox.maxX + (width / 2) + 18
+            : liveBox.minX - (width / 2) - 18
+        return clampedX(preferred, viewWidth: proxy.size.width, menuWidth: width)
+    }
+
+    private func colorPickerX(in proxy: GeometryProxy) -> CGFloat {
+        if needsSideMenuLayout {
+            return sidePillX(in: proxy)
+        }
+        return clampedX(liveBox.midX, viewWidth: proxy.size.width, menuWidth: min(320, proxy.size.width - 24))
+    }
+
+    private func colorPickerY(in proxy: GeometryProxy) -> CGFloat {
+        if needsSideMenuLayout {
+            return clampedY(liveBox.midY + 52, viewHeight: proxy.size.height, menuHeight: 54)
+        }
+        return clampedY(colorPickerY, viewHeight: proxy.size.height, menuHeight: 54)
+    }
+
+    private var defaultPillTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.94) : Color.black.opacity(0.82)
     }
 
     // Apple-style text pill button — no icon, just label
     @ViewBuilder
-    private func pillButton(_ label: String, tint: Color = .white, action: @escaping () -> Void) -> some View {
+    private func pillButton(_ label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 15, weight: .regular))
-                .foregroundColor(tint)
+                .foregroundColor(tint ?? defaultPillTextColor)
                 .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func pillIconButton(systemName: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(tint ?? defaultPillTextColor)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 10)
         }
         .buttonStyle(.plain)
@@ -1086,8 +1309,38 @@ struct LassoSelectionOverlay: View {
     @ViewBuilder
     private func pillDivider() -> some View {
         Rectangle()
-            .fill(Color.white.opacity(0.2))
+            .fill(Color.black.opacity(0.10))
             .frame(width: 0.5, height: 28)
+    }
+}
+
+private extension View {
+    func glassPill() -> some View {
+        self
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.regularMaterial)
+            )
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.34))
+            )
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(hex: "#CFA43A").opacity(0.26))
+            )
+            .clipShape(Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.52), lineWidth: 0.8)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color(hex: "#C79A2B").opacity(0.42), lineWidth: 1.1)
+            )
+            .shadow(color: Color.black.opacity(0.10), radius: 8, y: 2)
+            .shadow(color: Color(hex: "#8A6516").opacity(0.10), radius: 14, y: 4)
     }
 }
 

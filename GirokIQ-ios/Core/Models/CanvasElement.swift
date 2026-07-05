@@ -125,4 +125,41 @@ nonisolated struct ElementStyle: Codable, Hashable {
     var isStrikethrough: Bool?
     var cornerRadius: Double?
     var opacity: Double?
+    var imageAssetPath: String?
+
+    init(
+        backgroundColor: String? = nil,
+        borderColor: String? = nil,
+        borderWidth: Double? = nil,
+        fontSize: Double? = nil,
+        fontWeight: String? = nil,
+        fontName: String? = nil,
+        textColor: String? = nil,
+        lineSpacing: Double? = nil,
+        textAlignment: String? = nil,
+        isBold: Bool? = nil,
+        isItalic: Bool? = nil,
+        isUnderline: Bool? = nil,
+        isStrikethrough: Bool? = nil,
+        cornerRadius: Double? = nil,
+        opacity: Double? = nil,
+        imageAssetPath: String? = nil
+    ) {
+        self.backgroundColor = backgroundColor
+        self.borderColor = borderColor
+        self.borderWidth = borderWidth
+        self.fontSize = fontSize
+        self.fontWeight = fontWeight
+        self.fontName = fontName
+        self.textColor = textColor
+        self.lineSpacing = lineSpacing
+        self.textAlignment = textAlignment
+        self.isBold = isBold
+        self.isItalic = isItalic
+        self.isUnderline = isUnderline
+        self.isStrikethrough = isStrikethrough
+        self.cornerRadius = cornerRadius
+        self.opacity = opacity
+        self.imageAssetPath = imageAssetPath
+    }
 }

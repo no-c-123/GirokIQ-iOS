@@ -202,6 +202,7 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
             blockHost.view.frame = CGRect(origin: .zero, size: canvasContentSize)
             canvasContentView.addSubview(blockHost.view)
             self.blockOverlayHostView = blockHost
+            viewModel.setCanvasCoordinateViews(hostView: self, contentView: blockHost.view)
         }
 
         // index 2 — PKCanvasView (ink on top, transparent)
@@ -256,10 +257,11 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
 
     @objc private func handleLassoPan(_ recognizer: UIPanGestureRecognizer) {
         guard let viewModel, viewModel.selectedTool == .lasso, !viewModel.isRegionCaptureMode else { return }
-        let point = recognizer.location(in: self)
+        let screenPoint = recognizer.location(in: self)
+        let canvasPoint = blockOverlayHostView?.view.map { self.convert(screenPoint, to: $0) } ?? screenPoint
         switch recognizer.state {
-        case .began:    viewModel.beginLiveLasso(at: point)
-        case .changed:  viewModel.appendLiveLasso(point)
+        case .began:    viewModel.beginLiveLasso(at: screenPoint, canvasPoint: canvasPoint)
+        case .changed:  viewModel.appendLiveLasso(screenPoint, canvasPoint: canvasPoint)
         case .ended:    viewModel.endLiveLasso()
         case .cancelled, .failed: viewModel.cancelLiveLasso()
         default: break
@@ -300,6 +302,13 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
     // Cannot use contentOffset == .zero as the sentinel because setupViews()
     // already writes a non-zero value before the real bounds are known.
     private var didApplyInitialOffset = false
+    private var pendingRestoredViewport: CanvasViewportState?
+
+    func resetViewportRestoreState() {
+        didApplyInitialOffset = false
+        pendingRestoredViewport = nil
+        setNeedsLayout()
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -310,15 +319,17 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
             didApplyInitialOffset = true
             if let state = viewModel?.restoredViewport {
                 let clampedScale = max(canvasView.minimumZoomScale, min(state.scale, canvasView.maximumZoomScale))
-                canvasView.zoomScale = clampedScale
-                let restoredOffset = CGPoint(x: state.offsetX, y: state.offsetY)
-                canvasView.contentOffset = restoredOffset
-                backgroundScrollView.zoomScale = clampedScale
-                backgroundScrollView.contentOffset = restoredOffset
-                viewModel?.finalizeViewport(
-                    offset: CGSize(width: restoredOffset.x, height: restoredOffset.y),
+                pendingRestoredViewport = CanvasViewportState(
+                    offsetX: state.offsetX,
+                    offsetY: state.offsetY,
                     scale: clampedScale
                 )
+                canvasView.zoomScale = clampedScale
+                backgroundScrollView.zoomScale = clampedScale
+                syncBackground()
+                DispatchQueue.main.async { [weak self] in
+                    self?.applyPendingRestoredViewportIfNeeded()
+                }
             } else {
                 let initialOffset = CGPoint(
                     x: (canvasContentSize.width  - bounds.width)  / 2,
@@ -333,6 +344,19 @@ final class CanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecognizerDel
             }
         }
         updateCenteringInsets()
+    }
+
+    private func applyPendingRestoredViewportIfNeeded() {
+        guard let state = pendingRestoredViewport else { return }
+        let restoredOffset = CGPoint(x: state.offsetX, y: state.offsetY)
+        canvasView.setContentOffset(restoredOffset, animated: false)
+        backgroundScrollView.setContentOffset(restoredOffset, animated: false)
+        syncBackground()
+        viewModel?.finalizeViewport(
+            offset: CGSize(width: restoredOffset.x, height: restoredOffset.y),
+            scale: state.scale
+        )
+        pendingRestoredViewport = nil
     }
 
     // MARK: - UIScrollViewDelegate (for backgroundScrollView only)
@@ -515,22 +539,15 @@ struct PKCanvasRepresentable: UIViewRepresentable {
 
         // Configure background pattern
         hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
-        if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = UIColor(hex: hex)
-            // If the saved hex is the default dark gray "#0F0F0E", map it to the adaptive gBackground token
-            // so that it turns white in light mode. Otherwise use the specific color.
-            hostView.backgroundPatternView.pageBackgroundColor = hex.uppercased() == "#0F0F0E" ? .gBackground : color
-        }
+        hostView.backgroundPatternView.pageBackgroundColor = .gBackground
 
         context.coordinator.hostView = hostView
         context.coordinator.canvasView = canvasView
 
-        // Load existing drawing data from the current page
-        context.coordinator.currentPageId = viewModel.currentPage.id
-        if let data = viewModel.currentPage.drawingData,
-           let drawing = PencilKitBridge.deserialize(data) {
-            context.coordinator.setDrawing(drawing, on: canvasView)
-        }
+        // Drawing data is warmed asynchronously by the view model to avoid
+        // decoding large PKDrawings on the main thread during canvas setup.
+        context.coordinator.currentPageIndex = -1
+        context.coordinator.currentPageId = nil
 
         // Set initial tool
         canvasView.tool = currentPKTool()
@@ -552,14 +569,10 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         let menuBlocker = MenuBlockerGestureRecognizer(canvas: canvasView)
         canvasView.addGestureRecognizer(menuBlocker)
         
-        // Forward UndoManager to viewModel
-        Task { @MainActor in
+        // Defer published-state writes until after UIKit finishes this update cycle.
+        DispatchQueue.main.async {
             viewModel.pkUndoManager = canvasView.undoManager
             viewModel.refreshUndoState()
-        }
-
-        // Used by #5: allow the view model to scroll the viewport when the keyboard covers text.
-        Task { @MainActor in
             viewModel.setViewportScrollView(canvasView)
         }
 
@@ -569,6 +582,11 @@ struct PKCanvasRepresentable: UIViewRepresentable {
     func updateUIView(_ hostView: CanvasHostView, context: Context) {
         let canvasView = hostView.canvasView
         viewModel.setCanvasViewSizeIfNeeded(hostView.bounds.size)
+
+        if context.coordinator.lastViewportRestoreToken != viewModel.viewportRestoreToken {
+            context.coordinator.lastViewportRestoreToken = viewModel.viewportRestoreToken
+            hostView.resetViewportRestoreState()
+        }
 
         // Only rebuild PKTool when tool-related properties actually changed
         let newTool = currentPKTool()
@@ -611,11 +629,8 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         if hostView.backgroundPatternView.pattern != viewModel.backgroundPattern {
             hostView.backgroundPatternView.pattern = viewModel.backgroundPattern
         }
-        if let hex = viewModel.notebook?.backgroundColorHex {
-            let color = hex.uppercased() == "#0F0F0E" ? .gBackground : UIColor(hex: hex)
-            if hostView.backgroundPatternView.pageBackgroundColor != color {
-                hostView.backgroundPatternView.pageBackgroundColor = color
-            }
+        if hostView.backgroundPatternView.pageBackgroundColor != .gBackground {
+            hostView.backgroundPatternView.pageBackgroundColor = .gBackground
         }
 
         // Sync drawing data when page changes (detect by comparing index or ID)
@@ -624,11 +639,11 @@ struct PKCanvasRepresentable: UIViewRepresentable {
             viewModel.forceDrawingUpdate {
             context.coordinator.currentPageIndex = viewModel.currentPageIndex
             context.coordinator.currentPageId = viewModel.currentPage.id
-            let pageDrawing = viewModel.currentDrawing
+            let pageDrawing = viewModel.currentDrawingForCanvasDisplay()
             
             if viewModel.forceDrawingUpdate {
                 // If it's a programmatic shape update, inject it using the UndoManager to preserve undo/redo stack
-                if let undoManager = canvasView.undoManager {
+                if !viewModel.isPreviewingLassoMove, let undoManager = canvasView.undoManager {
                     let oldDrawing = canvasView.drawing
                     undoManager.registerUndo(withTarget: context.coordinator) { coordinator in
                         coordinator.setDrawing(oldDrawing, on: canvasView)
@@ -644,7 +659,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                 context.coordinator.setDrawing(pageDrawing, on: canvasView)
             }
             
-            Task { @MainActor in
+            DispatchQueue.main.async {
                 viewModel.pkUndoManager = canvasView.undoManager
                 viewModel.refreshUndoState()
             }
@@ -658,7 +673,10 @@ struct PKCanvasRepresentable: UIViewRepresentable {
                    aInk.color == bInk.color &&
                    aInk.width == bInk.width
         }
-        if a is PKEraserTool && b is PKEraserTool { return true }
+        if let aEraser = a as? PKEraserTool, let bEraser = b as? PKEraserTool {
+            return aEraser.eraserType == bEraser.eraserType &&
+                   abs(aEraser.width - bEraser.width) < 0.01
+        }
         if a is PKLassoTool && b is PKLassoTool { return true }
         return false
     }
@@ -670,7 +688,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         return PencilKitBridge.pkTool(
             for: viewModel.selectedTool,
             color: uiColor.withAlphaComponent(viewModel.strokeOpacity),
-            width: viewModel.strokeWidth,
+            width: viewModel.selectedTool == .eraser ? viewModel.eraserWidth : viewModel.strokeWidth,
             penStyle: viewModel.penStyle,
             eraserType: viewModel.eraserType
         )
@@ -684,6 +702,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         weak var hostView: CanvasHostView?
         var currentPageIndex: Int = 0
         var currentPageId: UUID?
+        var lastViewportRestoreToken: UUID?
 
         var lassoStartPoint: CGPoint? = nil
 
@@ -696,6 +715,7 @@ struct PKCanvasRepresentable: UIViewRepresentable {
         init(viewModel: CanvasViewModel) {
             self.viewModel = viewModel
             self.currentPageIndex = viewModel.currentPageIndex
+            self.lastViewportRestoreToken = viewModel.viewportRestoreToken
         }
 
         // MARK: PKCanvasViewDelegate

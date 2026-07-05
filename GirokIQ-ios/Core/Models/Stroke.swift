@@ -2,38 +2,12 @@ import Foundation
 import CoreGraphics
 import SwiftUI
 
-// MARK: - Remote Stroke (matches Supabase `strokes` table)
-
-struct RemoteStroke: Codable, Identifiable {
-    let id: UUID
-    let pageId: UUID
-    let userId: UUID
-    var color: String
-    var width: Double
-    var points: Data            // bytea
-    let createdAt: Date
-    var updatedAt: Date
-    var deleted: Bool
-    var deviceId: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case pageId = "page_id"
-        case userId = "user_id"
-        case color, width, points
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
-        case deleted
-        case deviceId = "device_id"
-    }
-}
-
 // MARK: - Local Stroke (in-memory drawing state for Core Graphics canvas)
 
 /// In-memory representation of a stroke being drawn or displayed on the canvas.
 /// This is a canvas-layer rendering model — it uses `Color` and `CGFloat` because
 /// it's consumed exclusively by canvas drawing code (DrawingCanvasView, CanvasViewModel).
-/// Not used for persistence; `RemoteStroke` is the sync/persistence model.
+/// Not used for persistence; native sync uses page-level PKDrawing blobs.
 class Stroke: Identifiable {
     var id: UUID = UUID()
     var points: [StrokePoint] = []

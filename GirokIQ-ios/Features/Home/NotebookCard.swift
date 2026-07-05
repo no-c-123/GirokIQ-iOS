@@ -17,39 +17,9 @@ struct NotebookCard: View, Equatable {
         lhs.viewMode == rhs.viewMode
     }
 
-    /// Generate a consistent accent color from the notebook's ID
-    private var accentColor: Color {
-        let colors: [Color] = [.gPrimary, Color(hex: "#8B5CF6"), Color(hex: "#06B6D4"), Color(hex: "#10B981"), Color(hex: "#F59E0B"), Color(hex: "#EC4899")]
-        let index = abs(notebook.id.hashValue) % colors.count
-        return colors[index]
-    }
-
     /// First letter of the notebook name as a visual icon
     private var initial: String {
         String(notebook.name.prefix(1)).uppercased()
-    }
-
-    /// Generates a unique, rich dark gradient based on the notebook's ID
-    private var coverGradient: LinearGradient {
-        let index = abs(notebook.id.hashValue) % 4
-        let topColors = [
-            Color(hex: "#1A233A"), // Deep Navy
-            Color(hex: "#2A1A3A"), // Deep Purple
-            Color(hex: "#1A3A2B"), // Dark Forest
-            Color(hex: "#3A1A1A")  // Deep Burgundy
-        ]
-        return LinearGradient(
-            colors: [topColors[index], Color(hex: "#0A0C10")],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    /// Generates a subtle notebook type icon based on the notebook's ID
-    private var coverIcon: String {
-        let icons = ["doc.plaintext", "squareshape.split.3x3", "line.horizontal.3", "book.closed"]
-        let index = abs(notebook.id.hashValue) % icons.count
-        return icons[index]
     }
 
     var body: some View {
@@ -66,28 +36,35 @@ struct NotebookCard: View, Equatable {
         .accessibilityAddTraits(.isButton)
     }
 
+    private var coverColor: Color {
+        let hex = notebook.backgroundColorHex.uppercased()
+        return hex == "#0F0F0E" ? .gBackground : Color(hex: notebook.backgroundColorHex)
+    }
+
+    private var coverForegroundColor: Color {
+        let darkColors = ["#0F0F0E", "#333333", "#1A233A", "#000000"]
+        return darkColors.contains(notebook.backgroundColorHex.uppercased()) ? .white : .black
+    }
+
     // MARK: - Grid Card
 
     var gridCard: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack {
-                // Rich dark ink gradient
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(coverGradient)
+                    .fill(coverColor)
 
-                // Faint paper grain texture overlay
                 Image(systemName: "circle.grid.cross")
                     .resizable()
                     .aspectRatio(contentMode: .fill)
-                    .opacity(0.05)
+                    .opacity(0.04)
                     .blendMode(.multiply)
 
-                // Spine binding effect
                 HStack {
                     VStack(spacing: 8) {
                         ForEach(0..<5, id: \.self) { _ in
                             RoundedRectangle(cornerRadius: 1)
-                                .fill(Color.white.opacity(0.15))
+                                .fill(coverForegroundColor.opacity(0.16))
                                 .frame(height: 1)
                         }
                     }
@@ -96,10 +73,16 @@ struct NotebookCard: View, Equatable {
                     Spacer()
                 }
 
-                // Center icon representing notebook type
-                Image(systemName: coverIcon)
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundColor(Color.white.opacity(0.7))
+                VStack {
+                    Spacer()
+                    Text(notebook.name)
+                        .font(.custom("InstrumentSerif-Regular", size: 20))
+                        .foregroundColor(coverForegroundColor.opacity(0.92))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 20)
+                }
             }
             .aspectRatio(0.75, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -111,10 +94,6 @@ struct NotebookCard: View, Equatable {
                     .font(.custom("InstrumentSerif-Regular", size: 20))
                     .foregroundColor(.gTextPrimary)
                     .lineLimit(1)
-
-                Text(notebook.updatedAt.formatted(.relative(presentation: .named)))
-                    .font(.custom("PlusJakartaSans-Medium", size: 12))
-                    .foregroundColor(.gTextTertiary)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -130,20 +109,17 @@ struct NotebookCard: View, Equatable {
         HStack(spacing: GSpacing.md) {
             ZStack {
                 RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
-                    .fill(accentColor.opacity(0.3))
+                    .fill(coverColor)
                     .frame(width: 44, height: 44)
                 Text(initial)
                     .font(.gSubheadline.weight(.bold))
-                    .foregroundColor(accentColor)
+                    .foregroundColor(coverForegroundColor)
             }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(notebook.name)
                     .font(.gSubheadline.weight(.semibold))
                     .foregroundColor(.gTextPrimary)
-                Text(notebook.updatedAt.formatted(.relative(presentation: .named)))
-                    .font(.gCaption)
-                    .foregroundColor(.gTextTertiary)
             }
 
             Spacer()

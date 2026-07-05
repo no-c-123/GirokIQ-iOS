@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f5f7">
+  <title>GirokIQ Home · Apple-aligned</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f7;
+      --surface: rgba(255, 255, 255, 0.78);
+      --surface-strong: rgba(255, 255, 255, 0.92);
+      --surface-secondary: rgba(247, 247, 248, 0.92);
+      --line: rgba(60, 60, 67, 0.14);
+      --line-strong: rgba(60, 60, 67, 0.22);
+      --text: #111114;
+      --text-secondary: rgba(60, 60, 67, 0.76);
+      --text-tertiary: rgba(60, 60, 67, 0.56);
+      --accent: #b78937;
+      --accent-soft: rgba(183, 137, 55, 0.14);
+      --shadow: 0 18px 42px rgba(0, 0, 0, 0.08);
+      --radius-lg: 24px;
+      --radius-md: 18px;
+      --radius-sm: 14px;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-right: env(safe-area-inset-right, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+      --safe-left: env(safe-area-inset-left, 0px);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #000000;
+        --surface: rgba(28, 28, 30, 0.72);
+        --surface-strong: rgba(28, 28, 30, 0.92);
+        --surface-secondary: rgba(44, 44, 46, 0.9);
+        --line: rgba(84, 84, 88, 0.42);
+        --line-strong: rgba(99, 99, 102, 0.56);
+        --text: #f5f5f7;
+        --text-secondary: rgba(235, 235, 245, 0.7);
+        --text-tertiary: rgba(235, 235, 245, 0.44);
+        --accent: #d7ad57;
+        --accent-soft: rgba(215, 173, 87, 0.16);
+        --shadow: 0 20px 48px rgba(0, 0, 0, 0.34);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
+    }
+
+    body {
+      min-height: 100dvh;
+      background:
+        radial-gradient(circle at top left, rgba(183, 137, 55, 0.08), transparent 30%),
+        radial-gradient(circle at top right, rgba(183, 137, 55, 0.06), transparent 24%),
+        var(--bg);
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    button {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: rgba(183, 137, 55, 0.16);
+    }
+
+    img {
+      max-width: 100%;
+      display: block;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    .app-shell {
+      min-height: 100dvh;
+      padding:
+        calc(var(--safe-top) + 18px)
+        calc(var(--safe-right) + 18px)
+        calc(var(--safe-bottom) + 18px)
+        calc(var(--safe-left) + 18px);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 288px minmax(0, 1fr);
+      gap: 20px;
+      min-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 36px);
+    }
+
+    .sidebar,
+    .content,
+    .tabbar {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      backdrop-filter: blur(24px) saturate(1.2);
+      -webkit-backdrop-filter: blur(24px) saturate(1.2);
+      box-shadow: var(--shadow);
+    }
+
+    .sidebar {
+      border-radius: 30px;
+      padding: 18px 16px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand,
+    .sidebar-footer,
+    .toolbar,
+    .section-card,
+    .folder-card,
+    .notebook-card,
+    .tabbar {
+      min-width: 0;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 6px 8px;
+    }
+
+    .brand-mark,
+    .avatar,
+    .mini-avatar {
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      color: #2c210d;
+      background: linear-gradient(180deg, #ecd39b 0%, #c49740 100%);
+    }
+
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+    }
+
+    .brand-copy strong {
+      display: block;
+      font-size: 1.05rem;
+      letter-spacing: -0.03em;
+    }
+
+    .brand-copy span {
+      display: block;
+      margin-top: 2px;
+      color: var(--text-secondary);
+      font-size: 0.84rem;
+    }
+
+    .workspace-button,
+    .nav-button,
+    .ghost-button,
+    .filled-button,
+    .segmented-button,
+    .utility-button {
+      border: 0;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: background-color 160ms ease, border-color 160ms ease, transform 160ms ease, color 160ms ease, box-shadow 160ms ease;
+    }
+
+    .workspace-button,
+    .nav-button,
+    .ghost-button,
+    .utility-button {
+      background: transparent;
+      color: var(--text);
+    }
+
+    .workspace-button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 12px;
+      border: 1px solid var(--line);
+      background: var(--surface-secondary);
+      text-align: left;
+    }
+
+    .mini-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      font-size: 0.82rem;
+      flex: 0 0 auto;
+    }
+
+    .nav-group {
+      display: grid;
+      gap: 6px;
+    }
+
+    .group-title {
+      margin: 0 0 6px 10px;
+      color: var(--text-tertiary);
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .nav-button {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      padding: 11px 12px;
+      text-align: left;
+    }
+
+    .nav-button.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .nav-button .trailing,
+    .folder-meta,
+    .meta {
+      color: var(--text-tertiary);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .nav-button .trailing {
+      margin-left: auto;
+      font-size: 0.84rem;
+    }
+
+    .folders {
+      display: grid;
+      gap: 6px;
+    }
+
+    .folder-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 0;
+      background: transparent;
+      color: var(--text-secondary);
+      text-align: left;
+      cursor: pointer;
+      transition: background-color 160ms ease, color 160ms ease;
+    }
+
+    .folder-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+    }
+
+    .folder-meta {
+      margin-left: auto;
+      font-size: 0.83rem;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      display: grid;
+      gap: 12px;
+      padding-top: 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .storage {
+      display: grid;
+      gap: 8px;
+    }
+
+    .storage-copy {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: var(--text-secondary);
+      font-size: 0.88rem;
+    }
+
+    .meter {
+      height: 7px;
+      border-radius: 999px;
+      background: rgba(120, 120, 128, 0.15);
+      overflow: hidden;
+    }
+
+    .meter > span {
+      display: block;
+      width: 42%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #efd7a2, var(--accent));
+    }
+
+    .content {
+      border-radius: 34px;
+      padding: 22px 22px 26px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 2px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .toolbar-copy {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .eyebrow {
+      color: var(--text-tertiary);
+      font-size: 0.82rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .toolbar-copy h1 {
+      margin: 6px 0 0;
+      font-size: clamp(1.85rem, 2vw, 2.4rem);
+      line-height: 1.05;
+      letter-spacing: -0.05em;
+      text-wrap: balance;
+    }
+
+    .toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .search-field {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: min(320px, 100%);
+      height: 44px;
+      padding: 0 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--surface-strong);
+    }
+
+    .search-field input {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      color: var(--text);
+      outline: 0;
+    }
+
+    .utility-button,
+    .ghost-button,
+    .segmented-button {
+      min-height: 44px;
+      min-width: 44px;
+      border: 1px solid var(--line);
+      background: var(--surface-strong);
+      color: var(--text);
+    }
+
+    .filled-button {
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid transparent;
+      background: linear-gradient(180deg, #efd7a2 0%, var(--accent) 100%);
+      color: #2c210d;
+      font-weight: 700;
+      box-shadow: 0 8px 20px rgba(183, 137, 55, 0.22);
+    }
+
+    .avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      font-size: 0.95rem;
+      border: 2px solid rgba(255, 255, 255, 0.35);
+    }
+
+    .main-scroll {
+      flex: 1;
+      overflow: auto;
+      padding-top: 22px;
+      display: grid;
+      gap: 22px;
+      padding-bottom: calc(var(--safe-bottom) + 12px);
+    }
+
+    .summary {
+      display: grid;
+      gap: 6px;
+      padding: 0 2px;
+    }
+
+    .summary h2 {
+      margin: 0;
+      font-size: 1.2rem;
+      letter-spacing: -0.03em;
+      text-wrap: balance;
+    }
+
+    .summary p {
+      margin: 0;
+      color: var(--text-secondary);
+      line-height: 1.45;
+    }
+
+    .section-card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      background: var(--surface-strong);
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .section-title h3 {
+      margin: 0;
+      font-size: 1rem;
+      letter-spacing: -0.02em;
+    }
+
+    .section-title p {
+      margin: 3px 0 0;
+      color: var(--text-tertiary);
+      font-size: 0.87rem;
+    }
+
+    .continue-grid,
+    .folder-grid,
+    .notebook-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .continue-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .folder-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .notebook-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .notebook-card,
+    .folder-card {
+      display: grid;
+      gap: 12px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(180deg, var(--surface-strong), var(--surface-secondary));
+    }
+
+    .recent-card {
+      display: grid;
+      gap: 10px;
+      justify-items: center;
+      padding: 8px 6px 4px;
+      border-radius: 18px;
+      border: 0;
+      background: transparent;
+    }
+
+    .recent-cover {
+      width: min(100%, 116px);
+      aspect-ratio: 0.74;
+      border-radius: 14px;
+      position: relative;
+      overflow: hidden;
+      background: var(--cover, linear-gradient(180deg, #d6b06d, #a3742c));
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 0.12);
+    }
+
+    .recent-cover::before,
+    .recent-cover::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 18px;
+      height: 3px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.34);
+    }
+
+    .recent-cover::before { top: 16px; }
+    .recent-cover::after { top: 25px; right: 28px; background: rgba(255, 255, 255, 0.22); }
+
+    .recent-copy {
+      display: grid;
+      gap: 3px;
+      width: 100%;
+      text-align: center;
+      min-width: 0;
+    }
+
+    .recent-copy strong {
+      display: block;
+      font-size: 0.92rem;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .recent-copy span {
+      color: var(--text-tertiary);
+      font-size: 0.8rem;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .cover {
+      aspect-ratio: 0.8;
+      border-radius: 16px;
+      position: relative;
+      overflow: hidden;
+      background: var(--cover, linear-gradient(180deg, #d6b06d, #a3742c));
+    }
+
+    .cover::before,
+    .cover::after {
+      content: "";
+      position: absolute;
+      left: 16px;
+      right: 28px;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.34);
+    }
+
+    .cover::before { top: 22px; }
+    .cover::after { top: 34px; right: 40px; background: rgba(255, 255, 255, 0.22); }
+
+    .cover-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.18);
+      color: #ffffff;
+      font-size: 0.74rem;
+      font-weight: 600;
+      backdrop-filter: blur(12px);
+    }
+
+    .card-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+
+    .card-copy strong {
+      font-size: 0.98rem;
+      letter-spacing: -0.02em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 0.84rem;
+    }
+
+    .folder-card {
+      grid-template-columns: 48px minmax(0, 1fr);
+      align-items: center;
+    }
+
+    .folder-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      display: grid;
+      place-items: center;
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .segmented {
+      display: inline-flex;
+      gap: 6px;
+      padding: 4px;
+      border-radius: 14px;
+      background: var(--surface-secondary);
+      border: 1px solid var(--line);
+    }
+
+    .segmented-button.active {
+      background: var(--surface-strong);
+      border-color: var(--line-strong);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .tabbar {
+      display: none;
+      position: sticky;
+      bottom: 0;
+      z-index: 10;
+      border-radius: 22px;
+      padding: 10px;
+      margin-top: 14px;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .tabbar button {
+      flex: 1;
+      min-height: 52px;
+      border: 0;
+      border-radius: 16px;
+      background: transparent;
+      color: var(--text-secondary);
+      font-size: 0.76rem;
+      font-weight: 600;
+    }
+
+    .tabbar button.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+
+    .hoverable:hover,
+    .workspace-button:hover,
+    .nav-button:hover,
+    .folder-row:hover,
+    .ghost-button:hover,
+    .utility-button:hover,
+    .segmented-button:hover {
+      background-color: rgba(120, 120, 128, 0.12);
+    }
+
+    .filled-button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 12px 26px rgba(183, 137, 55, 0.24);
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    .search-field:focus-within {
+      outline: 3px solid rgba(0, 122, 255, 0.28);
+      outline-offset: 2px;
+    }
+
+    @media (max-width: 1080px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .content {
+        border-radius: 28px;
+      }
+
+      .continue-grid,
+      .folder-grid,
+      .notebook-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .tabbar {
+        display: flex;
+      }
+    }
+
+    @media (max-width: 700px) {
+      .app-shell {
+        padding:
+          calc(var(--safe-top) + 12px)
+          calc(var(--safe-right) + 12px)
+          calc(var(--safe-bottom) + 12px)
+          calc(var(--safe-left) + 12px);
+      }
+
+      .toolbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .toolbar-actions {
+        justify-content: stretch;
+      }
+
+      .search-field {
+        min-width: 100%;
+      }
+
+      .continue-grid,
+      .folder-grid,
+      .notebook-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        scroll-behavior: auto !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <div class="layout">
+      <aside class="sidebar" aria-label="Library">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">G</div>
+          <div class="brand-copy">
+            <strong>GirokIQ</strong>
+            <span>Notebook Library</span>
+          </div>
+        </div>
+
+        <button class="workspace-button hoverable" type="button" aria-label="Current workspace">
+          <div class="mini-avatar" aria-hidden="true">H</div>
+          <div>
+            <strong style="display:block;">Hector’s Space</strong>
+            <span style="display:block; color:var(--text-tertiary); font-size:0.84rem;">Free Plan</span>
+          </div>
+        </button>
+
+        <div class="nav-group">
+          <p class="group-title">Library</p>
+          <button class="nav-button active hoverable" type="button" aria-current="page">
+            <span aria-hidden="true">⌂</span>
+            <span>Home</span>
+          </button>
+          <button class="nav-button hoverable" type="button">
+            <span aria-hidden="true">▣</span>
+            <span>Notebooks</span>
+            <span class="trailing">12</span>
+          </button>
+          <button class="nav-button hoverable" type="button">
+            <span aria-hidden="true">★</span>
+            <span>Favorites</span>
+            <span class="trailing">3</span>
+          </button>
+          <button class="nav-button hoverable" type="button">
+            <span aria-hidden="true">⇄</span>
+            <span>Shared</span>
+            <span class="trailing">1</span>
+          </button>
+          <button class="nav-button hoverable" type="button">
+            <span aria-hidden="true">⌫</span>
+            <span>Trash</span>
+          </button>
+        </div>
+
+        <div class="nav-group">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 4px;">
+            <p class="group-title" style="margin:0;">Folders</p>
+            <button class="ghost-button hoverable" type="button" aria-label="Create folder">＋</button>
+          </div>
+          <div class="folders">
+            <button class="folder-row hoverable" type="button">
+              <span class="folder-dot" style="background:#b78937;"></span>
+              <span>Work</span>
+              <span class="folder-meta">4</span>
+            </button>
+            <button class="folder-row hoverable" type="button">
+              <span class="folder-dot" style="background:#5b89c7;"></span>
+              <span>Study</span>
+              <span class="folder-meta">5</span>
+            </button>
+            <button class="folder-row hoverable" type="button">
+              <span class="folder-dot" style="background:#55a08c;"></span>
+              <span>Personal</span>
+              <span class="folder-meta">3</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <div class="storage">
+            <div class="storage-copy">
+              <span>Storage</span>
+              <span>4.2 / 10 GB</span>
+            </div>
+            <div class="meter" aria-hidden="true"><span></span></div>
+          </div>
+
+          <button class="nav-button hoverable" type="button">
+            <span aria-hidden="true">⚙︎</span>
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="content" id="main-content">
+        <header class="toolbar">
+          <div class="toolbar-copy">
+            <div class="eyebrow">Thursday · June 25</div>
+            <h1>Home</h1>
+          </div>
+
+          <div class="toolbar-actions">
+            <form class="search-field" role="search" aria-label="Search notebooks">
+              <label class="sr-only" for="notebook-search">Search notebooks</label>
+              <span aria-hidden="true">⌕</span>
+              <input id="notebook-search" name="search" type="search" placeholder="Search notebooks…" autocomplete="off" spellcheck="false">
+            </form>
+
+            <button class="utility-button hoverable" type="button" aria-label="Switch appearance">◐</button>
+            <button class="ghost-button hoverable" type="button" aria-label="Import notebook" style="min-height:44px; padding:0 14px; border:1px solid var(--line); background:var(--surface-strong); font-weight:600;">Import</button>
+            <button class="filled-button" type="button" aria-label="Create notebook">New Notebook</button>
+            <button class="avatar" type="button" aria-label="Profile">H</button>
+          </div>
+        </header>
+
+        <div class="main-scroll">
+          <section class="summary" aria-labelledby="summary-title">
+            <h2 id="summary-title">Good afternoon, Hector</h2>
+            <p>Your notebooks, recent work, and folders stay visible without crowding the screen. Search is scoped to the current library, and primary actions remain in the toolbar where they feel native on Apple platforms.</p>
+          </section>
+
+          <section class="section-card" aria-labelledby="continue-title">
+            <div class="section-header">
+              <div class="section-title">
+                <div aria-hidden="true">◷</div>
+                <div>
+                  <h3 id="continue-title">Continue</h3>
+                  <p>Return to recent notebooks without losing context.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="continue-grid">
+              <article class="recent-card hoverable">
+                <div class="recent-cover" style="--cover:linear-gradient(180deg, #d9b56d, #b37b2e);"></div>
+                <div class="recent-copy">
+                  <strong>Client Planning Notes</strong>
+                  <span>10 min ago</span>
+                </div>
+              </article>
+
+              <article class="recent-card hoverable">
+                <div class="recent-cover" style="--cover:linear-gradient(180deg, #82a7dc, #537bb3);"></div>
+                <div class="recent-copy">
+                  <strong>Research · LLM Agents</strong>
+                  <span>5 h ago</span>
+                </div>
+              </article>
+
+              <article class="recent-card hoverable">
+                <div class="recent-cover" style="--cover:linear-gradient(180deg, #84c3b2, #4c907c);"></div>
+                <div class="recent-copy">
+                  <strong>Travel Ideas</strong>
+                  <span>Yesterday</span>
+                </div>
+              </article>
+
+              <article class="recent-card hoverable">
+                <div class="recent-cover" style="--cover:linear-gradient(180deg, #8f8f95, #616168);"></div>
+                <div class="recent-copy">
+                  <strong>Weekly Review</strong>
+                  <span>2 days ago</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="section-card" aria-labelledby="folders-title">
+            <div class="section-header">
+              <div class="section-title">
+                <div aria-hidden="true">▤</div>
+                <div>
+                  <h3 id="folders-title">Folders</h3>
+                  <p>Grouped navigation stays lightweight and glanceable.</p>
+                </div>
+              </div>
+              <button class="ghost-button hoverable" type="button">New Folder</button>
+            </div>
+
+            <div class="folder-grid">
+              <article class="folder-card hoverable">
+                <div class="folder-icon" aria-hidden="true">▣</div>
+                <div class="card-copy">
+                  <strong>Work</strong>
+                  <div class="meta">
+                    <span>4 notebooks</span>
+                    <span>Updated today</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="folder-card hoverable">
+                <div class="folder-icon" aria-hidden="true" style="color:#5b89c7; background:rgba(91,137,199,0.14);">▣</div>
+                <div class="card-copy">
+                  <strong>Study</strong>
+                  <div class="meta">
+                    <span>5 notebooks</span>
+                    <span>Updated yesterday</span>
+                  </div>
+                </div>
+              </article>
+
+              <article class="folder-card hoverable">
+                <div class="folder-icon" aria-hidden="true" style="color:#55a08c; background:rgba(85,160,140,0.14);">▣</div>
+                <div class="card-copy">
+                  <strong>Personal</strong>
+                  <div class="meta">
+                    <span>3 notebooks</span>
+                    <span>Updated 2 days ago</span>
+                  </div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="section-card" aria-labelledby="notebooks-title">
+            <div class="section-header">
+              <div class="section-title">
+                <div aria-hidden="true">☰</div>
+                <div>
+                  <h3 id="notebooks-title">All Notebooks</h3>
+                  <p>Dense content uses grouped cards instead of heavy dashboard chrome.</p>
+                </div>
+              </div>
+
+              <div class="segmented" role="group" aria-label="View options">
+                <button class="segmented-button active" type="button" aria-pressed="true" aria-label="Grid view">Grid</button>
+                <button class="segmented-button" type="button" aria-pressed="false" aria-label="List view">List</button>
+              </div>
+            </div>
+
+            <div class="notebook-grid">
+              <article class="notebook-card hoverable">
+                <div class="cover" style="--cover:linear-gradient(180deg, #e6c98e, #bc8840);"></div>
+                <div class="card-copy">
+                  <strong>Q3 Strategy</strong>
+                  <div class="meta"><span>Work</span><span>12 pages</span></div>
+                </div>
+              </article>
+
+              <article class="notebook-card hoverable">
+                <div class="cover" style="--cover:linear-gradient(180deg, #8db1e5, #5b7fb2);"></div>
+                <div class="card-copy">
+                  <strong>Machine Learning Notes</strong>
+                  <div class="meta"><span>Study</span><span>31 pages</span></div>
+                </div>
+              </article>
+
+              <article class="notebook-card hoverable">
+                <div class="cover" style="--cover:linear-gradient(180deg, #84c3b2, #4c907c);"></div>
+                <div class="card-copy">
+                  <strong>Travel Ideas</strong>
+                  <div class="meta"><span>Personal</span><span>9 pages</span></div>
+                </div>
+              </article>
+
+              <article class="notebook-card hoverable">
+                <div class="cover" style="--cover:linear-gradient(180deg, #8f8f95, #616168);"></div>
+                <div class="card-copy">
+                  <strong>Weekly Review</strong>
+                  <div class="meta"><span>Favorites</span><span>18 pages</span></div>
+                </div>
+              </article>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <nav class="tabbar" aria-label="Primary tabs">
+      <button class="active" type="button" aria-current="page">Home</button>
+      <button type="button">Notebooks</button>
+      <button type="button">Search</button>
+      <button type="button">Settings</button>
+    </nav>
+  </div>
+</body>
+</html>

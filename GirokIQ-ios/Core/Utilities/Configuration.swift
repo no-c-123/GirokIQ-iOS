@@ -16,6 +16,32 @@ enum Configuration {
 
     // MARK: - Supabase
 
+    // MARK: - Cloud Data Mode
+
+    /// Controls which features are allowed to read/write user data to Supabase.
+    /// For launch we keep Supabase for authentication (and optionally app_state),
+    /// while notebooks/pages/assets remain local-only.
+    enum CloudDataMode {
+        /// Supabase is used only for authentication.
+        case authOnly
+        /// Supabase is used for authentication and lightweight app state (e.g. last-opened pointers).
+        case authAndAppState
+        /// Full sync for notebooks/pages/chats/assets.
+        case full
+    }
+
+    /// Current migration setting: full cloud sync enabled.
+    static let cloudDataMode: CloudDataMode = .full
+
+    /// When false, the app behaves as local-only (offline-first) for notebooks/pages/chats/assets.
+    static var cloudSyncEnabled: Bool { cloudDataMode == .full }
+
+    /// When false, AI chats/messages remain local-only.
+    static var cloudChatEnabled: Bool { cloudDataMode == .full }
+
+    /// When true, we may read/write `app_state` to Supabase.
+    static var cloudAppStateEnabled: Bool { cloudDataMode != .authOnly }
+
     static var supabaseURL: URL {
         if let urlString = Bundle.main.infoDictionary?["SUPABASE_URL"] as? String,
            let url = URL(string: urlString) {
@@ -36,41 +62,14 @@ enum Configuration {
         return "sb_publishable_423Dnw91Y5cLpTMC7wCuMA_3cAuqY-t"
     }
 
-    static var anthropicAPIKey: String {
-        guard let info = Bundle.main.infoDictionary else { return "" }
-
-        if let key = info["ANTHROPIC_API_KEY"] as? String, !key.isEmpty {
-            return key
+    static var supabaseFunctionsBaseURL: URL {
+        if let host = supabaseURL.host(),
+           host.contains(".supabase.co"),
+           let projectRef = host.split(separator: ".").first,
+           let url = URL(string: "https://\(projectRef).functions.supabase.co") {
+            return url
         }
 
-        if let anthropic = info["ANTHROPIC"] as? [String: Any],
-           let api = anthropic["API"] as? [String: Any],
-           let key = api["KEY"] as? String,
-           !key.isEmpty {
-            return key
-        }
-
-        func findAnthropicKey(in value: Any) -> String? {
-            if let s = value as? String, s.hasPrefix("sk-ant-"), !s.isEmpty {
-                return s
-            }
-            if let dict = value as? [String: Any] {
-                for (_, v) in dict {
-                    if let found = findAnthropicKey(in: v) { return found }
-                }
-            }
-            if let arr = value as? [Any] {
-                for v in arr {
-                    if let found = findAnthropicKey(in: v) { return found }
-                }
-            }
-            return nil
-        }
-
-        if let found = findAnthropicKey(in: info) {
-            return found
-        }
-
-        return ""
+        return supabaseURL.appendingPathComponent("functions/v1")
     }
 }

@@ -88,6 +88,21 @@ struct AuthView: View {
                             trailingIcon: showPassword ? "eye.slash" : "eye",
                             trailingAction: { showPassword.toggle() }
                         )
+
+                        if !isSignUp {
+                            HStack {
+                                Spacer()
+                                Button("Forgot password?") {
+                                    Task {
+                                        await authViewModel.resetPassword(email: email)
+                                    }
+                                }
+                                .font(.gCaption)
+                                .foregroundColor(.gPrimary)
+                                .disabled(authViewModel.isLoading)
+                            }
+                            .transition(.opacity)
+                        }
                     }
                     .animation(GAnimation.spring, value: isSignUp)
 
@@ -99,6 +114,18 @@ struct AuthView: View {
                             Text(error)
                                 .font(.gCaption)
                                 .foregroundColor(.gDestructive)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                    }
+
+                    if let info = authViewModel.infoMessage {
+                        HStack(spacing: GSpacing.xs) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.gPrimary)
+                            Text(info)
+                                .font(.gCaption)
+                                .foregroundColor(.gTextSecondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .transition(.opacity)

@@ -38,6 +38,6 @@ enum GAnimation {
 
     /// Returns instant (no animation) when Reduce Motion is enabled, otherwise the given animation
     static func motionSafe(_ animation: Animation = GAnimation.spring) -> Animation? {
-        UIAccessibility.isReduceMotionEnabled ? .none : animation
+        (UIAccessibility.isReduceMotionEnabled || UserDefaults.standard.bool(forKey: "reducedMotion")) ? .none : animation
     }
 }

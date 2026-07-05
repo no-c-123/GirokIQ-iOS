@@ -80,6 +80,10 @@ extension View {
 
 // MARK: - Accessibility: Reduce Motion Animation Wrapper
 
+private func isMotionReduced() -> Bool {
+    UIAccessibility.isReduceMotionEnabled || UserDefaults.standard.bool(forKey: "reducedMotion")
+}
+
 extension View {
     /// Performs an animated state change respecting Reduce Motion preference.
     /// When Reduce Motion is enabled, the change is applied instantly.
@@ -88,7 +92,7 @@ extension View {
         value: V? = nil as Bool?,
         _ body: () -> Void
     ) {
-        if UIAccessibility.isReduceMotionEnabled {
+        if isMotionReduced() {
             body()
         } else {
             withAnimation(animation) { body() }
@@ -102,7 +106,7 @@ func animateMotionSafe(
     _ animation: Animation = GAnimation.spring,
     _ body: () -> Void
 ) {
-    if UIAccessibility.isReduceMotionEnabled {
+    if isMotionReduced() {
         body()
     } else {
         withAnimation(animation) { body() }
@@ -137,10 +141,8 @@ struct ShimmerModifier: ViewModifier {
                 )
                 .offset(x: phase)
                 .onAppear {
-                    withAnimation(
-                        .linear(duration: 1.5)
-                        .repeatForever(autoreverses: false)
-                    ) {
+                    guard !isMotionReduced() else { return }
+                    withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
                         phase = 300
                     }
                 }

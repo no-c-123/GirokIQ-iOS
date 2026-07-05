@@ -6,6 +6,7 @@ import PencilKit
 /// Handles conversion between PKDrawing and serialized data for persistence.
 /// PKDrawing data is stored as `Data` (blob) in both GRDB and Supabase.
 enum PencilKitBridge {
+    private static let maxVisionPixels: CGFloat = 1_500
 
     // MARK: - Serialization
 
@@ -17,6 +18,18 @@ enum PencilKitBridge {
     /// Restore a PKDrawing from stored Data
     nonisolated static func deserialize(_ data: Data) -> PKDrawing? {
         try? PKDrawing(data: data)
+    }
+
+    /// Compress serialized drawing data before writing it to disk.
+    nonisolated static func compressForPersistence(_ data: Data) throws -> Data {
+        let compressed = try (data as NSData).compressed(using: .lzfse)
+        return compressed as Data
+    }
+
+    /// Restore persisted drawing bytes back to the raw PKDrawing payload.
+    nonisolated static func decompressForPersistence(_ data: Data) throws -> Data {
+        let decompressed = try (data as NSData).decompressed(using: .lzfse)
+        return decompressed as Data
     }
 
     // MARK: - Image Export
@@ -47,9 +60,21 @@ enum PencilKitBridge {
             let padding: CGFloat = 40
             bounds = strokeBounds.insetBy(dx: -padding, dy: -padding)
         }
-        
-        let image = drawing.image(from: bounds, scale: 2.0)
+
+        let image = drawing.image(
+            from: bounds,
+            scale: boundedRenderScale(for: bounds.size, maxPixelDimension: maxVisionPixels)
+        )
         return image.pngData()
+    }
+
+    nonisolated static func boundedRenderScale(
+        for size: CGSize,
+        maxPixelDimension: CGFloat
+    ) -> CGFloat {
+        let maxDimension = max(size.width, size.height)
+        guard maxDimension.isFinite, maxDimension > 0 else { return 1.0 }
+        return min(1.0, maxPixelDimension / maxDimension)
     }
 
     // MARK: - Tool Mapping
@@ -60,7 +85,7 @@ enum PencilKitBridge {
         color: UIColor,
         width: CGFloat,
         penStyle: PKInkingTool.InkType = .pen,
-        eraserType: PKEraserTool.EraserType = .bitmap
+        eraserType: PKEraserTool.EraserType = .fixedWidthBitmap
     ) -> PKTool {
         switch tool {
         case .pen:
@@ -70,7 +95,7 @@ enum PencilKitBridge {
         case .marker:
             return PKInkingTool(.marker, color: color, width: width)
         case .eraser:
-            return PKEraserTool(eraserType)
+            return PKEraserTool(eraserType, width: width)
         case .selection:
             return PKLassoTool()
         case .lasso, .image, .text:
@@ -85,44 +110,6 @@ enum PencilKitBridge {
     /// A blank PKDrawing for new pages
     static var empty: PKDrawing {
         PKDrawing()
-    }
-
-    // MARK: - Web Stroke Conversion
-
-    /// Convert an array of web-format strokes (JSON from `strokes_web` table)
-    /// into a PKDrawing. Used when iOS fetches a page that has no `drawing_data`
-    /// but has web strokes available.
-    static func convertWebStrokes(_ webStrokes: [WebStroke]) -> PKDrawing {
-        var pkStrokes: [PKStroke] = []
-
-        for ws in webStrokes {
-            guard ws.points.count >= 2 else { continue }
-
-            let ink = PKInk(
-                .pen,
-                color: UIColor(hex: ws.color).withAlphaComponent(CGFloat(ws.opacity))
-            )
-
-            var controlPoints: [PKStrokePoint] = []
-            for point in ws.points {
-                let sp = PKStrokePoint(
-                    location: CGPoint(x: point.x, y: point.y),
-                    timeOffset: point.timeOffset,
-                    size: CGSize(width: CGFloat(ws.width), height: CGFloat(ws.width)),
-                    opacity: CGFloat(ws.opacity),
-                    force: CGFloat(point.pressure),
-                    azimuth: 0,
-                    altitude: .pi / 2
-                )
-                controlPoints.append(sp)
-            }
-
-            let path = PKStrokePath(controlPoints: controlPoints, creationDate: Date())
-            let stroke = PKStroke(ink: ink, path: path)
-            pkStrokes.append(stroke)
-        }
-
-        return PKDrawing(strokes: pkStrokes)
     }
 
     // MARK: - PDF Export
@@ -166,38 +153,24 @@ enum PencilKitBridge {
             }
         }
     }
-}
 
-// MARK: - Web Stroke Models
+    /// Render an array of UIImages (one per page) to a single PDF Data object.
+    /// Used for composite exports where text/images must be included.
+    static func renderPDF(
+        from images: [UIImage],
+        pageSize: CGSize = CGSize(width: 612, height: 792) // US Letter
+    ) -> Data {
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(origin: .zero, size: pageSize))
+        return renderer.pdfData { pdfContext in
+            for image in images {
+                let iw = image.size.width
+                let ih = image.size.height
+                guard iw > 0, ih > 0 else { continue }
 
-/// Represents a stroke from the web app's `strokes_web` table.
-/// The web app stores strokes as JSON arrays of points rather than PKDrawing binary.
-struct WebStroke: Codable, Identifiable {
-    let id: UUID
-    let pageId: UUID
-    let userId: UUID
-    var color: String           // hex color e.g. "#6366F1"
-    var width: Double
-    var opacity: Double
-    var tool: String            // "pen", "pencil", "marker"
-    var points: [WebStrokePoint]
-    let createdAt: Date
-    var updatedAt: Date
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case pageId = "page_id"
-        case userId = "user_id"
-        case color, width, opacity, tool, points
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
+                let pageRect = CGRect(origin: .zero, size: CGSize(width: iw, height: ih))
+                pdfContext.beginPage(withBounds: pageRect, pageInfo: [:])
+                image.draw(in: pageRect)
+            }
+        }
     }
-}
-
-/// A single point in a web stroke, with position, pressure, and time offset.
-struct WebStrokePoint: Codable {
-    var x: Double
-    var y: Double
-    var pressure: Double
-    var timeOffset: TimeInterval
 }

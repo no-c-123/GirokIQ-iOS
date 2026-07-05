@@ -6,7 +6,7 @@
 // Keep this file present in the repository because the Xcode project references it
 // as a base configuration file for Debug builds.
 //
-// Secrets (e.g. ANTHROPIC_API_KEY) live in the git-ignored Config/Secrets.xcconfig,
+// Local secrets and overrides live in the git-ignored Config/Secrets.xcconfig,
 // pulled in below. The `?` makes the include optional so builds still succeed when
-// the file is absent (CI without the secret, fresh clones, etc.).
+// the file is absent (CI without local overrides, fresh clones, etc.).
 #include? "Secrets.xcconfig"
