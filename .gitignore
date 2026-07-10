@@ -26,3 +26,10 @@ Config/Release.xcconfig
 
 # DS_Store
 .DS_Store
+
+# Supabase CLI / local artifacts
+supabase/.temp/
+
+# Common secret files
+.env
+.env.*

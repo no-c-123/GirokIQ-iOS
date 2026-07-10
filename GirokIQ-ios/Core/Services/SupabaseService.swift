@@ -381,13 +381,15 @@ final class SupabaseService {
 
         Task {
             do {
-                try await channel.subscribe()
+                try await channel.subscribeWithError()
                 try await trackPresenceWithRetry(
                     on: channel,
                     state: ["user_id": userId.uuidString, "platform": platform]
                 )
             } catch {
+                #if DEBUG
                 print("[Presence] Failed to join notebook presence: \(error)")
+                #endif
             }
         }
 

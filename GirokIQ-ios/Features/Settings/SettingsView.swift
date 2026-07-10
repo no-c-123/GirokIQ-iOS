@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @StateObject private var viewModel = SettingsViewModel()
     @EnvironmentObject var authViewModel: AuthViewModel
+    @EnvironmentObject var purchaseManager: PurchaseManager
     @Environment(\.dismiss) var dismiss
 
     @State private var showExportShare = false
@@ -16,6 +17,7 @@ struct SettingsView: View {
     @State private var displayNameErrorMessage: String?
     @State private var isForceBackfillRunning = false
     @State private var forceBackfillErrorMessage: String?
+    @State private var showPricing = false
 
     var body: some View {
         NavigationStack {
@@ -55,6 +57,9 @@ struct SettingsView: View {
                 if let url = exportURL {
                     ShareSheet(items: [url])
                 }
+            }
+            .fullScreenCover(isPresented: $showPricing) {
+                PricingView(entryPoint: .settings)
             }
             .alert("Edit Display Name", isPresented: $showEditDisplayName) {
                 TextField("Display Name", text: $editedDisplayName)
@@ -152,6 +157,52 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            Button {
+                if authViewModel.subscriptionTier == .pro {
+                    Task {
+                        await purchaseManager.openManageSubscriptions()
+                    }
+                } else {
+                    showPricing = true
+                }
+            } label: {
+                HStack(alignment: .center, spacing: GSpacing.md) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(authViewModel.subscriptionTier == .pro ? "Manage Subscription" : "Upgrade to GirokIQ Pro")
+                            .font(.gHeadline)
+                            .foregroundColor(.gTextPrimary)
+                        Text(authViewModel.subscriptionTier == .pro
+                             ? "Open your App Store subscription settings."
+                             : "Unlimited notebooks, 10 GB cloud sync, and higher AI limits.")
+                            .font(.gCaption)
+                            .foregroundColor(.gTextSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+
+                    Image(systemName: "arrow.up.right")
+                        .font(.gFootnote.weight(.bold))
+                        .foregroundColor(.black.opacity(0.72))
+                        .frame(width: 32, height: 32)
+                        .background(
+                            Circle()
+                                .fill(Color.gPrimary)
+                        )
+                }
+                .padding(.vertical, GSpacing.xs)
+            }
+            .buttonStyle(.plain)
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: GRadius.md, style: .continuous)
+                    .fill(Color.gPrimaryMuted.opacity(0.95))
+                    .padding(.vertical, 4)
+            )
+            .accessibilityLabel(authViewModel.subscriptionTier == .pro ? "Manage Subscription" : "Upgrade to GirokIQ Pro")
+            .accessibilityHint(authViewModel.subscriptionTier == .pro
+                               ? "Double tap to open App Store subscription settings"
+                               : "Double tap to review plans and Pro features")
 
             Button {
                 editedDisplayName = authViewModel.displayName == authViewModel.currentUserEmail ? "" : authViewModel.displayName

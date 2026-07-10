@@ -23,9 +23,11 @@ final class AuthViewModel: ObservableObject {
     @Published var backfillStatusMessage: String?
 
     @Published var displayName: String = "User"
+    @Published var subscriptionTier: AppSubscriptionTier = .free
 
     let syncMonitor: SyncEngine
     private let localDatabase: LocalDatabase
+    private let supabaseService: SupabaseService
 
     // MARK: - Lifecycle
 
@@ -33,6 +35,7 @@ final class AuthViewModel: ObservableObject {
         let resolvedSyncEngine = syncEngine ?? SyncEngine()
         self.syncMonitor = resolvedSyncEngine
         self.localDatabase = .shared
+        self.supabaseService = .shared
         Task {
             await restoreSession()
         }
@@ -96,6 +99,8 @@ final class AuthViewModel: ObservableObject {
         currentUserId = nil
         currentUserEmail = nil
         displayName = "User"
+        subscriptionTier = .free
+        AppSubscriptionTier.persisted = .free
         isSyncing = false
         isAuthenticated = false
         backfillStatusMessage = nil
@@ -347,6 +352,7 @@ final class AuthViewModel: ObservableObject {
             // Local-only launch mode: keep Supabase for auth (and optionally app_state),
             // but do not pull notebooks/pages/chats.
             isSyncing = false
+            await refreshSubscriptionTierFromServer()
             _ = userId
             Task.detached(priority: .utility) {
                 try? await LocalDatabase.shared.markAllSyncChangesAsSynced()
@@ -359,7 +365,29 @@ final class AuthViewModel: ObservableObject {
             await syncMonitor.pushPending()
         }
         await syncMonitor.pullAll(userId: userId)
+        await refreshSubscriptionTierFromServer()
         isSyncing = false
+    }
+
+    func refreshSubscriptionTierFromServer() async {
+        guard Configuration.cloudAppStateEnabled, let userId = currentUserId else {
+            subscriptionTier = .free
+            return
+        }
+
+        do {
+            let appState = try await supabaseService.fetchAppState(userId: userId)
+            subscriptionTier = appState?.subscriptionTier ?? .free
+            AppSubscriptionTier.persisted = subscriptionTier
+        } catch {
+            subscriptionTier = .free
+            AppSubscriptionTier.persisted = .free
+        }
+    }
+
+    func updateLocalSubscriptionTier(_ tier: AppSubscriptionTier) {
+        subscriptionTier = tier
+        AppSubscriptionTier.persisted = tier
     }
 
     // MARK: - Account Management
@@ -406,7 +434,9 @@ final class AuthViewModel: ObservableObject {
         do {
             try await supabase.auth.signOut()
         } catch {
+            #if DEBUG
             print("[Auth] Sign out network error (ignored): \(error)")
+            #endif
         }
 
         errorMessage = nil
@@ -462,7 +492,9 @@ final class AuthViewModel: ObservableObject {
 
             return fileNames
         } catch {
+            #if DEBUG
             print("[Auth] Failed to collect local image files before account deletion: \(error)")
+            #endif
             return []
         }
     }
@@ -478,7 +510,9 @@ final class AuthViewModel: ObservableObject {
                 }
                 ImageCache.shared.remove(for: fileName)
             } catch {
+                #if DEBUG
                 print("[Auth] Failed to delete local image file \(fileName): \(error)")
+                #endif
             }
         }
     }

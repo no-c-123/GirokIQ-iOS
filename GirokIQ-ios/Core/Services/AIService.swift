@@ -279,6 +279,9 @@ enum AIError: LocalizedError {
         case .unauthorized:
             return "Your session expired. Please sign in again."
         case .apiError(let code, let message):
+            if code == 429 {
+                return message
+            }
             return "AI error (\(code)): \(message)"
         }
     }

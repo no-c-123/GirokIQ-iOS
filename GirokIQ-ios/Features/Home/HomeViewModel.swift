@@ -34,13 +34,18 @@ final class HomeViewModel: ObservableObject {
     struct NotebookStorageBreakdownItem: Identifiable, Equatable {
         let notebook: Notebook
         let usedBytes: Int64
+        let limitBytes: Int64
         let percentOfQuota: Double
         let syncState: NotebookCloudSyncState
+        let pendingChangeCount: Int
         let lastSyncedAt: Date?
 
         var id: UUID { notebook.id }
         var usedText: String { Self.byteFormatter.string(fromByteCount: usedBytes) }
-        var quotaShareText: String { "\(Int((percentOfQuota * 100).rounded()))% of 1 GB" }
+        var quotaShareText: String {
+            let limitText = Self.byteFormatter.string(fromByteCount: limitBytes)
+            return "\(Int((percentOfQuota * 100).rounded()))% of \(limitText)"
+        }
 
         private static let byteFormatter: ByteCountFormatter = {
             let formatter = ByteCountFormatter()
@@ -275,7 +280,7 @@ final class HomeViewModel: ObservableObject {
             let foldersToPersist = fetchedFolders
 
             // Save fetched data to local database so foreign keys (like notebook_id on pages) are satisfied
-            Task.detached(priority: .utility) { [weak self] in
+            Task.detached(priority: .utility) {
                 // 1) Persist the remote snapshot locally.
                 for folder in foldersToPersist {
                     try? await LocalDatabase.shared.saveFolder(folder, syncStatus: .synced)
@@ -286,14 +291,14 @@ final class HomeViewModel: ObservableObject {
 
                 // 2) Reconcile: if a notebook/folder was deleted remotely (e.g. via Supabase dashboard),
                 // remove the local copy so storage usage drops and the app doesn't try to re-upload it.
-                await self?.reconcileRemoteDeletions(
+                await self.reconcileRemoteDeletions(
                     userId: userId,
                     remoteNotebooks: notebooksToPersist,
                     remoteFolders: foldersToPersist
                 )
 
                 // 3) Refresh the storage meter after local DB updates complete.
-                await MainActor.run {
+                await MainActor.run { [weak self] in
                     guard let self else { return }
                     Task { await self.refreshStorageUsage(userId: userId) }
                 }
@@ -338,7 +343,9 @@ final class HomeViewModel: ObservableObject {
             }
         } catch {
             // Best-effort; reconciliation shouldn't break normal loading.
+            #if DEBUG
             print("[Home] Remote deletion reconcile failed: \(error)")
+            #endif
         }
     }
 
@@ -365,10 +372,14 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveNotebook(notebook)
         } catch {
+            #if DEBUG
             print("[Home] Failed to save notebook locally: \(error)")
+            #endif
         }
 
         notebooks.insert(notebook, at: 0)
+        await quotaService.invalidateCache()
+        _ = await refreshStorageUsage(userId: userId)
 
         guard Configuration.cloudSyncEnabled else {
             return notebook
@@ -381,7 +392,9 @@ final class HomeViewModel: ObservableObject {
             }
             return created
         } catch {
+            #if DEBUG
             print("[Home] Failed to create notebook remotely, SyncEngine will retry: \(error)")
+            #endif
             return notebook
         }
     }
@@ -419,20 +432,25 @@ final class HomeViewModel: ObservableObject {
                 if Configuration.cloudSyncEnabled {
                     let canSync = await canSyncToCloud(userId: userId, showLocalOnlyNotice: true)
                     if canSync {
-                    do {
-                        _ = try await syncImportedNotebookToCloud(importedNotebook)
-                    } catch {
-                        print("[Home] Failed to create imported notebook remotely, keeping local copy: \(error)")
-                    }
+                        do {
+                            _ = try await syncImportedNotebookToCloud(importedNotebook)
+                        } catch {
+                            #if DEBUG
+                            print("[Home] Failed to create imported notebook remotely, keeping local copy: \(error)")
+                            #endif
+                        }
                     }
                 }
+                await quotaService.invalidateCache()
                 await refreshStorageUsage(userId: userId)
             }
 
             return true
         } catch {
             self.errorMessage = error.localizedDescription
+            #if DEBUG
             print("[Home] Failed to import archive: \(error)")
+            #endif
             return false
         }
     }
@@ -447,7 +465,9 @@ final class HomeViewModel: ObservableObject {
             return url
         } catch {
             self.errorMessage = error.localizedDescription
+            #if DEBUG
             print("[Home] Failed to export notebook archive: \(error)")
+            #endif
             return nil
         }
     }
@@ -472,7 +492,9 @@ final class HomeViewModel: ObservableObject {
             return url
         } catch {
             self.errorMessage = error.localizedDescription
+            #if DEBUG
             print("[Home] Failed to export folder archive: \(error)")
+            #endif
             return nil
         }
     }
@@ -500,12 +522,14 @@ final class HomeViewModel: ObservableObject {
         }
 
         guard Configuration.cloudSyncEnabled else {
+            await quotaService.invalidateCache()
             await refreshStorageUsage(userId: userId)
             return importedFolder
         }
 
         let canSync = await canSyncToCloud(userId: userId, showLocalOnlyNotice: true)
         guard canSync else {
+            await quotaService.invalidateCache()
             await refreshStorageUsage(userId: userId)
             return importedFolder
         }
@@ -521,13 +545,18 @@ final class HomeViewModel: ObservableObject {
                 do {
                     _ = try await syncImportedNotebookToCloud(notebook)
                 } catch {
+                    #if DEBUG
                     print("[Home] Failed to sync imported notebook in folder archive: \(error)")
+                    #endif
                 }
             }
         } catch {
+            #if DEBUG
             print("[Home] Failed to create imported folder remotely, keeping local copy: \(error)")
+            #endif
         }
 
+        await quotaService.invalidateCache()
         await refreshStorageUsage(userId: userId)
         return importedFolder
     }
@@ -614,7 +643,9 @@ final class HomeViewModel: ObservableObject {
             do {
                 return try await syncImportedNotebookToCloud(importedNotebook)
             } catch {
+                #if DEBUG
                 print("[Home] Failed to create imported notebook remotely, keeping local copy: \(error)")
+                #endif
             }
         }
 
@@ -739,7 +770,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveNotebook(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to rename notebook locally: \(error)")
+            #endif
         }
 
         guard Configuration.cloudSyncEnabled else { return }
@@ -748,7 +781,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.updateNotebook(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to rename notebook remotely, SyncEngine will retry: \(error)")
+            #endif
         }
     }
 
@@ -761,7 +796,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveNotebook(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to move notebook locally: \(error)")
+            #endif
         }
 
         guard Configuration.cloudSyncEnabled else { return }
@@ -770,7 +807,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.updateNotebook(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to move notebook remotely, SyncEngine will retry: \(error)")
+            #endif
         }
     }
 
@@ -784,8 +823,13 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveNotebook(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to move notebook to trash locally: \(error)")
+            #endif
         }
+
+        await quotaService.invalidateCache()
+        _ = await refreshStorageUsage(userId: updated.userId)
 
         guard Configuration.cloudSyncEnabled else { return }
         do {
@@ -793,7 +837,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.moveNotebookToTrash(id: updated.id, trashedAt: timestamp)
         } catch {
+            #if DEBUG
             print("[Home] Failed to move notebook to trash remotely, SyncEngine will retry: \(error)")
+            #endif
         }
     }
 
@@ -806,8 +852,13 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveNotebook(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to restore notebook locally: \(error)")
+            #endif
         }
+
+        await quotaService.invalidateCache()
+        _ = await refreshStorageUsage(userId: updated.userId)
 
         guard Configuration.cloudSyncEnabled else { return }
         do {
@@ -815,7 +866,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.restoreNotebook(id: updated.id)
         } catch {
+            #if DEBUG
             print("[Home] Failed to restore notebook remotely, SyncEngine will retry: \(error)")
+            #endif
         }
     }
 
@@ -825,8 +878,12 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.deleteNotebook(id: notebook.id, syncStatus: .pending)
         } catch {
+            #if DEBUG
             print("[Home] Failed to delete notebook locally: \(error)")
+            #endif
         }
+
+        await quotaService.invalidateCache()
 
         guard Configuration.cloudSyncEnabled else {
             _ = await refreshStorageUsage(userId: notebook.userId)
@@ -839,7 +896,9 @@ final class HomeViewModel: ObservableObject {
             try await service.deleteNotebook(id: notebook.id)
             try? await LocalDatabase.shared.markSynced(table: "notebook", id: notebook.id.uuidString)
         } catch {
+            #if DEBUG
             print("[Home] Failed to permanently delete notebook remotely: \(error)")
+            #endif
         }
     }
 
@@ -852,7 +911,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveFolder(folder)
         } catch {
+            #if DEBUG
             print("[Home] Failed to save folder locally: \(error)")
+            #endif
         }
         
         folders.insert(folder, at: 0)
@@ -869,7 +930,9 @@ final class HomeViewModel: ObservableObject {
             }
             return created
         } catch {
+            #if DEBUG
             print("[Home] Failed to create folder remotely, saving locally: \(error)")
+            #endif
             return folder
         }
     }
@@ -883,7 +946,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveFolder(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to rename folder locally: \(error)")
+            #endif
         }
 
         guard Configuration.cloudSyncEnabled else { return }
@@ -892,7 +957,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.updateFolder(updated)
         } catch {
+            #if DEBUG
             print("[Home] Failed to rename folder remotely, SyncEngine will retry: \(error)")
+            #endif
         }
     }
 
@@ -926,7 +993,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveFolder(updatedFolder)
         } catch {
+            #if DEBUG
             print("[Home] Failed to move folder to trash locally: \(error)")
+            #endif
         }
 
         guard Configuration.cloudSyncEnabled else {
@@ -942,7 +1011,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.moveFolderToTrash(id: updatedFolder.id, trashedAt: timestamp)
         } catch {
+            #if DEBUG
             print("[Home] Failed to move folder to trash remotely, SyncEngine will retry: \(error)")
+            #endif
         }
 
         let childNotebooks = notebooks.filter { $0.folderId == folder.id && $0.trashedAt == nil }
@@ -960,7 +1031,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.saveFolder(updatedFolder)
         } catch {
+            #if DEBUG
             print("[Home] Failed to restore folder locally: \(error)")
+            #endif
         }
 
         guard Configuration.cloudSyncEnabled else {
@@ -976,7 +1049,9 @@ final class HomeViewModel: ObservableObject {
             guard canSync else { return }
             try await service.restoreFolder(id: updatedFolder.id)
         } catch {
+            #if DEBUG
             print("[Home] Failed to restore folder remotely, SyncEngine will retry: \(error)")
+            #endif
         }
 
         let childNotebooks = notebooks.filter { $0.folderId == folder.id && $0.trashedAt != nil }
@@ -996,7 +1071,9 @@ final class HomeViewModel: ObservableObject {
         do {
             try await LocalDatabase.shared.deleteFolder(id: folder.id, syncStatus: .pending)
         } catch {
+            #if DEBUG
             print("[Home] Failed to delete folder locally: \(error)")
+            #endif
         }
 
         guard Configuration.cloudSyncEnabled else {
@@ -1010,7 +1087,9 @@ final class HomeViewModel: ObservableObject {
             try await service.deleteFolder(id: folder.id)
             try? await LocalDatabase.shared.markSynced(table: "folder", id: folder.id.uuidString)
         } catch {
+            #if DEBUG
             print("[Home] Failed to permanently delete folder remotely: \(error)")
+            #endif
         }
     }
 
@@ -1053,10 +1132,12 @@ final class HomeViewModel: ObservableObject {
                     return NotebookStorageBreakdownItem(
                         notebook: snapshot.notebook,
                         usedBytes: snapshot.usedBytes,
+                        limitBytes: status.limitBytes,
                         percentOfQuota: status.limitBytes > 0
                             ? min(max(Double(snapshot.usedBytes) / Double(status.limitBytes), 0), 1)
                             : 0,
                         syncState: syncState,
+                        pendingChangeCount: snapshot.pendingChangeCount,
                         lastSyncedAt: snapshot.lastSyncedAt
                     )
                 }
@@ -1066,11 +1147,18 @@ final class HomeViewModel: ObservableObject {
                     }
                     return lhs.usedBytes > rhs.usedBytes
                 }
+        } catch is CancellationError {
+            // Expected when a new refresh supersedes the old one.
         } catch {
-            storageBreakdown = []
+            #if DEBUG
             print("[Home] Failed to calculate storage breakdown: \(error)")
+            #endif
         }
         return status
+    }
+
+    func refreshQuotaStatus(userId: UUID) async {
+        _ = await refreshStorageUsage(userId: userId)
     }
 
     func refreshSyncSurface(userId: UUID?) async {

@@ -2,6 +2,10 @@ import Foundation
 import Combine
 import PencilKit
 
+extension Notification.Name {
+    static let syncEngineRequestPush = Notification.Name("girokiq.syncEngineRequestPush")
+}
+
 // MARK: - Sync Engine
 
 /// Reconciles local GRDB database with remote Supabase.
@@ -18,7 +22,7 @@ import PencilKit
 ///   On success: mark local record as synced
 ///   On conflict: last-write-wins for drawing data, merge for metadata
 final class SyncEngine: ObservableObject {
-    private static let fullBackfillDefaultsKeyPrefix = "SyncEngine.fullBackfillEnqueued"
+    nonisolated private static let fullBackfillDefaultsKeyPrefix = "SyncEngine.fullBackfillEnqueued"
 
     enum SyncState: Equatable, Sendable {
         case idle
@@ -35,14 +39,31 @@ final class SyncEngine: ObservableObject {
     private let quota = CloudStorageQuotaService.shared
     private let network = NetworkMonitor.shared
     private var syncTask: Task<Void, Never>?
+    private var requestPushTask: Task<Void, Never>?
+    private var requestPushObserver: NSObjectProtocol?
 
     init(local: LocalDatabase, remote: SupabaseService) {
         self.local = local
         self.remote = remote
+        self.requestPushObserver = NotificationCenter.default.addObserver(
+            forName: .syncEngineRequestPush,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            self?.requestPush()
+        }
     }
 
     convenience init() {
         self.init(local: .shared, remote: .shared)
+    }
+
+    deinit {
+        syncTask?.cancel()
+        requestPushTask?.cancel()
+        if let requestPushObserver {
+            NotificationCenter.default.removeObserver(requestPushObserver)
+        }
     }
 
     // MARK: - Public API
@@ -51,14 +72,28 @@ final class SyncEngine: ObservableObject {
         fullBackfillDefaultsKeyPrefix + "." + userId.uuidString
     }
 
+    @MainActor
+    private func setStateIfNeeded(_ newState: SyncState) {
+        if state != newState {
+            state = newState
+        }
+    }
+
+    @MainActor
+    private func setPendingCountIfNeeded(_ newCount: Int) {
+        if pendingCount != newCount {
+            pendingCount = newCount
+        }
+    }
+
     /// Pull all user data from Supabase into local DB (used after sign-in).
     /// Runs network + DB work on background threads.
     func pullAll(userId: UUID) async {
         guard Configuration.cloudSyncEnabled else {
-            await MainActor.run { state = .idle }
+            await MainActor.run { self.setStateIfNeeded(.idle) }
             return
         }
-        await MainActor.run { state = .syncing }
+        await MainActor.run { self.setStateIfNeeded(.syncing) }
         do {
             let notebooks = try await remote.fetchNotebooks(userId: userId)
             let folders = try await remote.fetchFolders(userId: userId)
@@ -98,10 +133,10 @@ final class SyncEngine: ObservableObject {
                     }
                 }
             }
-            await MainActor.run { state = .idle }
+            await MainActor.run { self.setStateIfNeeded(.idle) }
         } catch {
             let msg = error.localizedDescription
-            await MainActor.run { state = .error(msg) }
+            await MainActor.run { self.setStateIfNeeded(.error(msg)) }
         }
     }
 
@@ -110,23 +145,23 @@ final class SyncEngine: ObservableObject {
     func pushPending() async {
         if !shouldAttemptSyncNow() {
             await updatePendingCount()
-            await MainActor.run { state = .idle }
+            await MainActor.run { self.setStateIfNeeded(.idle) }
             return
         }
 
         do {
             let changes = try await local.pendingChanges()
-            await MainActor.run { pendingCount = changes.count }
+            await MainActor.run { self.setPendingCountIfNeeded(changes.count) }
 
             guard !changes.isEmpty else {
-                await MainActor.run { state = .idle }
+                await MainActor.run { self.setStateIfNeeded(.idle) }
                 return
             }
 
-            await MainActor.run { state = .syncing }
+            await MainActor.run { self.setStateIfNeeded(.syncing) }
 
             if let blockedMessage = try await quotaPauseMessageIfNeeded(for: changes) {
-                await MainActor.run { state = .paused(blockedMessage) }
+                await MainActor.run { self.setStateIfNeeded(.paused(blockedMessage)) }
                 return
             }
 
@@ -134,17 +169,19 @@ final class SyncEngine: ObservableObject {
                 let pushed = try await pushChange(table: change.table, id: change.id)
                 if pushed {
                     try await local.markSynced(table: change.table, id: change.id)
-                    await MainActor.run { pendingCount = max(0, pendingCount - 1) }
+                    await MainActor.run {
+                        self.setPendingCountIfNeeded(max(0, self.pendingCount - 1))
+                    }
                 } else {
                     // Leave it pending so it retries later (do NOT lie).
-                    await MainActor.run { state = .idle }
+                    await MainActor.run { self.setStateIfNeeded(.idle) }
                     return
                 }
             }
-            await MainActor.run { state = .idle }
+            await MainActor.run { self.setStateIfNeeded(.idle) }
         } catch {
             let msg = error.localizedDescription
-            await MainActor.run { state = .error(msg) }
+            await MainActor.run { self.setStateIfNeeded(.error(msg)) }
         }
     }
 
@@ -162,11 +199,11 @@ final class SyncEngine: ObservableObject {
             _ = try await local.enqueuePagesMissingImageAssetPaths(userId: userId)
             let changes = try await local.pendingChanges()
             let pendingAfterEnqueue = changes.count
-            await MainActor.run { pendingCount = pendingAfterEnqueue }
+            await MainActor.run { self.setPendingCountIfNeeded(pendingAfterEnqueue) }
             return pendingAfterEnqueue > 0
         } catch {
             let msg = error.localizedDescription
-            await MainActor.run { state = .error(msg) }
+            await MainActor.run { self.setStateIfNeeded(.error(msg)) }
             return false
         }
     }
@@ -183,8 +220,19 @@ final class SyncEngine: ObservableObject {
         let changes = try await local.pendingChanges()
         let pendingAfterEnqueue = changes.count
         UserDefaults.standard.set(true, forKey: defaultsKey)
-        await MainActor.run { pendingCount = pendingAfterEnqueue }
+        await MainActor.run { self.setPendingCountIfNeeded(pendingAfterEnqueue) }
         return pendingAfterEnqueue
+    }
+
+    func requestPush() {
+        guard Configuration.cloudSyncEnabled else { return }
+        guard Self.readAutoSyncEnabled() else { return }
+        requestPushTask?.cancel()
+        requestPushTask = Task.detached(priority: .utility) { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await self?.pushPending()
+        }
     }
 
     private func quotaPauseMessageIfNeeded(for changes: [(table: String, id: String)]) async throws -> String? {
@@ -208,18 +256,18 @@ final class SyncEngine: ObservableObject {
         syncTask = Task.detached(priority: .background) { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                var sleepDuration: Duration = .seconds(15)
                 if Self.readAutoSyncEnabled() {
                     let pendingChanges = (try? await self.local.pendingChanges()) ?? []
-                    await MainActor.run { self.pendingCount = pendingChanges.count }
+                    await MainActor.run {
+                        self.setPendingCountIfNeeded(pendingChanges.count)
+                    }
                     if !pendingChanges.isEmpty {
                         await self.pushPending()
-                        sleepDuration = .seconds(2)
                     }
                 } else {
                     await self.updatePendingCount()
                 }
-                try? await Task.sleep(for: sleepDuration)
+                try? await Task.sleep(for: .seconds(60))
             }
         }
     }
@@ -227,6 +275,8 @@ final class SyncEngine: ObservableObject {
     func stopAutoSync() {
         syncTask?.cancel()
         syncTask = nil
+        requestPushTask?.cancel()
+        requestPushTask = nil
     }
 
     private func remoteImageAssetPath(
@@ -393,7 +443,7 @@ final class SyncEngine: ObservableObject {
     private func updatePendingCount() async {
         do {
             let changes = try await local.pendingChanges()
-            await MainActor.run { pendingCount = changes.count }
+            await MainActor.run { self.setPendingCountIfNeeded(changes.count) }
         } catch {
             // ignore
         }

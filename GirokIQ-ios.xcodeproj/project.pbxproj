@@ -7,12 +7,14 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		4C116E732FFC5D4A007C00B8 /* GirokIQ.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 4C116E722FFC5D4A007C00B8 /* GirokIQ.storekit */; };
 		4C1223352F7AF1ED00245941 /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 4C1223342F7AF1ED00245941 /* Supabase */; settings = {ATTRIBUTES = (Required, ); }; };
 		4C1223E92F7E5AE400245941 /* .swiftlint.yml in Resources */ = {isa = PBXBuildFile; fileRef = 4C1223E82F7E5AE400245941 /* .swiftlint.yml */; };
 		4C1223F32F7EE54300245941 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 4C1223F22F7EE54300245941 /* GRDB */; settings = {ATTRIBUTES = (Required, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		4C116E722FFC5D4A007C00B8 /* GirokIQ.storekit */ = {isa = PBXFileReference; lastKnownFileType = text; path = GirokIQ.storekit; sourceTree = "<group>"; };
 		4C1223E82F7E5AE400245941 /* .swiftlint.yml */ = {isa = PBXFileReference; lastKnownFileType = text.yaml; path = .swiftlint.yml; sourceTree = "<group>"; };
 		4C1223ED2F7E5D9200245941 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		4C1223EE2F7E5D9700245941 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
@@ -73,6 +75,7 @@
 		4C56BD6C2F7A6E4B00179FAA = {
 			isa = PBXGroup;
 			children = (
+				4C116E722FFC5D4A007C00B8 /* GirokIQ.storekit */,
 				4CF70C9B2FE67C4E00DF3DF0 /* GirokIQ-ios.xctestplan */,
 				4C56BD772F7A6E4B00179FAA /* GirokIQ-ios */,
 				4C1223332F7AF1ED00245941 /* Frameworks */,
@@ -160,6 +163,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4C116E732FFC5D4A007C00B8 /* GirokIQ.storekit in Resources */,
 				4C1223E92F7E5AE400245941 /* .swiftlint.yml in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

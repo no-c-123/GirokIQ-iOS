@@ -11,7 +11,7 @@ Set these in your Supabase project before deploying:
 
 - `SUPABASE_URL`
 - `SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
+- `SERVICE_ROLE_KEY` (recommended; Supabase UI blocks `SUPABASE_*` custom secret names)
 - `ANTHROPIC_API_KEY`
 
 ### Deploy

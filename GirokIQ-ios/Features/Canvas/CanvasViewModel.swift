@@ -60,6 +60,15 @@ final class CanvasViewModel: ObservableObject {
 
     @Published var pages: [DrawingPage] = [DrawingPage(title: "Page 1")]
     @Published var currentPageIndex: Int = 0 {
+        willSet {
+            // Flush any pending element edits for the outgoing page before switching.
+            // This avoids the debounce race where a scheduled save would otherwise read the
+            // *new* current page when it fires.
+            guard pages.indices.contains(currentPageIndex) else { return }
+            let outgoingPageId = pages[currentPageIndex].id
+            let outgoingElements = pages[currentPageIndex].elements
+            scheduleElementSave(for: outgoingPageId, elements: outgoingElements, debounceNanoseconds: 0)
+        }
         didSet {
             saveCurrentPageSelection()
             refreshUndoState()
@@ -550,8 +559,10 @@ final class CanvasViewModel: ObservableObject {
                 PencilKitBridge.deserialize(drawingData) ?? PKDrawing()
             }.value
 
-            guard let self else { return }
-            await finalizeRestore(restoredDrawing)
+            guard self != nil else { return }
+            await MainActor.run {
+                finalizeRestore(restoredDrawing)
+            }
         }
     }
 
@@ -597,7 +608,9 @@ final class CanvasViewModel: ObservableObject {
             try pdfData.write(to: url)
             return url
         } catch {
+            #if DEBUG
             print("[Canvas] Failed to export PDF: \(error)")
+            #endif
             return nil
         }
     }
@@ -670,7 +683,9 @@ final class CanvasViewModel: ObservableObject {
             try data.write(to: url, options: .atomic)
             return url
         } catch {
+            #if DEBUG
             print("[Canvas] Failed to export notebook archive: \(error)")
+            #endif
             return nil
         }
     }
@@ -795,8 +810,13 @@ final class CanvasViewModel: ObservableObject {
             self.initializeAllPageHistories()
             self.primeCurrentPageCaches()
             await preloadCurrentPageDrawings()
+        } catch is CancellationError {
+            // Expected when the canvas view task is torn down during navigation/state changes.
+            return
         } catch {
+            #if DEBUG
             print("Failed to load notebook pages: \(error)")
+            #endif
         }
     }
 
@@ -888,8 +908,13 @@ final class CanvasViewModel: ObservableObject {
                 self.lastRemoteNotebookRefreshAt = Date()
             }
             await preloadCurrentPageDrawings()
+        } catch is CancellationError {
+            // Expected when the canvas view task is torn down during navigation/state changes.
+            return
         } catch {
+            #if DEBUG
             print("Failed to refresh notebook from remote: \(error)")
+            #endif
         }
     }
 
@@ -1128,7 +1153,7 @@ final class CanvasViewModel: ObservableObject {
             for: pageId,
             drawing: drawing,
             delayNanoseconds: 1_500_000_000,
-            captureHistory: true,
+            captureHistory: !PerfBisect.disablePerTickHistoryCapture,
             saveImmediately: true
         )
     }
@@ -1168,7 +1193,9 @@ final class CanvasViewModel: ObservableObject {
                     try await service.updateNotebook(nb)
                 }
             } catch {
+                #if DEBUG
                 print("[Canvas] Failed to persist pattern change: \(error)")
+                #endif
             }
         }
     }
@@ -1243,7 +1270,9 @@ final class CanvasViewModel: ObservableObject {
             do {
                 try await LocalDatabase.shared.savePage(initialPage)
             } catch {
+                #if DEBUG
                 print("Failed to save new page: \(error)")
+                #endif
             }
         }
     }
@@ -1293,7 +1322,9 @@ final class CanvasViewModel: ObservableObject {
                     try? await LocalDatabase.shared.markSynced(table: "page", id: pageId.uuidString)
                 }
             } catch {
+                #if DEBUG
                 print("Failed to delete page: \(error)")
+                #endif
             }
         }
 
@@ -1346,7 +1377,9 @@ final class CanvasViewModel: ObservableObject {
                         try await SupabaseService.shared.updatePage(remotePage)
                     }
                 } catch {
+                    #if DEBUG
                     print("Failed to persist page order for \(drawingPage.id): \(error)")
+                    #endif
                 }
             }
         }
@@ -1537,24 +1570,32 @@ final class CanvasViewModel: ObservableObject {
     /// canvas/block-overlay space, matching `CanvasElement.positionX/Y`.
     func commitLassoSelection(polygon: [CGPoint]) {
         guard polygon.count > 2 else {
+            #if DEBUG
             print("[Lasso] Polygon too small (\(polygon.count) points) — skipping")
+            #endif
             return
         }
 
         let canvasPolygon = polygon
         let polyBBox = polygonBoundingBox(canvasPolygon)
+        #if DEBUG
         print("[Lasso] Polygon canvas bbox: \(polyBBox.debugDescription)")
         print("[Lasso] canvasOffset=\(canvasOffset) canvasScale=\(canvasScale)")
+        #endif
         
         let hitElements = currentPage.elements.filter { el in
             let hit = elementIntersectsLasso(el, polygon: canvasPolygon, polygonBounds: polyBBox)
+            #if DEBUG
             print("[Lasso] Element '\(el.type)' pos=(\(el.positionX), \(el.positionY)) hit=\(hit)")
+            #endif
             return hit
         }
 
         // Hit-test PencilKit strokes (these are the actual ink strokes on screen)
         let pkStrokes = currentDrawing.strokes
+        #if DEBUG
         print("[Lasso] PKDrawing has \(pkStrokes.count) strokes to test")
+        #endif
 
         let strokeCoverageThreshold: Double = hitElements.isEmpty ? 0.2 : 0.25
         var hitPKStrokeIndices: [Int] = []
@@ -1565,15 +1606,21 @@ final class CanvasViewModel: ObservableObject {
                 polygonBounds: polyBBox,
                 minimumCoverage: strokeCoverageThreshold
             )
+            #if DEBUG
             print("[Lasso] Stroke \(i) renderBounds=\(stroke.renderBounds.debugDescription) hit=\(hit)")
+            #endif
             if hit { hitPKStrokeIndices.append(i) }
         }
         
+        #if DEBUG
         print("[Lasso] Result: \(hitPKStrokeIndices.count) PK strokes, \(hitElements.count) elements selected")
+        #endif
         
         // Nothing hit — clear and return
         guard !hitPKStrokeIndices.isEmpty || !hitElements.isEmpty else {
+            #if DEBUG
             print("[Lasso] Nothing selected — clearing")
+            #endif
             clearLassoSelection()
             return
         }
@@ -1590,7 +1637,9 @@ final class CanvasViewModel: ObservableObject {
         )
         updateLassoBounds(contentBounds: contentBounds)
         if let lassoSelectionBox {
+            #if DEBUG
             print("[Lasso] Selection box set: \(lassoSelectionBox.debugDescription)")
+            #endif
         }
     }
     
@@ -1872,7 +1921,9 @@ final class CanvasViewModel: ObservableObject {
             captureHistory: true
         )
         objectWillChange.send()
+        #if DEBUG
         print("[Lasso] Color changed on \(selectedPKStrokeIndices.count) strokes")
+        #endif
         NotificationCenter.default.post(name: .lassoDrawingMutated, object: nil)
     }
 
@@ -2154,7 +2205,9 @@ final class CanvasViewModel: ObservableObject {
             let data = PencilKitBridge.serialize(drawing)
             UIPasteboard.general.setData(data, forPasteboardType: inkPasteboardType)
             result.copiedStrokes = !selected.isEmpty
+            #if DEBUG
             print("[Lasso] Copied \(selected.count) strokes to pasteboard")
+            #endif
         }
 
         let selectedElements = currentPage.elements
@@ -2173,7 +2226,9 @@ final class CanvasViewModel: ObservableObject {
                 UIPasteboard.general.setData(data, forPasteboardType: elementPasteboardType)
                 result.copiedElements = true
             } catch {
+                #if DEBUG
                 print("[Lasso] Failed to copy selected elements: \(error)")
+                #endif
             }
         }
 
@@ -2252,7 +2307,9 @@ final class CanvasViewModel: ObservableObject {
                     pastedAnything = true
                 }
             } catch {
+                #if DEBUG
                 print("[Lasso] Failed to paste selected elements: \(error)")
+                #endif
             }
         }
 
@@ -2340,7 +2397,7 @@ final class CanvasViewModel: ObservableObject {
         return CanvasCompositeRenderer.renderImage(request)
     }
     
-    private var elementSaveTask: Task<Void, Never>?
+    private var elementSaveTasks: [UUID: Task<Void, Never>] = [:]
     
     func addElement(_ element: CanvasElement) {
         pages[currentPageIndex].elements.append(element)
@@ -2455,7 +2512,9 @@ final class CanvasViewModel: ObservableObject {
             try data.write(to: fileURL, options: .atomic)
             return UIImage(data: data)
         } catch {
+            #if DEBUG
             print("Failed to download remote image asset: \(error)")
+            #endif
             return nil
         }
     }
@@ -2467,7 +2526,9 @@ final class CanvasViewModel: ObservableObject {
             do {
                 try await SupabaseService.shared.uploadCanvasImage(data: data, path: remotePath)
             } catch {
+                #if DEBUG
                 print("Failed to upload canvas image asset: \(error)")
+                #endif
             }
         }
     }
@@ -2503,7 +2564,9 @@ final class CanvasViewModel: ObservableObject {
             do {
                 try data.write(to: fileURL)
             } catch {
+                #if DEBUG
                 print("Failed to save image locally: \(error)")
+                #endif
                 return
             }
 
@@ -2523,7 +2586,9 @@ final class CanvasViewModel: ObservableObject {
         do {
             try data.write(to: fileURL)
         } catch {
+            #if DEBUG
             print("Failed to save image locally: \(error)")
+            #endif
             return
         }
 
@@ -2568,7 +2633,9 @@ final class CanvasViewModel: ObservableObject {
     }
 
     func updateElement(_ element: CanvasElement) {
+        #if DEBUG
         print("[VM] updateElement id=\(element.id) userResized=\(element.userResized) w=\(element.width ?? 0) h=\(element.height ?? 0)")
+        #endif
         if let index = pages[currentPageIndex].elements.firstIndex(where: { $0.id == element.id }) {
             pages[currentPageIndex].elements[index] = element
             objectWillChange.send()
@@ -2586,28 +2653,44 @@ final class CanvasViewModel: ObservableObject {
     }
     
     private func scheduleElementSave() {
-        elementSaveTask?.cancel()
-        elementSaveTask = Task {
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s debounce
-            guard !Task.isCancelled else { return }
-            await saveCanvasElements()
-        }
+        guard pages.indices.contains(currentPageIndex) else { return }
+        let pageId = pages[currentPageIndex].id
+        let elements = pages[currentPageIndex].elements
+        scheduleElementSave(for: pageId, elements: elements, debounceNanoseconds: 500_000_000)
     }
     
-    private func saveCanvasElements() async {
-        guard let pageId = currentPage.id as UUID? else { return }
-        let elements = currentPage.elements
-        await Task(priority: .utility) {
+    private func scheduleElementSave(
+        for pageId: UUID,
+        elements: [CanvasElement],
+        debounceNanoseconds: UInt64
+    ) {
+        elementSaveTasks.removeValue(forKey: pageId)?.cancel()
+        elementSaveTasks[pageId] = Task { [weak self] in
+            if debounceNanoseconds > 0 {
+                try? await Task.sleep(nanoseconds: debounceNanoseconds)
+            }
+            guard !Task.isCancelled else { return }
+            await self?.saveCanvasElements(elements, forPageId: pageId)
+        }
+    }
+
+    private func saveCanvasElements(_ elements: [CanvasElement], forPageId pageId: UUID) async {
+        await Task(priority: .utility) { [elements] in
             do {
                 try await LocalDatabase.shared.saveCanvasElements(elements, forPageId: pageId)
             } catch {
+                #if DEBUG
                 print("Local element save error: \(error)")
+                #endif
             }
+
             guard Configuration.cloudSyncEnabled, await self.canWriteToCloud() else { return }
             for el in elements {
                 try? await SupabaseService.shared.upsertCanvasElement(el)
             }
         }.value
+
+        elementSaveTasks[pageId] = nil
     }
 
     // MARK: - Unified Lasso Resize
@@ -2796,7 +2879,7 @@ final class CanvasViewModel: ObservableObject {
     }
 
     func removeExtraColor(at index: Int, for tool: DrawingTool) {
-        var palette = paletteColorHexes(for: tool)
+        let palette = paletteColorHexes(for: tool)
         guard palette.count > 1 else { return }
         guard palette.indices.contains(index) else { return }
         let hex = palette[index]
@@ -3227,17 +3310,28 @@ final class CanvasViewModel: ObservableObject {
         }
         drawingSerializationTasks.removeAll()
 
+        for task in elementSaveTasks.values {
+            task.cancel()
+        }
+        elementSaveTasks.removeAll()
+
         for pageIndex in pages.indices {
             let pageId = pages[pageIndex].id
+            let elements = pages[pageIndex].elements
             if let cachedDrawing = liveDrawingCache[pageId] {
                 let serialized = await Task.detached(priority: .utility) {
                     PencilKitBridge.serialize(cachedDrawing)
                 }.value
                 pendingSerializedDrawingData[pageId] = serialized
                 pages[pageIndex].drawingData = serialized
+                await saveCanvasElements(elements, forPageId: pageId)
                 await performAutoSave(pageId: pageId, drawingData: serialized)
             } else if let drawingData = pendingSerializedDrawingData[pageId] ?? pages[pageIndex].drawingData {
+                await saveCanvasElements(elements, forPageId: pageId)
                 await performAutoSave(pageId: pageId, drawingData: drawingData)
+            } else {
+                // Even if there's no drawing data yet, persist elements so text/image edits aren't lost.
+                await saveCanvasElements(elements, forPageId: pageId)
             }
         }
     }
@@ -3245,16 +3339,23 @@ final class CanvasViewModel: ObservableObject {
     private func performAutoSave(pageId: UUID, drawingData: Data) async {
         isSaving = true
         // Save to local database on a background thread — never blocks the UI
-        await Task.detached(priority: .utility) {
+        let didSave = await Task.detached(priority: .utility) {
             do {
                 try await LocalDatabase.shared.saveDrawingData(drawingData, forPageId: pageId)
+                return true
             } catch {
+                #if DEBUG
                 print("Auto-save error: \(error)")
+                #endif
+                return false
             }
         }.value
         pendingSerializedDrawingData[pageId] = nil
         autoSaveTasks[pageId] = nil
         isSaving = false
+        if didSave {
+            NotificationCenter.default.post(name: .syncEngineRequestPush, object: nil)
+        }
     }
 
     // MARK: - Presence

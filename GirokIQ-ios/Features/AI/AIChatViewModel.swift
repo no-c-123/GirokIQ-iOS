@@ -8,12 +8,15 @@ import UIKit
 
 @MainActor
 final class AIChatViewModel: ObservableObject {
+    static let freePlanDailyMessageLimit = 10
+
     @Published var messages: [AIMessage] = []
     @Published var inputText: String = ""
     @Published var attachedImageData: Data? = nil
     @Published var isStreaming: Bool = false
     @Published var streamingText: String = ""
     @Published var errorMessage: String?
+    @Published private(set) var subscriptionTier: AppSubscriptionTier = .free
 
     /// The persisted Chat row for this session
     @Published var chat: Chat?
@@ -58,9 +61,32 @@ final class AIChatViewModel: ObservableObject {
 
     var hasAPIKey: Bool { true }
 
+    var assistantSubtitle: String {
+        switch subscriptionTier {
+        case .free:
+            return "Free plan · Faster AI · \(Self.freePlanDailyMessageLimit) requests/day"
+        case .pro:
+            return "Pro plan · Best AI · Higher limits"
+        }
+    }
+
     private func canWriteToCloud() async -> Bool {
         guard Configuration.cloudChatEnabled else { return false }
         return await quotaService.canSyncToCloud(userId: userId)
+    }
+
+    private func refreshSubscriptionTier() async {
+        guard let userId else {
+            subscriptionTier = .free
+            return
+        }
+
+        do {
+            let appState = try await supabaseService.fetchAppState(userId: userId)
+            subscriptionTier = appState?.subscriptionTier ?? .free
+        } catch {
+            subscriptionTier = .free
+        }
     }
 
     // MARK: - Session Management
@@ -71,6 +97,7 @@ final class AIChatViewModel: ObservableObject {
 
         self.userId = userId
         self.notebookId = notebookId
+        await refreshSubscriptionTier()
         
         await loadHistory()
 
@@ -165,7 +192,9 @@ final class AIChatViewModel: ObservableObject {
         guard !isStreaming else { return }
 
         let safeImageData = imageData.anthropicSafeImageData()
+        #if DEBUG
         print("[AI Vision] imageData size: \(safeImageData.count) bytes")
+        #endif
         
         let content = text.isEmpty ? "What do you see on this canvas page?" : text
         inputText = ""
@@ -191,8 +220,10 @@ final class AIChatViewModel: ObservableObject {
         guard !isStreaming else { return }
 
         let imageData = PencilKitBridge.renderPNGData(from: drawing)
+        #if DEBUG
         print("[AI Vision] imageData size: \(imageData?.count ?? 0) bytes")
         print("[AI Vision] drawing strokes count: \(drawing.strokes.count)")
+        #endif
         
         if let data = imageData {
             await sendWithVision(text: text, imageData: data)
@@ -239,7 +270,9 @@ final class AIChatViewModel: ObservableObject {
             try await localDatabase.deleteMessage(id: aiMessage.id, syncStatus: .synced)
             await touchCurrentChat()
         } catch {
+            #if DEBUG
             print("[AIChatVM] Failed to delete message locally: \(error)")
+            #endif
         }
     }
 
@@ -262,7 +295,9 @@ final class AIChatViewModel: ObservableObject {
         do {
             try await localDatabase.deleteChat(id: chatToDelete.id, syncStatus: .synced)
         } catch {
+            #if DEBUG
             print("[AIChatVM] Failed to delete chat locally: \(error)")
+            #endif
         }
 
         if deletingCurrentChat {
@@ -291,7 +326,9 @@ final class AIChatViewModel: ObservableObject {
             try await localDatabase.saveMessage(message, syncStatus: .synced)
             await touchCurrentChat()
         } catch {
+            #if DEBUG
             print("[AIChatVM] Failed to persist message, SyncEngine will retry: \(error)")
+            #endif
         }
     }
 
@@ -434,7 +471,9 @@ final class AIChatViewModel: ObservableObject {
         do {
             try await localDatabase.saveChat(chat, syncStatus: .synced)
         } catch {
+            #if DEBUG
             print("[AIChatVM] Failed to update chat timestamp: \(error)")
+            #endif
         }
     }
 }

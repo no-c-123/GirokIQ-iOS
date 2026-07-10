@@ -10,6 +10,7 @@ import Foundation
 struct AIChatView: View {
     @ObservedObject var viewModel: AIChatViewModel
     var drawing: PKDrawing?
+    @EnvironmentObject var purchaseManager: PurchaseManager
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var showImagePicker = false
@@ -118,7 +119,7 @@ struct AIChatView: View {
                         .font(.gSubheadline.weight(.semibold))
                         .foregroundColor(railText)
 
-                    Text("This notebook")
+                    Text(purchaseManager.assistantPlanSubtitle)
                         .font(.gCaption)
                         .foregroundColor(railSubtext)
                         .lineLimit(1)
@@ -307,6 +308,12 @@ struct AIChatView: View {
                     .foregroundColor(railSubtext)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 250)
+
+                Text(purchaseManager.assistantPlanSubtitle)
+                    .font(.gCaption.weight(.medium))
+                    .foregroundColor(railAccent)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 260)
             }
 
             VStack(spacing: 10) {

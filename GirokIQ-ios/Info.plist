@@ -6,6 +6,10 @@
 	<string>GirokIQ needs access to your photo library so you can insert images into your notebooks.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>GirokIQ needs permission to save images from your notebooks to your photo library.</string>
+	<key>SUPABASE_ANON_KEY</key>
+	<string>sb_publishable_423Dnw91Y5cLpTMC7wCuMA_3cAuqY-t</string>
+	<key>SUPABASE_URL</key>
+	<string>https://bapqxqydqzopbpjrpnna.supabase.co</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>CFBundleDocumentTypes</key>
@@ -20,6 +24,18 @@
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.girokiq.notebook</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>GirokIQ Folder</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.girokiq.folder</string>
 			</array>
 		</dict>
 	</array>
@@ -42,6 +58,25 @@
 				</array>
 				<key>public.mime-type</key>
 				<string>application/x-girokiq-notebook</string>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeDescription</key>
+			<string>GirokIQ Folder Archive</string>
+			<key>UTTypeIdentifier</key>
+			<string>com.girokiq.folder</string>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>girokfolder</string>
+				</array>
+				<key>public.mime-type</key>
+				<string>application/x-girokiq-folder</string>
 			</dict>
 		</dict>
 	</array>

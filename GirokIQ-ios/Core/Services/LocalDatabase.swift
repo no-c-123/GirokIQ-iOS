@@ -11,22 +11,36 @@ enum SyncStatus: String, Codable {
 
 struct NotebookStorageBreakdownSnapshot: Sendable {
     let notebook: Notebook
-    let usedBytes: Int64
-    let hasPendingSync: Bool
+    let drawingBytes: Int64
+    let imageBytes: Int64
+    let otherBytes: Int64
+    let pendingChangeCount: Int
     let lastSyncedAt: Date?
+
+    var usedBytes: Int64 { drawingBytes + imageBytes + otherBytes }
+    var hasPendingSync: Bool { pendingChangeCount > 0 }
+}
+
+struct DeviceStorageSnapshot: Sendable, Equatable {
+    let databaseBytes: Int64
+    let drawingBytes: Int64
+    let imageBytes: Int64
+    let reclaimableImageBytes: Int64
+
+    var totalBytes: Int64 { databaseBytes + drawingBytes + imageBytes }
 }
 
 // MARK: - Local Database
 
 /// Offline-first persistence layer using GRDB (SQLite).
 /// All writes go here first for instant UI response, then SyncEngine pushes to Supabase.
-final class LocalDatabase {
+final class LocalDatabase: Sendable {
     static let shared = LocalDatabase()
 
-    private var dbQueue: DatabaseQueue
-    private static let drawingsDirectoryName = "Drawings"
-    private static let didRunVacuumKey = "LocalDatabase.didRunDrawingVacuum.v1"
-    private static let lastCanvasMaintenanceKey = "LocalDatabase.lastCanvasMaintenanceAt"
+    private let dbQueue: DatabaseQueue
+    nonisolated private static let drawingsDirectoryName = "Drawings"
+    nonisolated private static let didRunVacuumKey = "LocalDatabase.didRunDrawingVacuum.v1"
+    nonisolated private static let lastCanvasMaintenanceKey = "LocalDatabase.lastCanvasMaintenanceAt"
 
     private init() {
         do {
@@ -39,10 +53,14 @@ final class LocalDatabase {
             dbQueue = queue
             configureVacuumIfNeeded(queue)
             scheduleCanvasAssetMaintenanceIfNeeded()
+            #if DEBUG
             print("[LocalDatabase] Opened successfully at \(path)")
+            #endif
         } catch {
+            #if DEBUG
             print("[LocalDatabase] CRITICAL: Failed to open or migrate database: \(error)")
             print("[LocalDatabase] Falling back to in-memory database. Data will not persist this session.")
+            #endif
             // In-memory DatabaseQueue cannot fail to open
             let fallback = try! DatabaseQueue()
             // Migrations must run so table schema exists for subsequent queries
@@ -51,7 +69,7 @@ final class LocalDatabase {
         }
     }
 
-    private static func drawingsDirectoryURL() throws -> URL {
+    nonisolated private static func drawingsDirectoryURL() throws -> URL {
         let baseURL = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -69,11 +87,17 @@ final class LocalDatabase {
         return drawingsURL
     }
 
-    private static func drawingFileURL(for pageId: UUID) throws -> URL {
+    nonisolated private static func databaseFileURL() throws -> URL {
+        try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("girokiq.sqlite")
+    }
+
+    nonisolated private static func drawingFileURL(for pageId: UUID) throws -> URL {
         try drawingsDirectoryURL().appendingPathComponent("\(pageId.uuidString).drawing.lzfse")
     }
 
-    private static func readDrawingFile(for pageId: UUID) -> Data? {
+    nonisolated private static func readDrawingFile(for pageId: UUID) -> Data? {
         guard
             let fileURL = try? drawingFileURL(for: pageId),
             let persistedData = try? Data(contentsOf: fileURL)
@@ -84,18 +108,20 @@ final class LocalDatabase {
         return (try? PencilKitBridge.decompressForPersistence(persistedData)) ?? persistedData
     }
 
-    private static func writeDrawingFile(_ data: Data, for pageId: UUID) throws {
+    nonisolated private static func writeDrawingFile(_ data: Data, for pageId: UUID) throws {
         let fileURL = try drawingFileURL(for: pageId)
-        let persistedData = try PencilKitBridge.compressForPersistence(data)
+        let persistedData = PerfBisect.disableDrawingCompression
+            ? data
+            : try PencilKitBridge.compressForPersistence(data)
         try persistedData.write(to: fileURL, options: .atomic)
     }
 
-    private static func deleteDrawingFile(for pageId: UUID) {
+    nonisolated private static func deleteDrawingFile(for pageId: UUID) {
         guard let fileURL = try? drawingFileURL(for: pageId) else { return }
         try? FileManager.default.removeItem(at: fileURL)
     }
 
-    private static func drawingFileSize(for pageId: UUID) -> Int64 {
+    nonisolated private static func drawingFileSize(for pageId: UUID) -> Int64 {
         guard
             let fileURL = try? drawingFileURL(for: pageId),
             let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
@@ -107,7 +133,36 @@ final class LocalDatabase {
         return size.int64Value
     }
 
-    private static func clearAllDrawingFiles() throws {
+    nonisolated private static func directorySize(at url: URL) -> Int64 {
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return 0
+        }
+
+        return fileURLs.reduce(into: Int64(0)) { total, fileURL in
+            guard
+                let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                values.isRegularFile == true
+            else { return }
+            total += Int64(values.fileSize ?? 0)
+        }
+    }
+
+    nonisolated private static func fileSizes(for fileNames: Set<String>) -> Int64 {
+        fileNames.reduce(into: Int64(0)) { total, fileName in
+            let fileURL = NotebookTransferSupport.localImageURL(for: fileName)
+            guard
+                let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey]),
+                let fileSize = values.fileSize
+            else { return }
+            total += Int64(fileSize)
+        }
+    }
+
+    nonisolated private static func clearAllDrawingFiles() throws {
         let drawingsURL = try drawingsDirectoryURL()
         if FileManager.default.fileExists(atPath: drawingsURL.path) {
             try FileManager.default.removeItem(at: drawingsURL)
@@ -119,7 +174,7 @@ final class LocalDatabase {
         )
     }
 
-    private static func sanitizedLocalPage(_ page: Page) -> Page {
+    nonisolated private static func sanitizedLocalPage(_ page: Page) -> Page {
         var sanitizedPage = page
         if sanitizedPage.settings != nil {
             sanitizedPage.settings?.drawingData = nil
@@ -138,7 +193,9 @@ final class LocalDatabase {
             }
             UserDefaults.standard.set(true, forKey: Self.didRunVacuumKey)
         } catch {
+            #if DEBUG
             print("[LocalDatabase] Failed to compact database after drawing migration: \(error)")
+            #endif
         }
     }
 
@@ -349,20 +406,36 @@ final class LocalDatabase {
             var items = Dictionary(uniqueKeysWithValues: notebooks.map { notebook in
                 (notebook.id, NotebookStorageBreakdownSnapshot(
                     notebook: notebook,
-                    usedBytes: 0,
-                    hasPendingSync: false,
+                    drawingBytes: 0,
+                    imageBytes: 0,
+                    otherBytes: 0,
+                    pendingChangeCount: 0,
                     lastSyncedAt: nil
                 ))
             })
             var imageFileNamesByNotebookId: [UUID: Set<String>] = [:]
 
             for notebook in notebooks {
-                if let data = try? encoder.encode(notebook) {
+                let notebookData = try? JSONSerialization.data(withJSONObject: [
+                    "id": notebook.id.uuidString,
+                    "user_id": notebook.userId.uuidString,
+                    "folder_id": notebook.folderId?.uuidString as Any,
+                    "name": notebook.name,
+                    "canvas_type": notebook.canvasType,
+                    "background_pattern": notebook.backgroundPattern,
+                    "background_color_hex": notebook.backgroundColorHex,
+                    "created_at": ISO8601DateFormatter().string(from: notebook.createdAt),
+                    "updated_at": ISO8601DateFormatter().string(from: notebook.updatedAt),
+                    "trashed_at": notebook.trashedAt.map { ISO8601DateFormatter().string(from: $0) } as Any
+                ])
+                if let data = notebookData {
                     guard let current = items[notebook.id] else { continue }
                     items[notebook.id] = NotebookStorageBreakdownSnapshot(
                         notebook: current.notebook,
-                        usedBytes: current.usedBytes + Int64(data.count),
-                        hasPendingSync: current.hasPendingSync,
+                        drawingBytes: current.drawingBytes,
+                        imageBytes: current.imageBytes,
+                        otherBytes: current.otherBytes + Int64(data.count),
+                        pendingChangeCount: current.pendingChangeCount,
                         lastSyncedAt: current.lastSyncedAt
                     )
                 }
@@ -388,19 +461,33 @@ final class LocalDatabase {
                     payloadPage.settings?.drawingData = nil
                 }
 
-                if let data = try? encoder.encode(payloadPage) {
+                let pageData = try? JSONSerialization.data(withJSONObject: [
+                    "id": payloadPage.id.uuidString,
+                    "user_id": payloadPage.userId.uuidString,
+                    "notebook_id": payloadPage.notebookId.uuidString,
+                    "title": payloadPage.title,
+                    "page_index": payloadPage.pageIndex,
+                    "type": payloadPage.type,
+                    "created_at": ISO8601DateFormatter().string(from: payloadPage.createdAt),
+                    "updated_at": ISO8601DateFormatter().string(from: payloadPage.updatedAt)
+                ])
+                if let data = pageData {
                     current = NotebookStorageBreakdownSnapshot(
                         notebook: current.notebook,
-                        usedBytes: current.usedBytes + Int64(data.count),
-                        hasPendingSync: current.hasPendingSync,
+                        drawingBytes: current.drawingBytes,
+                        imageBytes: current.imageBytes,
+                        otherBytes: current.otherBytes + Int64(data.count),
+                        pendingChangeCount: current.pendingChangeCount,
                         lastSyncedAt: current.lastSyncedAt
                     )
                 }
 
                 current = NotebookStorageBreakdownSnapshot(
                     notebook: current.notebook,
-                    usedBytes: current.usedBytes + Self.drawingFileSize(for: page.id),
-                    hasPendingSync: current.hasPendingSync,
+                    drawingBytes: current.drawingBytes + Self.drawingFileSize(for: page.id),
+                    imageBytes: current.imageBytes,
+                    otherBytes: current.otherBytes,
+                    pendingChangeCount: current.pendingChangeCount,
                     lastSyncedAt: current.lastSyncedAt
                 )
                 items[page.notebookId] = current
@@ -411,7 +498,89 @@ final class LocalDatabase {
                 }
             }
 
-            let syncRows = try Row.fetchAll(
+            let chats = (try? Chat
+                .filter(Column("user_id") == userId.uuidString)
+                .fetchAll(db)) ?? []
+            var chatNotebookMap: [UUID: UUID] = [:]
+
+            for chat in chats {
+                guard let notebookId = chat.notebookId, let current = items[notebookId] else { continue }
+                chatNotebookMap[chat.id] = notebookId
+                let chatData = try? JSONSerialization.data(withJSONObject: [
+                    "id": chat.id.uuidString,
+                    "user_id": chat.userId.uuidString,
+                    "notebook_id": chat.notebookId?.uuidString as Any,
+                    "title": chat.title,
+                    "created_at": ISO8601DateFormatter().string(from: chat.createdAt),
+                    "updated_at": ISO8601DateFormatter().string(from: chat.updatedAt)
+                ])
+                if let data = chatData {
+                    items[notebookId] = NotebookStorageBreakdownSnapshot(
+                        notebook: current.notebook,
+                        drawingBytes: current.drawingBytes,
+                        imageBytes: current.imageBytes,
+                        otherBytes: current.otherBytes + Int64(data.count),
+                        pendingChangeCount: current.pendingChangeCount,
+                        lastSyncedAt: current.lastSyncedAt
+                    )
+                }
+            }
+
+            let messageRows = (try? Row.fetchAll(
+                db,
+                sql: """
+                    SELECT m.*
+                    FROM message m
+                    INNER JOIN chat c ON c.id = m.chat_id
+                    WHERE c.user_id = ?
+                      AND c.notebook_id IS NOT NULL
+                    """,
+                arguments: [userId.uuidString]
+            )) ?? []
+
+            for row in messageRows {
+                let idString: String? = row["id"]
+                let chatIdString: String? = row["chat_id"]
+                let roleRaw: String? = row["role"]
+                let content: String? = row["content"]
+                let tokenCount: Int? = row["token_count"]
+                let createdAt: Date? = row["created_at"]
+
+                guard
+                    let idString,
+                    let chatIdString,
+                    let roleRaw,
+                    let content,
+                    let createdAt,
+                    let chatId = UUID(uuidString: chatIdString),
+                    let notebookId = chatNotebookMap[chatId],
+                    let current = items[notebookId],
+                    let id = UUID(uuidString: idString),
+                    let role = Message.Role(rawValue: roleRaw)
+                else { continue }
+
+                let messageData = try? JSONSerialization.data(withJSONObject: [
+                    "id": id.uuidString,
+                    "chat_id": chatId.uuidString,
+                    "role": role.rawValue,
+                    "content": content,
+                    "token_count": tokenCount as Any,
+                    "created_at": ISO8601DateFormatter().string(from: createdAt)
+                ])
+
+                if let data = messageData {
+                    items[notebookId] = NotebookStorageBreakdownSnapshot(
+                        notebook: current.notebook,
+                        drawingBytes: current.drawingBytes,
+                        imageBytes: current.imageBytes,
+                        otherBytes: current.otherBytes + Int64(data.count),
+                        pendingChangeCount: current.pendingChangeCount,
+                        lastSyncedAt: current.lastSyncedAt
+                    )
+                }
+            }
+
+            let syncRows = (try? Row.fetchAll(
                 db,
                 sql: """
                     SELECT
@@ -420,6 +589,8 @@ final class LocalDatabase {
                         CASE
                             WHEN sc."table" = 'notebook' THEN n.id
                             WHEN sc."table" = 'page' THEN p.notebook_id
+                            WHEN sc."table" = 'chat' THEN c.notebook_id
+                            WHEN sc."table" = 'message' THEN mc.notebook_id
                             ELSE NULL
                         END AS notebook_id
                     FROM sync_change sc
@@ -427,13 +598,23 @@ final class LocalDatabase {
                         ON sc."table" = 'notebook' AND n.id = sc.id
                     LEFT JOIN page p
                         ON sc."table" = 'page' AND p.id = sc.id
+                    LEFT JOIN chat c
+                        ON sc."table" = 'chat' AND c.id = sc.id
+                    LEFT JOIN message m
+                        ON sc."table" = 'message' AND m.id = sc.id
+                    LEFT JOIN chat mc
+                        ON sc."table" = 'message' AND mc.id = m.chat_id
                     WHERE
                         (sc."table" = 'notebook' AND n.user_id = ?)
                         OR
                         (sc."table" = 'page' AND p.user_id = ?)
+                        OR
+                        (sc."table" = 'chat' AND c.user_id = ?)
+                        OR
+                        (sc."table" = 'message' AND mc.user_id = ?)
                     """,
-                arguments: [userId.uuidString, userId.uuidString]
-            )
+                arguments: [userId.uuidString, userId.uuidString, userId.uuidString, userId.uuidString]
+            )) ?? []
 
             for row in syncRows {
                 let notebookIdString: String? = row["notebook_id"]
@@ -450,8 +631,10 @@ final class LocalDatabase {
 
                 items[notebookId] = NotebookStorageBreakdownSnapshot(
                     notebook: current.notebook,
-                    usedBytes: current.usedBytes,
-                    hasPendingSync: current.hasPendingSync || syncStatus == .pending,
+                    drawingBytes: current.drawingBytes,
+                    imageBytes: current.imageBytes,
+                    otherBytes: current.otherBytes,
+                    pendingChangeCount: current.pendingChangeCount + (syncStatus == .pending ? 1 : 0),
                     lastSyncedAt: newestSyncedAt == .distantPast ? current.lastSyncedAt : newestSyncedAt
                 )
             }
@@ -459,28 +642,33 @@ final class LocalDatabase {
             return (items, imageFileNamesByNotebookId)
         }
 
-        var hydratedItems = snapshot.items
-        for (notebookId, fileNames) in snapshot.imageFileNamesByNotebookId {
-            var imageBytes: Int64 = 0
-            for fileName in fileNames {
-                let url = NotebookTransferSupport.localImageURL(for: fileName)
-                if
-                    let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
-                    let size = attrs[.size] as? NSNumber
-                {
-                    imageBytes += size.int64Value
+        let hydratedItems = await Task.detached(priority: .utility) { [snapshot] in
+            var hydratedItems = snapshot.items
+            for (notebookId, fileNames) in snapshot.imageFileNamesByNotebookId {
+                var imageBytes: Int64 = 0
+                for fileName in fileNames {
+                    let url = NotebookTransferSupport.localImageURL(for: fileName)
+                    if
+                        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+                        let size = attrs[.size] as? NSNumber
+                    {
+                        imageBytes += size.int64Value
+                    }
+                }
+
+                if let current = hydratedItems[notebookId] {
+                    hydratedItems[notebookId] = NotebookStorageBreakdownSnapshot(
+                        notebook: current.notebook,
+                        drawingBytes: current.drawingBytes,
+                        imageBytes: current.imageBytes + imageBytes,
+                        otherBytes: current.otherBytes,
+                        pendingChangeCount: current.pendingChangeCount,
+                        lastSyncedAt: current.lastSyncedAt
+                    )
                 }
             }
-
-            if let current = hydratedItems[notebookId] {
-                hydratedItems[notebookId] = NotebookStorageBreakdownSnapshot(
-                    notebook: current.notebook,
-                    usedBytes: current.usedBytes + imageBytes,
-                    hasPendingSync: current.hasPendingSync,
-                    lastSyncedAt: current.lastSyncedAt
-                )
-            }
-        }
+            return hydratedItems
+        }.value
 
         return hydratedItems.values.sorted { lhs, rhs in
             if lhs.usedBytes == rhs.usedBytes {
@@ -495,6 +683,45 @@ final class LocalDatabase {
         return items.reduce(into: Int64(0)) { total, item in
             total += item.usedBytes
         }
+    }
+
+    func deviceStorageSnapshot() async throws -> DeviceStorageSnapshot {
+        let referencedFiles = try await referencedImageFileNames()
+        let imageFilesOnDisk = NotebookTransferSupport.localCanvasImageFileNamesOnDisk()
+        let unusedImageFiles = imageFilesOnDisk.subtracting(referencedFiles)
+
+        let databaseBytes: Int64 = {
+            guard
+                let databaseURL = try? Self.databaseFileURL(),
+                let values = try? databaseURL.resourceValues(forKeys: [.fileSizeKey]),
+                let fileSize = values.fileSize
+            else { return 0 }
+            return Int64(fileSize)
+        }()
+
+        let drawingBytes = (try? Self.drawingsDirectoryURL()).map(Self.directorySize(at:)) ?? 0
+        let referencedImageBytes = Self.fileSizes(for: referencedFiles)
+        let reclaimableImageBytes = Self.fileSizes(for: unusedImageFiles)
+
+        return DeviceStorageSnapshot(
+            databaseBytes: databaseBytes,
+            drawingBytes: drawingBytes,
+            imageBytes: referencedImageBytes + reclaimableImageBytes,
+            reclaimableImageBytes: reclaimableImageBytes
+        )
+    }
+
+    func clearUnusedCanvasImages() async throws -> Int64 {
+        let referencedFiles = try await referencedImageFileNames()
+        let imageFilesOnDisk = NotebookTransferSupport.localCanvasImageFileNamesOnDisk()
+        let unusedImageFiles = imageFilesOnDisk.subtracting(referencedFiles)
+        let reclaimableBytes = Self.fileSizes(for: unusedImageFiles)
+
+        try NotebookTransferSupport.runCanvasImageMaintenance(
+            referencedFileNames: referencedFiles,
+            olderThan: 0
+        )
+        return reclaimableBytes
     }
 
     func saveNotebook(_ notebook: Notebook, syncStatus: SyncStatus = .pending) async throws {

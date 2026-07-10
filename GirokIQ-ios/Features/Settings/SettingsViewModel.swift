@@ -131,7 +131,9 @@ final class SettingsViewModel: ObservableObject {
             try data.write(to: tempURL, options: .atomic)
             return tempURL
         } catch {
+            #if DEBUG
             print("[Settings] Failed to export data: \(error)")
+            #endif
             return nil
         }
     }

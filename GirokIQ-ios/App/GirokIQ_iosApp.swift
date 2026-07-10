@@ -12,6 +12,7 @@ struct GirokIQ_iosApp: App {
                 .environmentObject(deps.auth)
                 .environmentObject(deps.theme)
                 .environmentObject(deps)
+                .environmentObject(deps.purchaseManager)
                 .preferredColorScheme(deps.theme.colorSchemeOverride)
         }
         .onChange(of: scenePhase) { _, newPhase in

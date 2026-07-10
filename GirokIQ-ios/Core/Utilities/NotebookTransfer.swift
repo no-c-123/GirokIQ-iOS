@@ -86,9 +86,9 @@ struct ExportedBinaryDocument: FileDocument {
 }
 
 enum NotebookTransferSupport {
-    private static let imagesDirectoryName = "Images"
+    nonisolated private static let imagesDirectoryName = "Images"
 
-    private static func applicationSupportDirectory() -> URL {
+    nonisolated private static func applicationSupportDirectory() -> URL {
         let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let imagesURL = baseURL.appendingPathComponent(imagesDirectoryName, isDirectory: true)
         if !FileManager.default.fileExists(atPath: imagesURL.path) {
@@ -101,16 +101,16 @@ enum NotebookTransferSupport {
         return imagesURL
     }
 
-    private static func legacyDocumentsImageURL(for fileName: String) -> URL {
+    nonisolated private static func legacyDocumentsImageURL(for fileName: String) -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(fileName)
     }
 
-    private static func isCanvasImageFileName(_ fileName: String) -> Bool {
+    nonisolated private static func isCanvasImageFileName(_ fileName: String) -> Bool {
         let stem = URL(fileURLWithPath: fileName).deletingPathExtension().lastPathComponent
         return UUID(uuidString: stem) != nil
     }
 
-    static func localImageURL(for fileName: String) -> URL {
+    nonisolated static func localImageURL(for fileName: String) -> URL {
         let destinationURL = applicationSupportDirectory().appendingPathComponent(fileName)
         let legacyURL = legacyDocumentsImageURL(for: fileName)
 

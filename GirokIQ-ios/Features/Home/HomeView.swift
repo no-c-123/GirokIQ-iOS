@@ -29,6 +29,7 @@ struct HomeView: View {
     @State private var archiveDefaultFilename = "Notebook.girokiq"
     @State private var showArchiveExporter = false
     @State private var didAttemptLaunchRestore = false
+    @State private var showStorageManagement = false
     
     // Folder Creation & Management
     @State private var showNewFolderAlert = false
@@ -91,6 +92,14 @@ struct HomeView: View {
         selectedNotebook = notebook
     }
 
+    private func refreshHomeContent() async {
+        guard let userId = authViewModel.currentUserId else { return }
+        await viewModel.loadNotebooks(userId: userId)
+        if selectedNotebook == nil {
+            await viewModel.refreshSyncSurface(userId: userId)
+        }
+    }
+
     var body: some View {
         let content = VStack(spacing: 0) {
             homeToolbar
@@ -125,15 +134,9 @@ struct HomeView: View {
                 }
             }
         }
-        .onReceive(authViewModel.syncMonitor.$pendingCount.removeDuplicates()) { _ in
-            Task {
-                await viewModel.refreshSyncSurface(userId: authViewModel.currentUserId)
-            }
-        }
-        .onReceive(authViewModel.syncMonitor.$state.removeDuplicates()) { _ in
-            Task {
-                await viewModel.refreshSyncSurface(userId: authViewModel.currentUserId)
-            }
+        .onChange(of: selectedNotebook) { _, newValue in
+            guard newValue == nil, let userId = authViewModel.currentUserId else { return }
+            Task { await viewModel.refreshSyncSurface(userId: userId) }
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active, let userId = authViewModel.currentUserId else { return }
@@ -143,6 +146,20 @@ struct HomeView: View {
         }
         .fullScreenCover(isPresented: $showNewNotebookSheet) {
             NewNotebookSheet(viewModel: viewModel)
+        }
+        .fullScreenCover(isPresented: $showStorageManagement, onDismiss: {
+            guard let userId = authViewModel.currentUserId else { return }
+            Task {
+                await viewModel.refreshQuotaStatus(userId: userId)
+            }
+        }) {
+            Group {
+                if let userId = authViewModel.currentUserId {
+                    StorageManagementView(homeViewModel: viewModel, userId: userId)
+                } else {
+                    EmptyView()
+                }
+            }
         }
         .sheet(isPresented: $showSettings) {
             SettingsView()
@@ -494,7 +511,8 @@ struct HomeView: View {
                 if Configuration.cloudSyncEnabled {
                     StorageUsageCard(
                         usage: viewModel.storageUsage,
-                        breakdown: viewModel.storageBreakdown
+                        breakdown: viewModel.storageBreakdown,
+                        onManageTapped: { showStorageManagement = true }
                     )
                         .padding(.horizontal, GSpacing.lg)
                 }
@@ -580,6 +598,9 @@ struct HomeView: View {
                                 }
                             }
                         }
+        .refreshable {
+            await refreshHomeContent()
+        }
                     }
                     .padding(.horizontal, GSpacing.lg)
                 }
@@ -656,6 +677,10 @@ struct HomeView: View {
             }
             .padding(.vertical, GSpacing.md)
         }
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await refreshHomeContent()
+        }
     }
 
     var trashContent: some View {
@@ -701,6 +726,10 @@ struct HomeView: View {
                 }
             }
             .padding(.vertical, GSpacing.md)
+        }
+        .scrollBounceBehavior(.always)
+        .refreshable {
+            await refreshHomeContent()
         }
     }
 
@@ -1138,6 +1167,7 @@ extension HomeSectionCard where Trailing == EmptyView {
 private struct StorageUsageCard: View {
     let usage: HomeViewModel.StorageUsage
     let breakdown: [HomeViewModel.NotebookStorageBreakdownItem]
+    var onManageTapped: (() -> Void)? = nil
 
     @State private var isExpanded = false
     @State private var showsAllItems = false
@@ -1183,7 +1213,7 @@ private struct StorageUsageCard: View {
 
                         Spacer(minLength: GSpacing.sm)
 
-                        Text("\(usage.usedText) / 1 GB")
+                        Text("\(usage.usedText) / \(usage.limitText)")
                             .font(.gCaption.weight(.semibold))
                             .foregroundColor(.gTextSecondary)
                     }
@@ -1264,6 +1294,38 @@ private struct StorageUsageCard: View {
                 .padding(.top, 4)
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
+
+            if let onManageTapped {
+                Divider()
+                    .overlay(Color.gBorder.opacity(0.5))
+
+                Button(action: onManageTapped) {
+                    HStack(spacing: GSpacing.sm) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Manage storage")
+                                .font(.gSubheadline.weight(.semibold))
+                                .foregroundColor(.gTextPrimary)
+
+                            Text("See what is using space and how to free it up.")
+                                .font(.gCaption)
+                                .foregroundColor(.gTextSecondary)
+                        }
+
+                        Spacer(minLength: GSpacing.sm)
+
+                        Image(systemName: "arrow.up.right")
+                            .font(.gFootnote.weight(.bold))
+                            .foregroundColor(.black.opacity(0.72))
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Circle()
+                                    .fill(Color.gPrimary)
+                            )
+                    }
+                    .padding(.top, 2)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.horizontal, GSpacing.md)
         .padding(.vertical, GSpacing.md)
@@ -1278,7 +1340,7 @@ private struct StorageUsageCard: View {
         .clipShape(shape)
         .shadow(color: .black.opacity(0.12), radius: 12, x: 0, y: 6)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Storage used \(usage.usedText) out of 1 gigabyte. \(usage.statusMessage)")
+        .accessibilityLabel("Storage used \(usage.usedText) out of \(usage.limitText). \(usage.statusMessage)")
     }
 }
 
@@ -1290,9 +1352,9 @@ private struct NotebookStorageBreakdownRow: View {
         case .synced:
             return "Synced"
         case .pending:
-            return "Pending sync"
+            return item.pendingChangeCount == 1 ? "1 change waiting" : "\(item.pendingChangeCount) changes waiting"
         case .localOnly:
-            return "Local only"
+            return item.pendingChangeCount == 1 ? "Sync paused · 1 local change" : "Sync paused · \(item.pendingChangeCount) local changes"
         case .neverSynced:
             return "Never synced"
         }
@@ -1770,7 +1832,9 @@ struct SidebarPanelView: View {
                     }
                 }
 
-                Button(action: {}) {
+                Button {
+                    showSettings = true
+                } label: {
                     HStack(spacing: GSpacing.sm) {
                         Circle()
                             .fill(Color.gPrimary.opacity(0.85))

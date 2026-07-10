@@ -8,9 +8,7 @@ enum CloudStorageQuotaLevel: Equatable, Sendable {
 }
 
 struct CloudStorageQuotaStatus: Equatable, Sendable {
-    static let defaultLimitBytes: Int64 = 1_073_741_824
-    static let warningBytes: Int64 = 850 * 1_048_576
-    static let criticalBytes: Int64 = 950 * 1_048_576
+    static let defaultLimitBytes: Int64 = AppSubscriptionTier.free.storageLimitBytes
 
     static let localOnlyWriteMessage =
         "This will only be stored on this device until you free up space."
@@ -27,8 +25,8 @@ struct CloudStorageQuotaStatus: Equatable, Sendable {
 
     var level: CloudStorageQuotaLevel {
         if usedBytes >= limitBytes { return .full }
-        if usedBytes >= Self.criticalBytes { return .critical }
-        if usedBytes >= Self.warningBytes { return .warning }
+        if usedBytes >= criticalThresholdBytes { return .critical }
+        if usedBytes >= warningThresholdBytes { return .warning }
         return .normal
     }
 
@@ -42,15 +40,15 @@ struct CloudStorageQuotaStatus: Equatable, Sendable {
         case .normal:
             return "\(remainingText) available"
         case .warning:
-            return "Approaching the 1 GB storage limit."
+            return "Approaching the \(limitText) storage limit."
         case .critical:
-            return "Near the limit. Sync will stop at 1 GB."
+            return "Near the limit. Sync will stop at \(limitText)."
         case .full:
             return "Sync paused. New changes stay on this device."
         }
     }
 
-    static let empty = CloudStorageQuotaStatus(usedBytes: 0, limitBytes: defaultLimitBytes)
+    nonisolated static let empty = CloudStorageQuotaStatus(usedBytes: 0, limitBytes: defaultLimitBytes)
 
     private static let byteFormatter: ByteCountFormatter = {
         let formatter = ByteCountFormatter()
@@ -60,33 +58,69 @@ struct CloudStorageQuotaStatus: Equatable, Sendable {
         formatter.isAdaptive = true
         return formatter
     }()
+
+    private var warningThresholdBytes: Int64 {
+        Int64(Double(limitBytes) * 0.85)
+    }
+
+    private var criticalThresholdBytes: Int64 {
+        Int64(Double(limitBytes) * 0.95)
+    }
 }
 
-final class CloudStorageQuotaService {
-    static let shared = CloudStorageQuotaService()
+actor CloudStorageQuotaService {
+    nonisolated static let shared: CloudStorageQuotaService = {
+        CloudStorageQuotaService(localDatabase: MainActor.assumeIsolated { LocalDatabase.shared })
+    }()
 
     private let localDatabase: LocalDatabase
+    private var cachedStatus: CloudStorageQuotaStatus?
+    private var cachedUserId: UUID?
+    private var cacheTimestamp: Date?
 
-    init(localDatabase: LocalDatabase = .shared) {
+    init(localDatabase: LocalDatabase) {
         self.localDatabase = localDatabase
     }
 
     func status(for userId: UUID?) async -> CloudStorageQuotaStatus {
         guard let userId else { return .empty }
+        let tier = await AppSubscriptionTier.persisted
+        if cachedUserId == userId,
+           let cached = cachedStatus,
+           let ts = cacheTimestamp,
+           Date().timeIntervalSince(ts) < 60,
+           await cached.limitBytes == tier.storageLimitBytes {
+            return cached
+        }
 
         do {
             let usedBytes = try await localDatabase.notebookStorageUsageBytes(userId: userId)
-            return CloudStorageQuotaStatus(usedBytes: usedBytes, limitBytes: CloudStorageQuotaStatus.defaultLimitBytes)
+            let status = await CloudStorageQuotaStatus(
+                usedBytes: usedBytes,
+                limitBytes: tier.storageLimitBytes
+            )
+            cachedUserId = userId
+            cachedStatus = status
+            cacheTimestamp = Date()
+            return status
         } catch is CancellationError {
             // Expected when views/tasks are torn down; avoid noisy logs.
             return .empty
         } catch {
+            #if DEBUG
             print("[Quota] Failed to calculate storage status: \(error)")
+            #endif
             return .empty
         }
     }
 
     func canSyncToCloud(userId: UUID?) async -> Bool {
         await status(for: userId).canSyncToCloud
+    }
+
+    func invalidateCache() {
+        cachedStatus = nil
+        cachedUserId = nil
+        cacheTimestamp = nil
     }
 }

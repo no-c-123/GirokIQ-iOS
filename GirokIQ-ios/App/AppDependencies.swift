@@ -19,6 +19,7 @@ final class AppDependencies: ObservableObject {
     let theme: ThemeManager
     let biometricAuth: BiometricAuthService
     let syncEngine: SyncEngine
+    let purchaseManager: PurchaseManager
 
     /// Lazy-initialized services — deferred until first use after auth
     lazy var localDB: LocalDatabase = LocalDatabase.shared
@@ -27,6 +28,7 @@ final class AppDependencies: ObservableObject {
     @Published var isLocked: Bool = false
     @Published var shouldPromptForUnlock: Bool = false
     private let biometricLockDefaultsKey = "biometricLockEnabled"
+    private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Lifecycle
 
@@ -37,9 +39,20 @@ final class AppDependencies: ObservableObject {
         self.auth = AuthViewModel(syncEngine: syncEngine)
         self.theme = ThemeManager()
         self.biometricAuth = BiometricAuthService()
+        self.purchaseManager = PurchaseManager()
+        self.purchaseManager.bind(authViewModel: self.auth)
         if Configuration.cloudSyncEnabled {
-            syncEngine.startAutoSync()
+            if !PerfBisect.disableAutoSyncLoop {
+                syncEngine.startAutoSync()
+            }
         }
+
+        auth.$currentUserId
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.purchaseManager.handleAuthenticationStateChanged()
+            }
+            .store(in: &cancellables)
     }
 
     deinit {

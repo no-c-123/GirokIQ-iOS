@@ -64,13 +64,15 @@ struct NewNotebookSheet: View {
             .animation(GAnimation.motionSafe(.spring(response: 0.32, dampingFraction: 0.86)) ?? .default, value: isLandscape)
             .onAppear { isNameFocused = true }
         }
+        // Keep GeometryReader size stable when the keyboard appears.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 
     // MARK: - Landscape (wide dialog)
 
     private func landscapeDialog(in size: CGSize) -> some View {
         let maxWidth: CGFloat = min(size.width - 96, 760)
-        let height: CGFloat = min(size.height - 120, 420)
+        let height: CGFloat = min(size.height - 120, 550)
 
         return HStack(spacing: 0) {
             // Preview (left)
@@ -168,8 +170,6 @@ struct NewNotebookSheet: View {
                         RoundedRectangle(cornerRadius: 22, style: .continuous)
                             .stroke(panelStroke, lineWidth: 1)
                     )
-                    // Keep the panel from shrinking when the keyboard appears.
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
             )
             .ignoresSafeArea(edges: .bottom)
         }
@@ -231,6 +231,14 @@ struct NewNotebookSheet: View {
                     )
             )
             .focused($isNameFocused)
+            .submitLabel(.done)
+            .onSubmit { isNameFocused = false }
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { isNameFocused = false }
+                }
+            }
             .textInputAutocapitalization(.sentences)
             .disableAutocorrection(true)
             .accessibilityLabel("Notebook name")
@@ -272,57 +280,59 @@ struct NewNotebookSheet: View {
     }
 
     private var colorRow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                ForEach(coverColors, id: \.hex) { item in
-                    let isSelected = selectedBgColorHex.uppercased() == item.hex.uppercased()
-                    Button {
-                        selectedBgColorHex = item.hex
-                    } label: {
-                        ZStack {
-                            Circle()
-                                .fill(Color(hex: item.hex))
-                                .frame(width: 22, height: 22)
-                                .overlay(
-                                    Circle().stroke(Color.black.opacity(colorScheme == .dark ? 0.12 : 0.10), lineWidth: 1)
-                                )
+        HStack(spacing: 10) {
+            ForEach(coverColors, id: \.hex) { item in
+                let isSelected = selectedBgColorHex.uppercased() == item.hex.uppercased()
+                Button {
+                    selectedBgColorHex = item.hex
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(Color(hex: item.hex))
+                            .frame(width: 22, height: 22)
+                            .overlay(
+                                Circle().stroke(Color.black.opacity(colorScheme == .dark ? 0.12 : 0.10), lineWidth: 1)
+                            )
 
-                            if isSelected {
-                                Circle()
-                                    .stroke(Color.gPrimary, lineWidth: 2)
-                                    .frame(width: 30, height: 30)
-                            }
+                        if isSelected {
+                            Circle()
+                                .stroke(Color.gPrimary, lineWidth: 2)
+                                .frame(width: 30, height: 30)
                         }
-                        .frame(width: 44, height: 44)
-                        .contentShape(Circle())
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(item.name)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel(item.name)
             }
 
-            ColorPicker(
-                "Custom",
-                selection: Binding(
-                    get: { Color(hex: selectedBgColorHex) },
-                    set: { selectedBgColorHex = $0.hexString }
-                ),
-                supportsOpacity: false
-            )
-            .font(.gCaption.weight(.semibold))
-            .foregroundColor(.gTextSecondary)
-            .padding(.horizontal, 12)
-            .frame(height: 44)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(panelSurface.opacity(0.95))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(panelStroke, lineWidth: 1)
-            )
+            // Custom color as the last swatch.
+            ZStack {
+                ColorPicker(
+                    "",
+                    selection: Binding(
+                        get: { Color(hex: selectedBgColorHex) },
+                        set: { selectedBgColorHex = $0.hexString }
+                    ),
+                    supportsOpacity: false
+                )
+                .labelsHidden()
+
+                if isCustomColorSelected {
+                    Circle()
+                        .stroke(Color.gPrimary, lineWidth: 2)
+                        .frame(width: 36, height: 36)
+                }
+            }
+            .frame(width: 44, height: 44)
+            .accessibilityLabel("Custom color")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var isCustomColorSelected: Bool {
+        !coverColors.contains { $0.hex.uppercased() == selectedBgColorHex.uppercased() }
     }
 
     private enum CoverPreviewStyle { case landscape, portrait }

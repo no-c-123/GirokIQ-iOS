@@ -10,3 +10,8 @@
 // pulled in below. The `?` makes the include optional so builds still succeed when
 // the file is absent (CI without local overrides, fresh clones, etc.).
 #include? "Secrets.xcconfig"
+
+// Supabase public client config (safe to ship).
+// Override in `Secrets.xcconfig` if you need different environments.
+SUPABASE_URL = https://bapqxqydqzopbpjrpnna.supabase.co
+SUPABASE_ANON_KEY = sb_publishable_423Dnw91Y5cLpTMC7wCuMA_3cAuqY-t

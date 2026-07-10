@@ -100,7 +100,7 @@ struct CanvasContainerView: View {
             }
         }
         .onChange(of: scenePhase) { _, newPhase in
-            guard newPhase == .active else { return }
+            guard newPhase == .active, !PerfBisect.disableSceneRefresh else { return }
             Task {
                 guard let userId = authViewModel.currentUserId else { return }
                 let shouldRefresh = await canvasVM.shouldRefreshFromSceneActivation(userId: userId)
