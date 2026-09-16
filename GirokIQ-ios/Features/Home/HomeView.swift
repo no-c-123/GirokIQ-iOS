@@ -244,6 +244,16 @@ struct HomeView: View {
         } message: {
             Text(viewModel.quotaNoticeMessage ?? "")
         }
+        .alert("Notebook Limit Reached", isPresented: Binding(
+            get: { viewModel.planLimitMessage != nil },
+            set: { if !$0 { viewModel.planLimitMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                viewModel.planLimitMessage = nil
+            }
+        } message: {
+            Text(viewModel.planLimitMessage ?? "")
+        }
         .confirmationDialog(
             "Move Notebook to Trash?",
             isPresented: Binding(

@@ -9,6 +9,7 @@ struct NewNotebookSheet: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var name = ""
+    @State private var creationLimitMessage: String?
     @FocusState private var isNameFocused: Bool
 
     @AppStorage("newNotebook_pattern") private var selectedPattern: BackgroundPattern = .blank
@@ -66,6 +67,16 @@ struct NewNotebookSheet: View {
         }
         // Keep GeometryReader size stable when the keyboard appears.
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .alert("Notebook Limit Reached", isPresented: Binding(
+            get: { creationLimitMessage != nil },
+            set: { if !$0 { creationLimitMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                creationLimitMessage = nil
+            }
+        } message: {
+            Text(creationLimitMessage ?? "")
+        }
     }
 
     // MARK: - Landscape (wide dialog)
@@ -369,9 +380,14 @@ struct NewNotebookSheet: View {
     // MARK: - Actions
 
     private func createNotebook() {
+        if let limitMessage = viewModel.notebookLimitMessage(forAdding: 1) {
+            creationLimitMessage = limitMessage
+            return
+        }
+
         Task {
             guard let userId = authViewModel.currentUserId else { return }
-            _ = await viewModel.createNotebook(
+            let notebook = await viewModel.createNotebook(
                 userId: userId,
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled Notebook" : name,
                 canvasType: "infinite",
@@ -379,7 +395,9 @@ struct NewNotebookSheet: View {
                 backgroundPattern: selectedPattern,
                 backgroundColorHex: selectedBgColorHex
             )
-            dismiss()
+            if notebook != nil {
+                dismiss()
+            }
         }
     }
 

@@ -71,6 +71,7 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var storageUsage = StorageUsage()
     @Published private(set) var storageBreakdown: [NotebookStorageBreakdownItem] = []
     @Published var quotaNoticeMessage: String?
+    @Published var planLimitMessage: String?
 
     private let service = SupabaseService.shared
     private let quotaService = CloudStorageQuotaService.shared
@@ -168,6 +169,26 @@ final class HomeViewModel: ObservableObject {
     /// Notebooks not in any folder
     var unfolderedNotebooks: [Notebook] {
         filteredNotebooks.filter { $0.folderId == nil }
+    }
+
+    var currentSubscriptionTier: AppSubscriptionTier {
+        AppSubscriptionTier.persisted
+    }
+
+    func notebookLimitMessage(forAdding additionalNotebookCount: Int = 1) -> String? {
+        guard let limit = currentSubscriptionTier.maximumNotebookCount else { return nil }
+        let projectedCount = activeNotebooks.count + additionalNotebookCount
+        guard projectedCount > limit else { return nil }
+
+        if additionalNotebookCount > 1 {
+            return "Free plan supports up to \(limit) notebooks. Import fewer notebooks or upgrade to Pro for unlimited notebooks."
+        }
+
+        return "Free plan supports up to \(limit) notebooks. Upgrade to Pro for unlimited notebooks."
+    }
+
+    func canAddNotebooks(_ additionalNotebookCount: Int = 1) -> Bool {
+        notebookLimitMessage(forAdding: additionalNotebookCount) == nil
     }
 
     /// Notebooks belonging to a specific folder
@@ -359,6 +380,11 @@ final class HomeViewModel: ObservableObject {
         backgroundPattern: BackgroundPattern = .blank,
         backgroundColorHex: String = "#0F0F0E"
     ) async -> Notebook? {
+        if let limitMessage = notebookLimitMessage(forAdding: 1) {
+            planLimitMessage = limitMessage
+            return nil
+        }
+
         let notebook = Notebook(
             userId: userId,
             name: name,
@@ -418,9 +444,17 @@ final class HomeViewModel: ObservableObject {
             let decoder = makeTransferDecoder()
 
             if let folderPackage = try? decoder.decode(FolderTransferPackage.self, from: data) {
+                if let limitMessage = notebookLimitMessage(forAdding: folderPackage.notebooks.count) {
+                    planLimitMessage = limitMessage
+                    return false
+                }
                 importingNotebookName = folderPackage.folder.name
                 _ = try await importFolderPackage(folderPackage, userId: userId)
             } else {
+                if let limitMessage = notebookLimitMessage(forAdding: 1) {
+                    planLimitMessage = limitMessage
+                    return false
+                }
                 let package = try decoder.decode(NotebookTransferPackage.self, from: data)
                 importingNotebookName = package.notebook.name
                 let importedNotebook = try await importNotebookPackage(

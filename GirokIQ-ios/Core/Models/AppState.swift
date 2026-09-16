@@ -8,6 +8,15 @@ enum AppSubscriptionTier: String, Codable, Sendable {
 
     static let userDefaultsKey = "app.subscriptionTier"
 
+    var maximumNotebookCount: Int? {
+        switch self {
+        case .free:
+            return 3
+        case .pro:
+            return nil
+        }
+    }
+
     var storageLimitBytes: Int64 {
         switch self {
         case .free:
