@@ -329,7 +329,9 @@ final class FlashcardsGenerator {
 
     // MARK: - JSON helpers
 
-    private static func extractJSONData(from text: String) throws -> Data {
+    // Internal rather than private so the unit tests can exercise the
+    // model-output parsing directly.
+    static func extractJSONData(from text: String) throws -> Data {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if let data = trimmed.data(using: .utf8), (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) {
             return data
@@ -347,7 +349,9 @@ final class FlashcardsGenerator {
         return data
     }
 
-    private static func sanitizeExtractedStudyText(_ text: String) -> String {
+    // Internal rather than private so the unit tests can exercise the
+    // model-output parsing directly.
+    static func sanitizeExtractedStudyText(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 

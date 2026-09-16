@@ -9,6 +9,15 @@
     }
   ],
   "defaultOptions" : {
+    "codeCoverage" : {
+      "targets" : [
+        {
+          "containerPath" : "container:GirokIQ-ios.xcodeproj",
+          "identifier" : "4C56BD742F7A6E4B00179FAA",
+          "name" : "GirokIQ-ios"
+        }
+      ]
+    },
     "performanceAntipatternCheckerEnabled" : true,
     "targetForVariableExpansion" : {
       "containerPath" : "container:GirokIQ-ios.xcodeproj",
@@ -18,12 +27,11 @@
   },
   "testTargets" : [
     {
-      "enabled" : false,
       "parallelizable" : true,
       "target" : {
         "containerPath" : "container:GirokIQ-ios.xcodeproj",
-        "identifier" : "4C88AFF62FB5C551007219F4",
-        "name" : "EnergyConsupmtion"
+        "identifier" : "4CE57E032F00A00100000003",
+        "name" : "GirokIQ-iosTests"
       }
     }
   ],

@@ -36,13 +36,13 @@
       </TestPlans>
       <Testables>
          <TestableReference
-            skipped = "YES"
+            skipped = "NO"
             parallelizable = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "4C88AFF62FB5C551007219F4"
-               BuildableName = "EnergyConsupmtion.xctest"
-               BlueprintName = "EnergyConsupmtion"
+               BlueprintIdentifier = "4CE57E032F00A00100000003"
+               BuildableName = "GirokIQ-iosTests.xctest"
+               BlueprintName = "GirokIQ-iosTests"
                ReferencedContainer = "container:GirokIQ-ios.xcodeproj">
             </BuildableReference>
          </TestableReference>
