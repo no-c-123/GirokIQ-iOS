@@ -2685,9 +2685,10 @@ final class CanvasViewModel: ObservableObject {
             }
 
             guard Configuration.cloudSyncEnabled, await self.canWriteToCloud() else { return }
-            for el in elements {
-                try? await SupabaseService.shared.upsertCanvasElement(el)
-            }
+            // Replace rather than upsert: upserting only ever adds or updates, so
+            // deleted elements survived in `canvas_elements` and were pulled back
+            // on the next launch.
+            try? await SupabaseService.shared.replaceCanvasElements(elements, pageId: pageId)
         }.value
 
         elementSaveTasks[pageId] = nil

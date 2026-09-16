@@ -244,6 +244,45 @@ final class SupabaseService {
             .execute()
     }
 
+    /// Makes the remote element set for a page match `elements` exactly.
+    ///
+    /// Upserting alone can only add or update rows, so an element the user
+    /// deleted stayed in `canvas_elements` forever — and because the sync treats
+    /// that table as the source of truth on pull, the deleted element reappeared
+    /// on the next launch. Removing the rows that are no longer part of the page
+    /// is what actually makes a deletion stick.
+    func replaceCanvasElements(_ elements: [CanvasElement], pageId: UUID) async throws {
+        for element in elements {
+            try await upsertCanvasElement(element)
+        }
+        try await deleteStaleCanvasElements(pageId: pageId, keeping: elements.map(\.id))
+    }
+
+    /// Deletes this page's element rows that are not in `keepIds`.
+    ///
+    /// Deliberately computes the stale set from what the server actually holds
+    /// and deletes those ids explicitly, rather than issuing a `not.in` filter:
+    /// a malformed filter here would wipe the page's elements, whereas this can
+    /// only ever remove ids it has already confirmed are orphaned.
+    func deleteStaleCanvasElements(pageId: UUID, keeping keepIds: [UUID]) async throws {
+        struct ElementID: Decodable { let id: UUID }
+
+        let existing: [ElementID] = try await supabase.from("canvas_elements")
+            .select("id")
+            .eq("page_id", value: pageId.uuidString)
+            .execute()
+            .value
+
+        let keep = Set(keepIds)
+        let stale = existing.map(\.id).filter { !keep.contains($0) }
+        guard !stale.isEmpty else { return }
+
+        try await supabase.from("canvas_elements")
+            .delete()
+            .in("id", values: stale)
+            .execute()
+    }
+
     // MARK: - Canvas Images
 
     func uploadCanvasImage(data: Data, path: String, contentType: String = "image/jpeg") async throws {

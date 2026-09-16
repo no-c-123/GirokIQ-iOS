@@ -395,6 +395,12 @@ final class SyncEngine: ObservableObject {
 
                     try? await remote.upsertCanvasElement(element)
                 }
+                // Drop remote rows for elements this page no longer has, so a
+                // deletion pushed from here isn't resurrected by the next pull.
+                try? await remote.deleteStaleCanvasElements(
+                    pageId: page.id,
+                    keeping: normalizedElements.map(\.id)
+                )
                 return true
             } else {
                 try await remote.deletePage(id: uuid)
