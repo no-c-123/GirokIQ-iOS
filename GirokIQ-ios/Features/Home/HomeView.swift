@@ -38,6 +38,7 @@ struct HomeView: View {
     @State private var renameFolderText = ""
     @State private var notebookPendingTrash: Notebook?
     @State private var folderPendingTrash: Folder?
+    @State private var flashcardsNotebook: Notebook?
 
     /// Adaptive columns: fits as many as possible with 150pt minimum
     private var columns: [GridItem] {
@@ -415,11 +416,23 @@ struct HomeView: View {
         // On iPhone (not embedded), wrap in NavigationStack with push to canvas
         if isEmbedded {
             mainContent
+                .navigationDestination(item: $flashcardsNotebook) { notebook in
+                    FlashcardsCoordinatorView(
+                        notebook: notebook,
+                        userId: authViewModel.currentUserId
+                    )
+                }
         } else {
             NavigationStack {
                 mainContent
                     .navigationDestination(item: $selectedNotebook) { notebook in
                         CanvasContainerView(notebook: notebook)
+                    }
+                    .navigationDestination(item: $flashcardsNotebook) { notebook in
+                        FlashcardsCoordinatorView(
+                            notebook: notebook,
+                            userId: authViewModel.currentUserId
+                        )
                     }
             }
         }
@@ -852,6 +865,12 @@ struct HomeView: View {
     @ViewBuilder
     func notebookContextMenu(for notebook: Notebook) -> some View {
         Button {
+            flashcardsNotebook = notebook
+        } label: {
+            Label("Flashcards", systemImage: "rectangle.stack")
+        }
+
+        Button {
             renameText = notebook.name
             notebookToRename = notebook
         } label: {
@@ -963,6 +982,12 @@ struct HomeView: View {
 
     private func notebookActionMenu(for notebook: Notebook, buttonSize: CGFloat) -> some View {
         Menu {
+            Button {
+                flashcardsNotebook = notebook
+            } label: {
+                Label("Flashcards", systemImage: "rectangle.stack")
+            }
+
             Button {
                 renameText = notebook.name
                 notebookToRename = notebook

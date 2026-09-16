@@ -381,6 +381,28 @@ final class LocalDatabase: Sendable {
             try db.execute(sql: "DELETE FROM page_drawing")
         }
 
+        migrator.registerMigration("v8_flashcards_sessions") { db in
+            try db.create(table: "flashcards_session") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("user_id", .text).notNull()
+                t.column("notebook_id", .text).notNull().references("notebook", onDelete: .cascade)
+                t.column("status", .text).notNull()
+                t.column("config_json", .text).notNull()
+                t.column("questions_json", .text).notNull()
+                t.column("answers_json", .text).notNull()
+                t.column("current_question_index", .integer).notNull().defaults(to: 0)
+                t.column("created_at", .datetime).notNull()
+                t.column("updated_at", .datetime).notNull()
+                t.column("completed_at", .datetime)
+            }
+
+            try db.create(
+                index: "idx_flashcards_session_notebook_status",
+                on: "flashcards_session",
+                columns: ["notebook_id", "status", "updated_at"]
+            )
+        }
+
         return migrator
     }
 
@@ -1184,6 +1206,151 @@ final class LocalDatabase: Sendable {
                 .order(Column("created_at").asc)
                 .fetchAll(db)
         }
+    }
+
+    // MARK: - Flashcards
+
+    func saveFlashcardsSession(_ session: FlashcardsSessionRecord) async throws {
+        try await dbQueue.write { db in
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+
+            try db.execute(
+                sql: """
+                    INSERT INTO flashcards_session (
+                        id, user_id, notebook_id, status,
+                        config_json, questions_json, answers_json,
+                        current_question_index, created_at, updated_at, completed_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        user_id = excluded.user_id,
+                        notebook_id = excluded.notebook_id,
+                        status = excluded.status,
+                        config_json = excluded.config_json,
+                        questions_json = excluded.questions_json,
+                        answers_json = excluded.answers_json,
+                        current_question_index = excluded.current_question_index,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at,
+                        completed_at = excluded.completed_at
+                """,
+                arguments: [
+                    session.id.uuidString,
+                    session.userId.uuidString,
+                    session.notebookId.uuidString,
+                    session.status.rawValue,
+                    String(data: try encoder.encode(session.config), encoding: .utf8) ?? "{}",
+                    String(data: try encoder.encode(session.questions), encoding: .utf8) ?? "[]",
+                    String(data: try encoder.encode(session.answers), encoding: .utf8) ?? "[]",
+                    session.currentQuestionIndex,
+                    session.createdAt,
+                    session.updatedAt,
+                    session.completedAt
+                ]
+            )
+        }
+    }
+
+    func fetchActiveFlashcardsSession(userId: UUID, notebookId: UUID) async throws -> FlashcardsSessionRecord? {
+        try await dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT *
+                    FROM flashcards_session
+                    WHERE user_id = ? AND notebook_id = ? AND status = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """,
+                arguments: [
+                    userId.uuidString,
+                    notebookId.uuidString,
+                    FlashcardsSessionStatus.active.rawValue
+                ]
+            ) else {
+                return nil
+            }
+
+            return try Self.decodeFlashcardsSession(from: row)
+        }
+    }
+
+    func fetchLatestFlashcardsSession(userId: UUID, notebookId: UUID) async throws -> FlashcardsSessionRecord? {
+        try await dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                    SELECT *
+                    FROM flashcards_session
+                    WHERE user_id = ? AND notebook_id = ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """,
+                arguments: [
+                    userId.uuidString,
+                    notebookId.uuidString
+                ]
+            ) else {
+                return nil
+            }
+
+            return try Self.decodeFlashcardsSession(from: row)
+        }
+    }
+
+    private static func decodeFlashcardsSession(from row: Row) throws -> FlashcardsSessionRecord {
+        let id = UUID(uuidString: row["id"]) ?? UUID()
+        let userId = UUID(uuidString: row["user_id"]) ?? UUID()
+        let notebookId = UUID(uuidString: row["notebook_id"]) ?? UUID()
+        let status = FlashcardsSessionStatus(rawValue: row["status"]) ?? .active
+
+        let decoder = JSONDecoder()
+
+        let config: FlashcardsSessionConfig
+        if let configJSON: String = row["config_json"],
+           let data = configJSON.data(using: .utf8),
+           let decoded = try? decoder.decode(FlashcardsSessionConfig.self, from: data) {
+            config = decoded
+        } else {
+            config = FlashcardsSessionConfig()
+        }
+
+        let questions: [FlashcardsQuestion]
+        if let questionsJSON: String = row["questions_json"],
+           let data = questionsJSON.data(using: .utf8),
+           let decoded = try? decoder.decode([FlashcardsQuestion].self, from: data) {
+            questions = decoded
+        } else {
+            questions = []
+        }
+
+        let answers: [FlashcardsAnsweredQuestion]
+        if let answersJSON: String = row["answers_json"],
+           let data = answersJSON.data(using: .utf8),
+           let decoded = try? decoder.decode([FlashcardsAnsweredQuestion].self, from: data) {
+            answers = decoded
+        } else {
+            answers = []
+        }
+
+        let currentQuestionIndex: Int = row["current_question_index"]
+        let createdAt: Date = row["created_at"]
+        let updatedAt: Date = row["updated_at"]
+        let completedAt: Date? = row["completed_at"]
+
+        return FlashcardsSessionRecord(
+            id: id,
+            userId: userId,
+            notebookId: notebookId,
+            status: status,
+            config: config,
+            questions: questions,
+            answers: answers,
+            currentQuestionIndex: currentQuestionIndex,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+            completedAt: completedAt
+        )
     }
 }
 
