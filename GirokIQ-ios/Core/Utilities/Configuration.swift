@@ -98,11 +98,11 @@ enum Configuration {
 /// Flip exactly ONE flag to true per test run. All false = current behavior.
 enum PerfBisect {
     /// Test A: skip the history snapshot captured on every debounced save tick.
-    static let disablePerTickHistoryCapture = false
+    nonisolated static let disablePerTickHistoryCapture = false
     /// Test B: write drawing files uncompressed (reads already accept both formats).
-    static let disableDrawingCompression = false
+    nonisolated static let disableDrawingCompression = false
     /// Test C: never start the 2-second background sync loop.
-    static let disableAutoSyncLoop = false
+    nonisolated static let disableAutoSyncLoop = false
     /// Test D: skip the notebook refresh when the app returns to foreground.
-    static let disableSceneRefresh = false
+    nonisolated static let disableSceneRefresh = false
 }
