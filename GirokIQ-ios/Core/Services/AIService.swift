@@ -11,6 +11,18 @@ final class AIService {
     }
     private let defaultModel = "claude-sonnet-4-6"
 
+    /// `URLSession.shared` applies the default 60s request timeout, which vision
+    /// calls carrying a multi-megabyte page image routinely blow through — the
+    /// task fails with NSURLErrorTimedOut (-1001) long before the model answers.
+    /// These calls are deliberately allowed to be slow.
+    private static let aiSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.timeoutIntervalForRequest = 180
+        configuration.timeoutIntervalForResource = 600
+        configuration.waitsForConnectivity = true
+        return URLSession(configuration: configuration)
+    }()
+
     // MARK: - API Key Management
 
     var hasAPIKey: Bool {
@@ -32,17 +44,19 @@ final class AIService {
         systemPrompt: String,
         messages: [AIMessage],
         imageData: Data? = nil,
-        model: String? = nil
+        model: String? = nil,
+        maxTokens: Int? = nil
     ) async throws -> String {
         let request = try await authorizedRequest(
             systemPrompt: systemPrompt,
             messages: messages,
             imageData: imageData,
             model: model ?? defaultModel,
-            stream: false
+            stream: false,
+            maxTokens: maxTokens
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.aiSession.data(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AIError.invalidResponse
@@ -74,10 +88,11 @@ final class AIService {
                         messages: messages,
                         imageData: imageData,
                         model: model ?? self.defaultModel,
-                        stream: true
+                        stream: true,
+                        maxTokens: nil
                     )
 
-                    let (bytes, response) = try await URLSession.shared.bytes(for: request)
+                    let (bytes, response) = try await Self.aiSession.bytes(for: request)
                     guard let httpResponse = response as? HTTPURLResponse else {
                         continuation.finish(throwing: AIError.invalidResponse)
                         return
@@ -120,7 +135,8 @@ final class AIService {
         messages: [AIMessage],
         imageData: Data?,
         model: String,
-        stream: Bool
+        stream: Bool,
+        maxTokens: Int?
     ) async throws -> URLRequest {
         let session = try await supabase.auth.session
         guard !session.isExpired else {
@@ -136,7 +152,8 @@ final class AIService {
             systemPrompt: systemPrompt,
             messages: messages,
             imageData: imageData,
-            model: model
+            model: model,
+            maxTokens: maxTokens
         )
         if stream {
             body["stream"] = true
@@ -149,7 +166,8 @@ final class AIService {
         systemPrompt: String,
         messages: [AIMessage],
         imageData: Data?,
-        model: String
+        model: String,
+        maxTokens: Int?
     ) -> [String: Any] {
         var apiMessages: [[String: Any]] = messages.map { msg in
             if let data = msg.imageData ?? (msg.role == .user ? imageData : nil) {
@@ -183,7 +201,7 @@ final class AIService {
 
         return [
             "model": model,
-            "max_tokens": 4096,
+            "max_tokens": maxTokens ?? 4096,
             "system": systemPrompt,
             "messages": apiMessages
         ]
@@ -269,6 +287,11 @@ enum AIError: LocalizedError {
     case invalidResponse
     case unauthorized
     case apiError(statusCode: Int, message: String)
+
+    /// True when `error` is a URL-loading timeout (NSURLErrorTimedOut).
+    static func isTimeout(_ error: Error) -> Bool {
+        (error as? URLError)?.code == .timedOut
+    }
 
     var errorDescription: String? {
         switch self {
