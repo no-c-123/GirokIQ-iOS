@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feature/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT: GirokIQ-ios.xcodeproj
+  SCHEME: GirokIQ-ios
+  # Xcode needed for IPHONEOS_DEPLOYMENT_TARGET 26.2.
+  MINIMUM_XCODE: "26.2"
+
+jobs:
+  test:
+    name: Unit tests and coverage
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Select the newest available Xcode
+        run: |
+          set -euo pipefail
+          echo "Xcode versions on this runner:"
+          ls -d /Applications/Xcode*.app
+
+          newest=""
+          newest_version="0"
+          for app in /Applications/Xcode*.app; do
+            version=$("$app/Contents/Developer/usr/bin/xcodebuild" -version 2>/dev/null | head -1 | awk '{print $2}') || continue
+            [ -z "$version" ] && continue
+            if [ "$(printf '%s\n%s\n' "$version" "$newest_version" | sort -V | tail -1)" = "$version" ]; then
+              newest="$app"
+              newest_version="$version"
+            fi
+          done
+
+          if [ -z "$newest" ]; then
+            echo "::error::No Xcode installation found on the runner."
+            exit 1
+          fi
+
+          if [ "$(printf '%s\n%s\n' "$newest_version" "$MINIMUM_XCODE" | sort -V | head -1)" != "$MINIMUM_XCODE" ]; then
+            echo "::error::Xcode $newest_version is older than the required $MINIMUM_XCODE (the app targets iOS $MINIMUM_XCODE). Pin a runner image that ships a newer Xcode."
+            exit 1
+          fi
+
+          echo "Selected Xcode $newest_version at $newest"
+          echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Cache Swift package dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/org.swift.swiftpm
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved', '**/*.xcodeproj/project.pbxproj') }}
+          restore-keys: ${{ runner.os }}-spm-
+
+      - name: Choose an iPad simulator
+        run: |
+          set -euo pipefail
+          device_id=$(python3 Scripts/pick_simulator.py)
+          echo "SIMULATOR_ID=$device_id" >> "$GITHUB_ENV"
+
+      - name: Build for testing
+        run: |
+          set -euo pipefail
+          xcodebuild build-for-testing \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "id=$SIMULATOR_ID" \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            | { command -v xcbeautify >/dev/null 2>&1 && xcbeautify --renderer github-actions || cat; }
+        shell: bash
+
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          xcodebuild test-without-building \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -destination "id=$SIMULATOR_ID" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | { command -v xcbeautify >/dev/null 2>&1 && xcbeautify --renderer github-actions || cat; }
+        shell: bash
+
+      - name: Report coverage and enforce the gate
+        if: always()
+        run: |
+          set -euo pipefail
+          test -d TestResults.xcresult || { echo "::error::No test results produced."; exit 1; }
+          python3 Scripts/coverage_report.py TestResults.xcresult \
+            --markdown-out coverage-summary.md \
+            --sonar-out coverage-sonar.xml
+          cat coverage-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload test results and coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            TestResults.xcresult
+            coverage-summary.md
+            coverage-sonar.xml
+          retention-days: 14
