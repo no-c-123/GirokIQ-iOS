@@ -119,9 +119,16 @@ jobs:
   sonar:
     name: SonarQube Cloud analysis
     needs: test
-    # Runs even when the coverage gate fails, so a drop in quality is still
+    # Main branch and pull requests only. The free plan analyses the main
+    # branch and PRs; a long-lived feature branch is rejected with
+    # "Organization is not allowed to access data from non main branches",
+    # which is what failed the first attempt at this job.
+    #
+    # Still runs when the coverage gate fails, so a drop in quality stays
     # visible in Sonar rather than hidden behind a red build.
-    if: always() && needs.test.result != 'cancelled'
+    if: >-
+      always() && needs.test.result != 'cancelled' &&
+      (github.event_name == 'pull_request' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
