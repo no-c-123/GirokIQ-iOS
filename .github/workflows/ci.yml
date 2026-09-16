@@ -115,3 +115,41 @@ jobs:
             coverage-summary.md
             coverage-sonar.xml
           retention-days: 14
+
+  sonar:
+    name: SonarQube Cloud analysis
+    needs: test
+    # Runs even when the coverage gate fails, so a drop in quality is still
+    # visible in Sonar rather than hidden behind a red build.
+    if: always() && needs.test.result != 'cancelled'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          # Sonar uses history to attribute issues to the commit that
+          # introduced them; a shallow clone makes every line look new.
+          fetch-depth: 0
+
+      - name: Download the coverage report
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: test-results
+
+      - name: Fail clearly when the Sonar token is missing
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          if [ -z "${SONAR_TOKEN:-}" ]; then
+            echo "::error::SONAR_TOKEN is not set. Add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Run the scanner
+        uses: SonarSource/sonarqube-scan-action@v8.2.1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io

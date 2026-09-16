@@ -22,11 +22,25 @@ import sys
 import xml.etree.ElementTree as ET
 
 
-def xccov(args):
+def xccov(args, required=True):
+    """Run xccov and parse its JSON output.
+
+    `required=False` returns None instead of exiting when the query fails.
+    Per-file archive queries fail for sources xccov has no line data for
+    (a file compiled into the target but never loaded by the tests), which
+    must not abort the whole report.
+    """
     result = subprocess.run(["xcrun", "xccov"] + args, capture_output=True, text=True)
     if result.returncode != 0:
+        if not required:
+            return None
         sys.exit(f"xccov failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError:
+        if not required:
+            return None
+        sys.exit("xccov returned output that is not JSON.")
 
 
 def percent(covered, executable):
@@ -60,9 +74,12 @@ def main():
         for source in target.get("files", []):
             path = source.get("path", "")
             relative = os.path.relpath(path, os.getcwd()) if os.path.isabs(path) else path
+            # Keep the path exactly as the report gave it: a per-file archive
+            # query has to be asked with that path, not the relative form.
             files[relative] = (
                 source.get("coveredLines", 0),
                 source.get("executableLines", 0),
+                path,
             )
 
     missing = sorted(name for name in tracked if name not in files)
@@ -72,7 +89,7 @@ def main():
     for name in sorted(tracked):
         if name not in files:
             continue
-        covered, executable = files[name]
+        covered, executable, _ = files[name]
         covered_total += covered
         executable_total += executable
         rows.append((name, covered, executable, percent(covered, executable)))
@@ -112,13 +129,20 @@ def main():
         # CI gate and Sonar. Line detail comes from a per-file xccov archive
         # query, which is why this is only done when Sonar output is requested.
         root = ET.Element("coverage", version="1")
+        skipped = []
         for name in sorted(files):
             if not name.endswith(".swift"):
                 continue
-            covered, executable = files[name]
+            covered, executable, source_path = files[name]
             if not executable:
                 continue
-            detail = xccov(["view", "--archive", "--file", name, "--json", args.xcresult])
+            detail = xccov(
+                ["view", "--archive", "--file", source_path, "--json", args.xcresult],
+                required=False,
+            )
+            if detail is None:
+                skipped.append(name)
+                continue
             file_element = ET.SubElement(root, "file", path=name)
             for line in detail:
                 if not line.get("isExecutable"):
@@ -131,6 +155,8 @@ def main():
                 )
         ET.ElementTree(root).write(args.sonar_out, encoding="utf-8", xml_declaration=True)
         print(f"\nWrote Sonar coverage to {args.sonar_out}")
+        if skipped:
+            print(f"  ({len(skipped)} file(s) had no line-level data and were omitted)")
 
     if missing:
         sys.exit(f"\nFAILED: {len(missing)} tracked file(s) missing from the coverage report.")
