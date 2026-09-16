@@ -505,9 +505,19 @@ final class FixedCanvasHostView: UIView, UIScrollViewDelegate, UIGestureRecogniz
 
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         centerPage()
+        // Keep live viewport state fresh so canvas<->screen translation math
+        // (lasso move, element drags) doesn't use a stale zoom mid-gesture.
+        viewModel?.updateViewport(
+            offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+            scale: scrollView.zoomScale
+        )
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        viewModel?.updateViewport(
+            offset: CGSize(width: scrollView.contentOffset.x, height: scrollView.contentOffset.y),
+            scale: scrollView.zoomScale
+        )
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {

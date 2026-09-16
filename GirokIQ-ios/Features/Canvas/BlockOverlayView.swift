@@ -14,6 +14,10 @@ enum TextElementMetrics {
 struct BlockOverlayView: View {
     @ObservedObject var viewModel: CanvasViewModel
 
+    /// Named coordinate space pinned to the block overlay root — i.e. canvas space.
+    /// Gestures that mutate element.positionX/Y must measure translations here.
+    static let canvasSpaceName = "girokBlockOverlayCanvasSpace"
+
 
     var body: some View {
         GeometryReader { proxy in
@@ -116,6 +120,7 @@ struct BlockOverlayView: View {
 
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .coordinateSpace(name: BlockOverlayView.canvasSpaceName)
             // No transform — backgroundScrollView handles scroll/zoom automatically
         }
     }
@@ -560,7 +565,13 @@ struct BlockElementView: View {
     // MARK: - Drag Gesture (move)
 
     var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+        // IMPORTANT: use the block-overlay named space (canvas space), NOT .global.
+        // The overlay lives inside the zoomed pageContainerView, so element.positionX/Y
+        // are canvas points. A .global translation is in screen points (canvas × zoom):
+        // at any zoom ≠ 1 the block moves at the wrong speed and commits the wrong
+        // distance. The named space is stationary in canvas coordinates, so
+        // translations arrive pre-descaled and don't feed back as the block moves.
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(BlockOverlayView.canvasSpaceName))
             .updating($dragOffset) { value, state, _ in
                 guard isSelected else { return }
                 state = CGSize(
@@ -917,19 +928,35 @@ struct LassoSelectionOverlay: View {
 
     // Convert canvas-space box to screen-space for rendering
     // Since this view is now in CanvasContainerView (screen space), we must project.
+    /// Anchor for resize previews, in canvas space.
+    /// MUST match finalizeLassoResize, which scales strokes/elements around
+    /// lassoContentBounds.origin. Previewing around any other anchor (the old code
+    /// used the box CENTER) makes the ghost drift away from the marquee during the
+    /// drag and makes the committed content land somewhere the preview never showed.
+    private var resizeAnchorCanvas: CGPoint {
+        viewModel.lassoContentBounds?.origin ?? box.origin
+    }
+
+    private func scaled(_ rect: CGRect, by scale: CGFloat, around anchor: CGPoint) -> CGRect {
+        CGRect(
+            x: anchor.x + (rect.minX - anchor.x) * scale,
+            y: anchor.y + (rect.minY - anchor.y) * scale,
+            width: rect.width * scale,
+            height: rect.height * scale
+        )
+    }
+
+    private func scaledPoint(_ p: CGPoint, by scale: CGFloat, around anchor: CGPoint) -> CGPoint {
+        CGPoint(x: anchor.x + (p.x - anchor.x) * scale,
+                y: anchor.y + (p.y - anchor.y) * scale)
+    }
+
     var screenBox: CGRect {
         let projectedTranslation = viewModel.isPreviewingLassoMove
             ? viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
             : .zero
         let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
-        let scaledWidth = box.width * scale
-        let scaledHeight = box.height * scale
-        let baseRect = CGRect(
-            x: box.midX - scaledWidth / 2,
-            y: box.midY - scaledHeight / 2,
-            width: scaledWidth,
-            height: scaledHeight
-        )
+        let baseRect = scaled(box, by: scale, around: resizeAnchorCanvas)
         return viewModel.projectCanvasRectToViewport(baseRect)
             .offsetBy(dx: projectedTranslation.width, dy: projectedTranslation.height)
     }
@@ -938,13 +965,27 @@ struct LassoSelectionOverlay: View {
         guard let floatingRect = viewModel.lassoFloatingCanvasRect else { return nil }
         let projectedTranslation = viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
         let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
-        let projected = viewModel.projectCanvasRectToViewport(floatingRect)
-        return CGRect(
-            x: projected.midX - projected.width * scale / 2 + projectedTranslation.width,
-            y: projected.midY - projected.height * scale / 2 + projectedTranslation.height,
-            width: projected.width * scale,
-            height: projected.height * scale
-        )
+        // Scale in canvas space around the same anchor the commit will use,
+        // THEN project — identical math to screenBox so ghost and marquee can't diverge.
+        let scaledCanvasRect = scaled(floatingRect, by: scale, around: resizeAnchorCanvas)
+        return viewModel.projectCanvasRectToViewport(scaledCanvasRect)
+            .offsetBy(dx: projectedTranslation.width, dy: projectedTranslation.height)
+    }
+
+    /// The committed lasso polygon projected to screen space, with the same
+    /// move/resize preview transforms applied as `screenBox`.
+    private var screenPolygon: [CGPoint]? {
+        guard let poly = viewModel.lassoSelectionPolygon, poly.count > 2 else { return nil }
+        let projectedTranslation = viewModel.isPreviewingLassoMove
+            ? viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
+            : .zero
+        let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
+        return poly.map { pt in
+            let scaledCanvas = scaledPoint(pt, by: scale, around: resizeAnchorCanvas)
+            let screen = viewModel.projectCanvasPointToViewport(scaledCanvas)
+            return CGPoint(x: screen.x + projectedTranslation.width,
+                           y: screen.y + projectedTranslation.height)
+        }
     }
 
     var liveScale: CGFloat {
@@ -1038,11 +1079,13 @@ struct LassoSelectionOverlay: View {
                             .onChanged { value in
                                 if isMenuVisible || showColorPicker { closeMenu() }
                                 viewModel.beginLassoMoveIfNeeded()
+                                // Convert the screen-space drag into canvas points via the
+                                // live UIKit geometry. Dividing by the published canvasScale
+                                // is wrong mid-gesture: that value only updates when a
+                                // scroll/zoom gesture ends, so the move distance was
+                                // computed against a stale zoom.
                                 viewModel.previewLassoMove(
-                                    translation: CGSize(
-                                        width: value.translation.width / viewModel.canvasScale,
-                                        height: value.translation.height / viewModel.canvasScale
-                                    )
+                                    translation: viewModel.projectViewportTranslationToCanvas(value.translation)
                                 )
                             }
                             .onEnded { _ in
@@ -1050,11 +1093,16 @@ struct LassoSelectionOverlay: View {
                             }
                     )
 
-                Rectangle()
-                    .stroke(Color(hex: "#C9A84C"), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
-                    .frame(width: liveBox.width, height: liveBox.height)
-                    .position(x: liveBox.midX, y: liveBox.midY)
+                if let sp = screenPolygon, sp.count > 2 {
+                    Path { path in
+                        path.move(to: sp[0])
+                        for pt in sp.dropFirst() { path.addLine(to: pt) }
+                        path.closeSubpath()
+                    }
+                    .stroke(Color(hex: "#C9A84C"),
+                            style: SwiftUI.StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [6]))
                     .allowsHitTesting(false)
+                }
 
                 if let image = viewModel.lassoFloatingImage,
                    let rect = floatingScreenRect {

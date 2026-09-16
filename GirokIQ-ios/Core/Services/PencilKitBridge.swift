@@ -98,7 +98,9 @@ enum PencilKitBridge {
             return PKEraserTool(eraserType, width: width)
         case .selection:
             return PKLassoTool()
-        case .lasso, .image, .text:
+        case .lasso:
+            return PKInkingTool(.pen, color: .clear, width: 1)
+        case .image, .text:
             // Native lasso replaced by custom gesture — return neutral tool
             // so PKCanvasView does not intercept touches when lasso is active
             return PKInkingTool(.pen, color: .clear, width: 1)

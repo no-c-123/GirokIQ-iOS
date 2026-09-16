@@ -1395,6 +1395,8 @@ final class CanvasViewModel: ObservableObject {
     /// Bounding box of all selected strokes + elements in canvas space.
     /// Set by commitLassoSelection(). Nil when nothing is selected.
     @Published var lassoSelectionBox: CGRect? = nil
+    /// The committed freeform lasso outline, in canvas space. Nil when nothing is selected.
+    @Published var lassoSelectionPolygon: [CGPoint]? = nil
     @Published var lassoContentBounds: CGRect? = nil
     /// Whether the lasso bounding box + edit menu are visible.
     @Published var isLassoSelectionActive: Bool = false
@@ -1539,6 +1541,27 @@ final class CanvasViewModel: ObservableObject {
         )
     }
 
+    /// Inverse of projectCanvasTranslationToViewport: converts a screen-space drag
+    /// translation into canvas points using the LIVE UIKit view geometry.
+    /// Prefer this over dividing by `canvasScale` — the published `canvasScale` is
+    /// only committed when a scroll/zoom gesture ENDS, so it can be stale mid-gesture.
+    func projectViewportTranslationToCanvas(_ translation: CGSize) -> CGSize {
+        guard let hostView = canvasCoordinateHostView,
+              let contentView = canvasCoordinateContentView else {
+            let scale = max(liveCanvasScale, 0.01)
+            return CGSize(
+                width: translation.width / scale,
+                height: translation.height / scale
+            )
+        }
+        let origin = hostView.convert(CGPoint.zero, to: contentView)
+        let moved = hostView.convert(
+            CGPoint(x: translation.width, y: translation.height),
+            to: contentView
+        )
+        return CGSize(width: moved.x - origin.x, height: moved.y - origin.y)
+    }
+
     func beginLiveLasso(at screenPoint: CGPoint, canvasPoint: CGPoint? = nil) {
         guard selectedTool == .lasso, !isRegionCaptureMode else { return }
         liveLassoPoints = [screenPoint]
@@ -1628,6 +1651,7 @@ final class CanvasViewModel: ObservableObject {
         // Store hit PK stroke indices so applyLassoColorChange can find them
         selectedPKStrokeIndices = Set(hitPKStrokeIndices)
         selectedElementIds = Set(hitElements.map { $0.id })
+        lassoSelectionPolygon = canvasPolygon
         
         let contentBounds = selectedContentBounds(
             strokeIndices: Set(hitPKStrokeIndices),
@@ -1648,6 +1672,7 @@ final class CanvasViewModel: ObservableObject {
         selectedStrokes = []
         selectedPKStrokeIndices = []
         selectedElementIds = []
+        lassoSelectionPolygon = nil
         lassoContentBounds = nil
         lassoSelectionBox = nil
         isLassoSelectionActive = false
@@ -2054,10 +2079,25 @@ final class CanvasViewModel: ObservableObject {
     func finalizeLassoMove() {
         defer { clearFloatingLassoPreviewState() }
 
-        guard isPreviewingLassoMove else { return }
+        guard isPreviewingLassoMove else {
+            #if DEBUG
+            print("[LassoMove] finalize bailed: isPreviewingLassoMove == false (state was cleared mid-drag)")
+            #endif
+            return
+        }
 
         let translation = lassoMoveTranslation
+        #if DEBUG
+        let matchedElements = pages[currentPageIndex].elements.filter { selectedElementIds.contains($0.id) }
+        print("[LassoMove] finalize translation=\(translation) strokes=\(lassoFloatedStrokes.count) selectedElementIds=\(selectedElementIds.count) matchedElements=\(matchedElements.count)")
+        for el in matchedElements {
+            print("[LassoMove]   before: \(el.type) id=\(el.id) pos=(\(el.positionX), \(el.positionY))")
+        }
+        #endif
         let t = CGAffineTransform(translationX: translation.width, y: translation.height)
+        if let poly = lassoSelectionPolygon {
+            lassoSelectionPolygon = poly.map { $0.applying(t) }
+        }
         let movedStrokes = lassoFloatedStrokes.map {
             PKStroke(
                 ink: $0.ink,
@@ -2133,6 +2173,22 @@ final class CanvasViewModel: ObservableObject {
             pages[currentPageIndex].elements[i].positionY = origin.y + (el.positionY - origin.y) * scale
             pages[currentPageIndex].elements[i].width = max(40, (el.width ?? 200) * scale)
             pages[currentPageIndex].elements[i].height = max(40, (el.height ?? 200) * scale)
+            // Text blocks that were never user-resized render at their NATURAL size
+            // and ignore stored width/height, so scaling only w/h left the glyphs
+            // unchanged and the box no longer matched the visible text. Scale the
+            // font too so the committed visual matches the resize preview.
+            if pages[currentPageIndex].elements[i].type == "text" {
+                var style = pages[currentPageIndex].elements[i].style ?? ElementStyle()
+                style.fontSize = max(6, (style.fontSize ?? 16) * scale)
+                pages[currentPageIndex].elements[i].style = style
+            }
+        }
+
+        if let poly = lassoSelectionPolygon {
+            lassoSelectionPolygon = poly.map {
+                CGPoint(x: origin.x + ($0.x - origin.x) * scale,
+                        y: origin.y + ($0.y - origin.y) * scale)
+            }
         }
 
         refreshLassoBoundsFromSelection(drawing: finalDrawing, elements: pages[currentPageIndex].elements)
