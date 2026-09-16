@@ -85,11 +85,20 @@ final class AppDependencies: ObservableObject {
         guard shouldRequirePrivacyLock else {
             isLocked = false
             shouldPromptForUnlock = false
+            Task { [purchaseManager] in
+                await purchaseManager.refreshProducts()
+                await purchaseManager.refreshEntitlementsAndSync()
+            }
             return
         }
 
         if isLocked {
             shouldPromptForUnlock = true
+        }
+
+        Task { [purchaseManager] in
+            await purchaseManager.refreshProducts()
+            await purchaseManager.refreshEntitlementsAndSync()
         }
     }
 

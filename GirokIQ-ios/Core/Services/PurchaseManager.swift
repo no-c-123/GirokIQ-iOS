@@ -102,7 +102,12 @@ final class PurchaseManager: ObservableObject {
 
         do {
             let products = try await Product.products(for: Self.productIDs)
+            if products.isEmpty {
+                purchaseErrorMessage = "GirokIQ Pro isn't available from the App Store yet. In TestFlight, confirm the subscriptions are fully configured in App Store Connect and attached to this app."
+                return
+            }
             productsByID = Dictionary(uniqueKeysWithValues: products.map { ($0.id, $0) })
+            purchaseErrorMessage = nil
         } catch {
             purchaseErrorMessage = "Couldn't load App Store products right now."
         }
