@@ -139,7 +139,7 @@ jobs:
         with:
           name: test-results
 
-      - name: Fail clearly when the Sonar token is missing
+      - name: Check the analysis prerequisites
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
@@ -147,6 +147,16 @@ jobs:
             echo "::error::SONAR_TOKEN is not set. Add it under Settings -> Secrets and variables -> Actions."
             exit 1
           fi
+
+          # Without this guard the scanner reports a bare "error during parsing
+          # of the generic coverage report", which says nothing about the real
+          # cause: the test job failed before writing the file.
+          if [ ! -s coverage-sonar.xml ]; then
+            echo "::error::coverage-sonar.xml is missing or empty -- the test job did not produce a coverage report."
+            exit 1
+          fi
+
+          python3 -c "import xml.etree.ElementTree as ET; r = ET.parse('coverage-sonar.xml').getroot(); print(f'Coverage report covers {len(r)} file(s).')"
 
       - name: Run the scanner
         uses: SonarSource/sonarqube-scan-action@v8.2.1

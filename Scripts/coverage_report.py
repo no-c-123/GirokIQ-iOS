@@ -126,25 +126,32 @@ def main():
 
     if args.sonar_out:
         # SonarQube generic test-coverage format, so one test run feeds both the
-        # CI gate and Sonar. Line detail comes from a per-file xccov archive
-        # query, which is why this is only done when Sonar output is requested.
+        # CI gate and Sonar.
+        #
+        # `xccov view --archive --json` returns EVERY file's line detail in one
+        # call, as a dict keyed by xccov's own spelling of the path. Asking
+        # per file instead costs a subprocess each and took minutes on a
+        # 74-file bundle, so the whole archive is read once here.
+        archive = xccov(["view", "--archive", "--json", args.xcresult], required=False) or {}
+
         root = ET.Element("coverage", version="1")
         skipped = []
         for name in sorted(files):
             if not name.endswith(".swift"):
                 continue
-            covered, executable, source_path = files[name]
+            _, executable, source_path = files[name]
             if not executable:
                 continue
-            detail = xccov(
-                ["view", "--archive", "--file", source_path, "--json", args.xcresult],
-                required=False,
-            )
-            if detail is None:
+
+            line_entries = archive.get(source_path)
+            if not line_entries:
+                # A source compiled into the target that the tests never
+                # loaded has no line data; record it rather than failing.
                 skipped.append(name)
                 continue
+
             file_element = ET.SubElement(root, "file", path=name)
-            for line in detail:
+            for line in line_entries:
                 if not line.get("isExecutable"):
                     continue
                 ET.SubElement(
@@ -153,8 +160,9 @@ def main():
                     lineNumber=str(line["line"]),
                     covered="true" if line.get("executionCount", 0) > 0 else "false",
                 )
+
         ET.ElementTree(root).write(args.sonar_out, encoding="utf-8", xml_declaration=True)
-        print(f"\nWrote Sonar coverage to {args.sonar_out}")
+        print(f"\nWrote Sonar coverage for {len(root)} file(s) to {args.sonar_out}")
         if skipped:
             print(f"  ({len(skipped)} file(s) had no line-level data and were omitted)")
 
