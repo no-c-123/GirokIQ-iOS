@@ -24,6 +24,9 @@ final class AuthViewModel: ObservableObject {
 
     @Published var displayName: String = "User"
     @Published var subscriptionTier: AppSubscriptionTier = .free
+    /// Role asserted by the `user_role` claim in the access token.
+    /// Presentation only — see the note on `AppUserRole`.
+    @Published var currentUserRole: AppUserRole = .user
 
     let syncMonitor: SyncEngine
     private let localDatabase: LocalDatabase
@@ -75,11 +78,28 @@ final class AuthViewModel: ObservableObject {
 
         isAuthenticated = true
 
+        // Every sign-in path funnels through applyUser, so this is the single
+        // place the role has to be read.
+        Task { await refreshUserRole() }
+
         if !Configuration.cloudSyncEnabled {
             Task.detached(priority: .utility) {
                 try? await LocalDatabase.shared.markAllSyncChangesAsSynced()
             }
         }
+    }
+
+    /// Re-reads the role claim from the current access token.
+    ///
+    /// Supabase re-mints the token on refresh, so a role changed on the server
+    /// reaches the app on the next refresh without forcing a sign-out. Any
+    /// failure resolves to `.user`, matching AppUserRole's fail-closed contract.
+    func refreshUserRole() async {
+        guard let session = try? await supabase.auth.session, !session.isExpired else {
+            currentUserRole = .user
+            return
+        }
+        currentUserRole = AppUserRole.from(accessToken: session.accessToken)
     }
 
     private func resolvedDisplayName(from user: Auth.User) -> String? {
@@ -100,6 +120,7 @@ final class AuthViewModel: ObservableObject {
         currentUserEmail = nil
         displayName = "User"
         subscriptionTier = .free
+        currentUserRole = .user
         AppSubscriptionTier.persisted = .free
         isSyncing = false
         isAuthenticated = false
