@@ -100,7 +100,7 @@ desde el principio:
 | Elemento | Motivo |
 | --- | --- |
 | Roles de administrador y usuario en el JWT | Requisito de esta actividad |
-| Panel de administración con métricas de plataforma | Extensión del anterior: el rol necesitaba una función visible que lo justificara |
+| Panel de administración con métricas de plataforma | Extensión del anterior: el rol necesitaba una función visible que lo justificara. Desplegado y verificado en producción |
 | Análisis con SonarQube Cloud | Requisito de esta actividad |
 | Escaneo de seguridad con OWASP ZAP | Requisito de esta actividad |
 | Despliegue automático a TestFlight | Requisito de esta actividad; el plan lo contemplaba como paso manual de la semana 12 |
