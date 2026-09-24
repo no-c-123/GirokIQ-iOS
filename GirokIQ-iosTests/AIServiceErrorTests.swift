@@ -5,7 +5,7 @@ import XCTest
 /// timeout but surfaces every other failure. That hinges on isTimeout.
 final class AIServiceErrorTests: XCTestCase {
 
-    func testRecognisesAURLTimeout() {
+    func testRecognisesTimeoutFromURLLoading() {
         XCTAssertTrue(AIError.isTimeout(URLError(.timedOut)))
     }
 
