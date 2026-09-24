@@ -33,3 +33,7 @@ supabase/.temp/
 # Common secret files
 .env
 .env.*
+
+# Python caches from Scripts/
+__pycache__/
+*.py[cod]
