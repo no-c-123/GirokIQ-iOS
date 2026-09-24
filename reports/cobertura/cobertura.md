@@ -14,4 +14,4 @@
 
 | Target | Coverage |
 | --- | ---: |
-| GirokIQ-ios.app | 4.7% |
+| GirokIQ-ios.app | 4.6% |

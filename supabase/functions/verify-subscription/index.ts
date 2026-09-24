@@ -17,7 +17,10 @@ const appleRootCertURLs = [
 
 let appleRootCertsPromise: Promise<Buffer[]> | null = null;
 function loadAppleRootCertificates(): Promise<Buffer[]> {
-  if (appleRootCertsPromise) return appleRootCertsPromise;
+  // Memoised on purpose: the check is for an in-flight promise, not for a
+  // resolved value. Comparing against null says so explicitly, since a bare
+  // truthiness test on a promise usually means a forgotten await.
+  if (appleRootCertsPromise !== null) return appleRootCertsPromise;
 
   appleRootCertsPromise = Promise.all(
     appleRootCertURLs.map(async (url) => {

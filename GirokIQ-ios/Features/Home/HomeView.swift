@@ -2101,7 +2101,7 @@ struct SidebarPanelView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, GSpacing.md)
             .padding(.bottom, GSpacing.md)
-            .safeAreaPadding(.top, isPersistent ? GSpacing.md : GSpacing.md)
+            .safeAreaPadding(.top, GSpacing.md)
         }
         .scrollIndicators(.hidden)
         .frame(maxHeight: .infinity, alignment: .top)

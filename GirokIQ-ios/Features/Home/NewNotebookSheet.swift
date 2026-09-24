@@ -38,7 +38,8 @@ struct NewNotebookSheet: View {
         colorScheme == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.08)
     }
 
-    private var labelColor: Color { colorScheme == .dark ? .gTextSecondary : .gTextSecondary }
+    // Same token in both schemes; gTextSecondary is already adaptive.
+    private var labelColor: Color { .gTextSecondary }
 
     private var previewTitle: String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
