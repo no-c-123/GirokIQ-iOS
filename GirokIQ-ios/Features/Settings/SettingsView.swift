@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountErrorMessage: String?
     @State private var showEditDisplayName = false
+    @State private var showAdminDashboard = false
     @State private var editedDisplayName = ""
     @State private var isUpdatingDisplayName = false
     @State private var displayNameErrorMessage: String?
@@ -53,6 +54,9 @@ struct SettingsView: View {
                 aboutSection
             }
             .listStyle(.insetGrouped)
+            .fullScreenCover(isPresented: $showAdminDashboard) {
+                AdminDashboardView()
+            }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -145,10 +149,14 @@ struct SettingsView: View {
 
     var adminSection: some View {
         Section {
-            NavigationLink {
-                AdminOverviewView()
+            // Opens full screen rather than pushing inside this sheet: the
+            // dashboard is a tool of its own, and a chart squeezed into a
+            // settings sheet reads like a settings row.
+            Button {
+                showAdminDashboard = true
             } label: {
-                Label("Administration", systemImage: "person.2.badge.gearshape")
+                Label("Open dashboard", systemImage: "chart.bar.doc.horizontal")
+                    .foregroundColor(.gTextPrimary)
             }
         } header: {
             Text("Administration")

@@ -4,8 +4,8 @@
 
 | Métrica | Valor |
 | --- | ---: |
-| Pruebas ejecutadas | 74 |
-| Aprobadas | 74 |
+| Pruebas ejecutadas | 89 |
+| Aprobadas | 89 |
 | Fallidas | 0 |
 | Omitidas | 0 |
 
@@ -22,6 +22,35 @@ producido por `xcodebuild test`.
 | Errors Carry A User Facing Description | ✅ Passed |
 | Other URL Errors Are Not Timeouts | ✅ Passed |
 | Recognises Timeout From URL Loading | ✅ Passed |
+
+## AdminDailyMetricTests
+
+6 de 6 pruebas aprobadas.
+
+| Prueba | Resultado |
+| --- | --- |
+| A Malformed Date Throws | ✅ Passed |
+| A Missing Date Throws | ✅ Passed |
+| A Quiet Day Decodes As Zeros | ✅ Passed |
+| Decodes A Postgres Date | ✅ Passed |
+| Round Trips Through Codable | ✅ Passed |
+| The Day Is Parsed In UTC Not Local Time | ✅ Passed |
+
+## AdminPlatformStatsTests
+
+9 de 9 pruebas aprobadas.
+
+| Prueba | Resultado |
+| --- | --- |
+| Active Share Is Clamped To One | ✅ Passed |
+| An Empty Platform Decodes As Zeros | ✅ Passed |
+| Average Pages Per Notebook | ✅ Passed |
+| Decodes A Complete Row | ✅ Passed |
+| Null Aggregates Decode As Zeros | ✅ Passed |
+| Pro Share Is The Fraction Of Paid Accounts | ✅ Passed |
+| Shares Are Zero When There Are No Accounts | ✅ Passed |
+| Storage Bytes Survives Values Beyond Int32 | ✅ Passed |
+| Storage Label Is Human Readable | ✅ Passed |
 
 ## AdminUserOverviewRowTests
 

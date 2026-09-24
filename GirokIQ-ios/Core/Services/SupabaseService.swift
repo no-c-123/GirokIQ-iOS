@@ -297,6 +297,28 @@ final class SupabaseService {
             .value
     }
 
+    /// Platform-level aggregates for the administrator dashboard.
+    ///
+    /// The function returns a single row; PostgREST still sends it as an array,
+    /// so the first element is taken and an empty result yields zeros rather
+    /// than an error. A brand-new deployment with no data is not a failure.
+    func fetchAdminPlatformStats() async throws -> AdminPlatformStats {
+        let rows: [AdminPlatformStats] = try await supabase
+            .rpc("admin_platform_stats")
+            .execute()
+            .value
+        return rows.first ?? AdminPlatformStats()
+    }
+
+    /// Daily series for the dashboard chart. The function clamps `days` to
+    /// 1...365 server-side.
+    func fetchAdminDailyMetrics(days: Int = 30) async throws -> [AdminDailyMetric] {
+        try await supabase
+            .rpc("admin_daily_metrics", params: ["days": days])
+            .execute()
+            .value
+    }
+
     // MARK: - Canvas Images
 
     func uploadCanvasImage(data: Data, path: String, contentType: String = "image/jpeg") async throws {

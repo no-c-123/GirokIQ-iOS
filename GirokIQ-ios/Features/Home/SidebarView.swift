@@ -14,6 +14,7 @@ struct SidebarView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var showSettings = false
+    @State private var showAdminDashboard = false
     @State private var folderToRename: Folder?
     @State private var renameFolderText = ""
     @State private var showArchiveExporter = false
@@ -112,6 +113,19 @@ struct SidebarView: View {
 
             // MARK: - Actions
             Section {
+                // Administration is a top-level destination, not a setting:
+                // it is a different job from configuring the app, so it opens
+                // full screen instead of inside the settings sheet.
+                if authViewModel.currentUserRole.isAdministrator {
+                    Button {
+                        showAdminDashboard = true
+                    } label: {
+                        Label("Administration", systemImage: "chart.bar.doc.horizontal")
+                            .foregroundColor(.gTextPrimary)
+                    }
+                    .accessibilityHint("Double tap to open the administrator dashboard")
+                }
+
                 Button {
                     showSettings = true
                 } label: {
@@ -131,6 +145,9 @@ struct SidebarView: View {
         ) { _ in }
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .fullScreenCover(isPresented: $showAdminDashboard) {
+            AdminDashboardView()
         }
         .alert("Rename Folder", isPresented: Binding(
             get: { folderToRename != nil },
