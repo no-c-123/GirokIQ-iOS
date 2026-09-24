@@ -1,0 +1,12 @@
+# ZAP baseline rule overrides.
+# Format: <rule id>	<WARN|IGNORE|FAIL>	<comment>
+#
+# Every rule not listed here keeps its default (WARN). Nothing is set to FAIL,
+# because the endpoints under scan are a managed Supabase project: a finding
+# here is something to read and judge, not something that should break a build
+# over infrastructure we do not control.
+
+10015	WARN	Re-examine cache-control directives on API responses
+10027	WARN	Information disclosure in comments
+10096	WARN	Timestamp disclosure - usually a false positive on JWT exp/iat values
+10109	WARN	Modern web application detection

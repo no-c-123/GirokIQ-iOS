@@ -1,0 +1,58 @@
+name: Security scan
+
+# Run on demand and weekly, never on every push.
+#
+# The target is the project's live Supabase endpoints, which are the only
+# internet-facing surface the app has: the iOS binary itself is not something
+# ZAP can scan. Scanning a managed third-party host on every commit would be
+# noisy and rude, so this is deliberately infrequent.
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Base URL to scan"
+        required: false
+        default: "https://bapqxqydqzopbpjrpnna.supabase.co"
+  schedule:
+    # Mondays at 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  zap-baseline:
+    name: OWASP ZAP baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Run the ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: ${{ github.event.inputs.target || 'https://bapqxqydqzopbpjrpnna.supabase.co' }}
+          rules_file_name: .zap/rules.tsv
+          # -I: do not fail the job on warnings. The report is the deliverable;
+          #     what counts as acceptable here is a judgement call, not a gate.
+          # -j: use the AJAX spider as well, for anything rendered client-side.
+          cmd_options: "-I -j"
+          allow_issue_writing: false
+          artifact_name: zap-baseline-report
+
+      - name: Summarise the findings
+        if: always()
+        run: |
+          set -uo pipefail
+          if [ -f report_md.md ]; then
+            {
+              echo "## OWASP ZAP baseline"
+              echo
+              sed -n '1,120p' report_md.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No Markdown report was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
