@@ -177,3 +177,190 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
+
+  deploy:
+    name: Deploy to TestFlight
+    needs: test
+    # Only from main, and only when the tests passed. A build that fails its
+    # tests must never reach a tester.
+    if: |
+      needs.test.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    env:
+      ARCHIVE_PATH: build/GirokIQ-ios.xcarchive
+      EXPORT_PATH: build/export
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Select the newest available Xcode
+        run: |
+          set -euo pipefail
+          newest=""
+          newest_version="0"
+          for app in /Applications/Xcode*.app; do
+            version=$("$app/Contents/Developer/usr/bin/xcodebuild" -version 2>/dev/null | head -1 | awk '{print $2}') || continue
+            [ -z "$version" ] && continue
+            if [ "$(printf '%s\n%s\n' "$version" "$newest_version" | sort -V | tail -1)" = "$version" ]; then
+              newest="$app"
+              newest_version="$version"
+            fi
+          done
+          if [ -z "$newest" ]; then
+            echo "::error::No Xcode installation found on the runner."
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$newest/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Install the App Store Connect API key
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          for name in KEY_ID KEY_P8_BASE64; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Secret $name is not set. See Docs/Despliegue.md."
+              exit 1
+            fi
+          done
+
+          # altool looks for the key by this exact name in one of a few fixed
+          # directories; xcodebuild is given the path explicitly.
+          key_dir="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$key_dir"
+          key_path="$key_dir/AuthKey_${KEY_ID}.p8"
+          printf '%s' "$KEY_P8_BASE64" | base64 --decode > "$key_path"
+          chmod 600 "$key_path"
+
+          if ! grep -q "BEGIN PRIVATE KEY" "$key_path"; then
+            echo "::error::The decoded key is not a PEM private key. Re-encode the .p8 with: base64 -i AuthKey_XXX.p8"
+            exit 1
+          fi
+          echo "ASC_KEY_PATH=$key_path" >> "$GITHUB_ENV"
+
+      - name: Archive the app
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # -allowProvisioningUpdates with the API key lets xcodebuild fetch or
+          # create the signing assets itself, so no distribution certificate or
+          # provisioning profile has to be stored as a secret.
+          #
+          # App Store Connect rejects a build number it has already seen, so the
+          # workflow run number is used: it only ever increases.
+          xcodebuild archive \
+            -project "$PROJECT" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$ARCHIVE_PATH" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            | { command -v xcbeautify >/dev/null 2>&1 && xcbeautify --renderer github-actions || cat; }
+
+      - name: Export a signed build
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          # method must be app-store-connect for TestFlight. The checked-in
+          # ExportOptions.plist from the manual archive uses release-testing,
+          # which is the ad-hoc equivalent and cannot be uploaded.
+          cat > build/ExportOptions.plist <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key>
+            <string>app-store-connect</string>
+            <key>destination</key>
+            <string>export</string>
+            <key>signingStyle</key>
+            <string>automatic</string>
+            <key>teamID</key>
+            <string>965LN23U3C</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>uploadSymbols</key>
+            <true/>
+          </dict>
+          </plist>
+          PLIST
+
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE_PATH" \
+            -exportPath "$EXPORT_PATH" \
+            -exportOptionsPlist build/ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$ASC_KEY_PATH" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            | { command -v xcbeautify >/dev/null 2>&1 && xcbeautify --renderer github-actions || cat; }
+
+          ls -la "$EXPORT_PATH"
+
+      - name: Validate the build before uploading
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          ipa=$(find "$EXPORT_PATH" -name '*.ipa' -maxdepth 1 | head -1)
+          [ -n "$ipa" ] || { echo "::error::No .ipa was produced."; exit 1; }
+          echo "IPA_PATH=$ipa" >> "$GITHUB_ENV"
+
+          # Validation catches most rejections (entitlements, icons, Info.plist)
+          # before a build number is consumed.
+          xcrun altool --validate-app \
+            --type ios \
+            --file "$ipa" \
+            --apiKey "$KEY_ID" \
+            --apiIssuer "$ISSUER_ID"
+
+      - name: Upload to TestFlight
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA_PATH" \
+            --apiKey "$KEY_ID" \
+            --apiIssuer "$ISSUER_ID"
+
+          {
+            echo "## Deployed to TestFlight"
+            echo
+            echo "| | |"
+            echo "| --- | --- |"
+            echo "| Build number | ${{ github.run_number }} |"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo
+            echo "App Store Connect takes a few minutes to process the build."
+            echo "Internal testers receive it without review; external testers"
+            echo "need Beta App Review."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the build as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ipa-build-${{ github.run_number }}
+          path: |
+            build/export/*.ipa
+            build/export/*.plist
+          retention-days: 30
+          if-no-files-found: warn
