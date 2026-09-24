@@ -2,6 +2,10 @@ import UIKit
 
 // MARK: - BackgroundPatternView
 
+final class NoFadeTiledLayer: CATiledLayer {
+    override class func fadeDuration() -> CFTimeInterval { 0 }
+}
+
 /// CATiledLayer-backed UIView that renders the canvas background pattern.
 ///
 /// **Critical:** The frame must be set exactly once at init and never changed.
@@ -23,7 +27,7 @@ final class BackgroundPatternView: UIView {
         }
     }
 
-    override class var layerClass: AnyClass { CATiledLayer.self }
+    override class var layerClass: AnyClass { NoFadeTiledLayer.self }
 
     // Safe: layerClass is CATiledLayer.self, so this cast always succeeds
     private var tiledLayer: CATiledLayer { layer as! CATiledLayer } // swiftlint:disable:this force_cast
@@ -35,8 +39,8 @@ final class BackgroundPatternView: UIView {
         isUserInteractionEnabled = false
 
         tiledLayer.levelsOfDetail = 6
-        tiledLayer.levelsOfDetailBias = 3
-        tiledLayer.tileSize = CGSize(width: 512, height: 512)
+        tiledLayer.levelsOfDetailBias = 2
+        tiledLayer.tileSize = CGSize(width: 1024, height: 1024)
     }
 
     required init?(coder: NSCoder) { fatalError() }

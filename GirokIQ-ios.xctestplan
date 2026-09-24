@@ -1,0 +1,39 @@
+{
+  "configurations" : [
+    {
+      "id" : "077E10D8-531E-453D-B525-47023CE961F1",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "codeCoverage" : {
+      "targets" : [
+        {
+          "containerPath" : "container:GirokIQ-ios.xcodeproj",
+          "identifier" : "4C56BD742F7A6E4B00179FAA",
+          "name" : "GirokIQ-ios"
+        }
+      ]
+    },
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:GirokIQ-ios.xcodeproj",
+      "identifier" : "4C56BD742F7A6E4B00179FAA",
+      "name" : "GirokIQ-ios"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:GirokIQ-ios.xcodeproj",
+        "identifier" : "4CE57E032F00A00100000003",
+        "name" : "GirokIQ-iosTests"
+      }
+    }
+  ],
+  "version" : 1
+}

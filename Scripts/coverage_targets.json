@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "Files whose coverage is gated in CI. Xcode only reports coverage per target,",
+    "and this app is a single SwiftUI target where the views cannot be unit tested,",
+    "so gating the whole target would measure how much UI exists rather than how well",
+    "the tested logic is covered. Add a file here as soon as it has tests; the gate",
+    "then keeps it covered.",
+    "Whole-target coverage is still printed by coverage_report.py for context."
+  ],
+  "threshold": 80,
+  "files": [
+    "GirokIQ-ios/Core/Models/AdminUserOverviewRow.swift",
+    "GirokIQ-ios/Core/Models/AppState.swift",
+    "GirokIQ-ios/Core/Models/AppUserRole.swift",
+    "GirokIQ-ios/Features/Flashcards/FlashcardsModels.swift"
+  ]
+}

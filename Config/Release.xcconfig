@@ -1,0 +1,17 @@
+// GirokIQ release build configuration
+//
+// This file is intentionally safe to commit.
+// Secrets are injected by local Xcode build settings / Xcode Cloud environment variables.
+//
+// Keep this file present in the repository because the Xcode project references it
+// as a base configuration file for Release builds.
+//
+// Local secrets and overrides live in the git-ignored Config/Secrets.xcconfig,
+// pulled in below. The `?` makes the include optional so builds still succeed when
+// the file is absent (CI without local overrides, fresh clones, etc.).
+#include? "Secrets.xcconfig"
+
+// Supabase public client config (safe to ship).
+// Override in `Secrets.xcconfig` if you need different environments.
+SUPABASE_URL = https://bapqxqydqzopbpjrpnna.supabase.co
+SUPABASE_ANON_KEY = sb_publishable_423Dnw91Y5cLpTMC7wCuMA_3cAuqY-t

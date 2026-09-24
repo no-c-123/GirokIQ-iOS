@@ -60,7 +60,7 @@ struct Page: Codable, Identifiable, Hashable {
 
 // MARK: - Page Settings (jsonb column)
 
-struct PageSettings: Codable, Hashable {
+nonisolated struct PageSettings: Codable, Hashable {
     var backgroundPattern: String?   // "grid" | "dots" | "lines" | "blank" | "isometric"
     var zoomScale: Double?
     var drawingData: String?         // base64-encoded PKDrawing (iOS only)

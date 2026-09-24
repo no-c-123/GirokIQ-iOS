@@ -24,14 +24,21 @@ final class BiometricAuthService {
         return context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
     }
 
+    /// Whether the device can authenticate with biometrics or device passcode.
+    func canAuthenticate() -> Bool {
+        let context = LAContext()
+        var error: NSError?
+        return context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error)
+    }
+
     /// Prompt the user for biometric authentication. Returns `true` on success.
     func authenticate() async -> Bool {
         let context = LAContext()
-        context.localizedCancelTitle = "Use Passcode"
+        context.localizedCancelTitle = "Cancel"
 
         return await withCheckedContinuation { continuation in
             context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
+                .deviceOwnerAuthentication,
                 localizedReason: "Unlock GirokIQ"
             ) { success, _ in
                 continuation.resume(returning: success)

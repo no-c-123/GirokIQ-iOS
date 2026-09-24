@@ -20,6 +20,20 @@ DerivedData/
 Config/Debug.xcconfig
 Config/Release.xcconfig
 *.xcconfig
+!Config/
+!Config/Debug.xcconfig
+!Config/Release.xcconfig
 
 # DS_Store
 .DS_Store
+
+# Supabase CLI / local artifacts
+supabase/.temp/
+
+# Common secret files
+.env
+.env.*
+
+# Python caches from Scripts/
+__pycache__/
+*.py[cod]

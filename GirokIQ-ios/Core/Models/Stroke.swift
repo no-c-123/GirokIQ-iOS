@@ -2,38 +2,12 @@ import Foundation
 import CoreGraphics
 import SwiftUI
 
-// MARK: - Remote Stroke (matches Supabase `strokes` table)
-
-struct RemoteStroke: Codable, Identifiable {
-    let id: UUID
-    let pageId: UUID
-    let userId: UUID
-    var color: String
-    var width: Double
-    var points: Data            // bytea
-    let createdAt: Date
-    var updatedAt: Date
-    var deleted: Bool
-    var deviceId: String?
-
-    enum CodingKeys: String, CodingKey {
-        case id
-        case pageId = "page_id"
-        case userId = "user_id"
-        case color, width, points
-        case createdAt = "created_at"
-        case updatedAt = "updated_at"
-        case deleted
-        case deviceId = "device_id"
-    }
-}
-
 // MARK: - Local Stroke (in-memory drawing state for Core Graphics canvas)
 
 /// In-memory representation of a stroke being drawn or displayed on the canvas.
 /// This is a canvas-layer rendering model — it uses `Color` and `CGFloat` because
 /// it's consumed exclusively by canvas drawing code (DrawingCanvasView, CanvasViewModel).
-/// Not used for persistence; `RemoteStroke` is the sync/persistence model.
+/// Not used for persistence; native sync uses page-level PKDrawing blobs.
 class Stroke: Identifiable {
     var id: UUID = UUID()
     var points: [StrokePoint] = []
@@ -82,8 +56,8 @@ enum DrawingTool: String, CaseIterable, Codable {
     case eraser
     case lasso
     case selection
-    case text
     case image
+    case text
 
     var icon: String {
         switch self {
@@ -93,8 +67,8 @@ enum DrawingTool: String, CaseIterable, Codable {
         case .eraser:    return "eraser"
         case .lasso:     return "lasso"
         case .selection: return "arrow.up.left.and.arrow.down.right"
-        case .text:      return "textformat"
         case .image:     return "photo"
+        case .text:      return "textformat"
         }
     }
 
@@ -106,8 +80,8 @@ enum DrawingTool: String, CaseIterable, Codable {
         case .eraser:    return "Eraser"
         case .lasso:     return "Lasso"
         case .selection: return "Select"
-        case .text:      return "Text"
         case .image:     return "Image"
+        case .text:      return "Text"
         }
     }
 
@@ -119,8 +93,8 @@ enum DrawingTool: String, CaseIterable, Codable {
         case .eraser:    return 20.0
         case .lasso:     return 1.0
         case .selection: return 1.0
-        case .text:      return 1.0
         case .image:     return 1.0
+        case .text:      return 1.0
         }
     }
 
@@ -128,6 +102,16 @@ enum DrawingTool: String, CaseIterable, Codable {
         switch self {
         case .marker:  return 0.4
         default:       return 1.0
+        }
+    }
+
+    /// Tools that lay down ink or erase it. While one of these is active the
+    /// block overlay must let pencil touches fall through to PencilKit so the
+    /// user can draw/erase freely over image and text blocks.
+    var isInkOrEraser: Bool {
+        switch self {
+        case .pen, .pencil, .marker, .eraser: return true
+        default:                              return false
         }
     }
 }

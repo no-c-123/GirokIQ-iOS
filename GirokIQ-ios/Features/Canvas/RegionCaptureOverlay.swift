@@ -4,6 +4,7 @@ struct RegionCaptureOverlay: View {
     @ObservedObject var canvasVM: CanvasViewModel
     @ObservedObject var aiVM: AIChatViewModel
     @Binding var showAIPanel: Bool
+    var onInlineAI: ((CGRect, Data) -> Void)? = nil
 
     @State private var startPoint: CGPoint? = nil
     @State private var currentPoint: CGPoint? = nil
@@ -123,13 +124,22 @@ struct RegionCaptureOverlay: View {
         
         if let data = image.pngData() {
             canvasVM.isRegionCaptureMode = false
-            
-            // Open AI panel if not open
-            if !showAIPanel {
-                showAIPanel = true
+            let canvasRect = CGRect(
+                x: (rect.minX + canvasVM.canvasOffset.width) / max(canvasVM.canvasScale, 0.001),
+                y: (rect.minY + canvasVM.canvasOffset.height) / max(canvasVM.canvasScale, 0.001),
+                width: rect.width / max(canvasVM.canvasScale, 0.001),
+                height: rect.height / max(canvasVM.canvasScale, 0.001)
+            )
+
+            if let onInlineAI {
+                onInlineAI(canvasRect, data)
+            } else {
+                // Fallback to the original behavior: attach to chat panel
+                if !showAIPanel {
+                    showAIPanel = true
+                }
+                aiVM.attachedImageData = data
             }
-            
-            aiVM.attachedImageData = data
         }
     }
 }

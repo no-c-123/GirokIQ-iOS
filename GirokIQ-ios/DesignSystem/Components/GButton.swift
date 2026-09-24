@@ -8,10 +8,12 @@ struct GButton: View {
     let style: Style
     var isLoading: Bool = false
     var isDisabled: Bool = false
+    var fullWidth: Bool = true
     let action: () -> Void
 
     enum Style {
         case primary
+        case solidGold
         case secondary
         case destructive
         case ghost
@@ -30,7 +32,7 @@ struct GButton: View {
                         .foregroundColor(foregroundColor)
                 }
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: fullWidth ? .infinity : nil)
             .frame(height: 50)
         }
         .disabled(isDisabled || isLoading)
@@ -53,6 +55,9 @@ struct GButton: View {
                         endPoint: .trailing
                     )
                 )
+        case .solidGold:
+            RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
+                .fill(Color.gPrimary)
         case .secondary:
             RoundedRectangle(cornerRadius: GRadius.sm, style: .continuous)
                 .fill(Color.gPrimary.opacity(0.15))
@@ -71,7 +76,7 @@ struct GButton: View {
 
     private var foregroundColor: Color {
         switch style {
-        case .primary, .destructive:
+        case .primary, .solidGold, .destructive:
             return .white
         case .secondary:
             return .gPrimary

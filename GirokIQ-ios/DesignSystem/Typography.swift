@@ -27,6 +27,11 @@ extension Font {
     static let gIconSmall   = Font.system(size: 14, weight: .semibold)
     static let gIconMedium  = Font.system(size: 15, weight: .medium)
     static let gIconLarge   = Font.system(size: 16, weight: .medium)
+
+    // Brand serif display tokens
+    static let gSerifTitle   = Font.custom("InstrumentSerif-Regular", size: 22)
+    static let gDisplaySerif = Font.custom("InstrumentSerif-Regular", size: 28)
+    static let gScoreSerif   = Font.custom("InstrumentSerif-Regular", size: 44)
 }
 
 // MARK: - Monospaced variant for numeric displays

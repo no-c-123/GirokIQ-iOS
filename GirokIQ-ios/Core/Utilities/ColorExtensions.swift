@@ -19,11 +19,39 @@ extension Color {
     }
 
     var hexString: String {
-        let components = UIColor(self).cgColor.components ?? [0, 0, 0, 1]
-        let r = Int((components[0]) * 255)
-        let g = Int((components[1]) * 255)
-        let b = Int((components[2]) * 255)
-        return String(format: "#%02X%02X%02X", r, g, b)
+        let ui = UIColor(self)
+
+        func byte(_ x: CGFloat) -> Int {
+            Int((x * 255).rounded()).clamped(to: 0...255)
+        }
+
+        var rF: CGFloat = 0
+        var gF: CGFloat = 0
+        var bF: CGFloat = 0
+        var aF: CGFloat = 1
+
+        // Prefer getRed(...) because it reliably converts to sRGB and avoids
+        // precision issues that can happen when reading cgColor.components.
+        if ui.getRed(&rF, green: &gF, blue: &bF, alpha: &aF) {
+            return String(format: "#%02X%02X%02X", byte(rF), byte(gF), byte(bF))
+        }
+
+        let components = ui.cgColor.components ?? [0, 0, 0, 1]
+        if components.count >= 3 {
+            rF = components[0]
+            gF = components[1]
+            bF = components[2]
+        } else if components.count == 2 {
+            rF = components[0]
+            gF = components[0]
+            bF = components[0]
+        } else {
+            rF = 0
+            gF = 0
+            bF = 0
+        }
+
+        return String(format: "#%02X%02X%02X", byte(rF), byte(gF), byte(bF))
     }
 }
 
@@ -74,6 +102,12 @@ extension UIColor {
 
     // Semantic
     static let gDestructive   = UIColor(hex: "#F87171")
+    static let gTextPrimary = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? .white : UIColor(hex: "#0D0D0F")
+    }
+    static let gTextSecondary = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? UIColor(white: 0.72, alpha: 1) : UIColor(hex: "#4B5563")
+    }
 
     // Borders
     static let gBorder = UIColor { traits in

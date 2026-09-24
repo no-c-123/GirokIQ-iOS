@@ -1,136 +1,383 @@
 import SwiftUI
 import UIKit
+import Photos
+
+enum TextElementMetrics {
+    static let editorInsets = UIEdgeInsets(top: 8, left: 4, bottom: 8, right: 4)
+    static let selectedHandleTopPadding: CGFloat = 22
+    static let selectedHandleYOffsetCompensation: CGFloat = selectedHandleTopPadding / 2
+    static let caretBottomAllowance: CGFloat = 4
+}
 
 /// A transparent overlay that sits on top of PKCanvasView to render and manage 
 /// non-ink CanvasElements (Text, Images, etc.)
 struct BlockOverlayView: View {
     @ObservedObject var viewModel: CanvasViewModel
-    @State private var lassoStart: CGPoint? = nil
-    @State private var lassoRect: CGRect? = nil
+
+    /// Named coordinate space pinned to the block overlay root — i.e. canvas space.
+    /// Gestures that mutate element.positionX/Y must measure translations here.
+    static let canvasSpaceName = "girokBlockOverlayCanvasSpace"
+
 
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .topLeading) {
-                // Tap empty canvas to deselect
+                // Tap empty canvas to deselect and show toolbar
                 Color.clear
                     .contentShape(Rectangle())
-                    .onTapGesture {
-                        viewModel.selectedElementIds = []
-                        UIApplication.shared.sendAction(
-                            #selector(UIResponder.resignFirstResponder),
-                            to: nil, from: nil, for: nil
-                        )
+                    .onTapGesture { location in
+                        // If the tap lands on an existing element, let that element's own
+                        // gestures handle it. This background tap is for truly empty canvas only.
+                        let hitExistingElement = viewModel.pages[viewModel.currentPageIndex].elements.contains { element in
+                            let w = CGFloat(element.width ?? 200)
+                            let h = CGFloat(element.height ?? 200)
+                            var rect = CGRect(x: element.positionX, y: element.positionY, width: w, height: h)
+                            let showsDirectSelectionChrome =
+                                viewModel.selectedElementIds.contains(element.id) &&
+                                !viewModel.isLassoSelectionActive
+                            if showsDirectSelectionChrome {
+                                rect = rect.insetBy(dx: -18, dy: -18)
+                                rect.origin.y -= 58
+                                rect.size.height += 76
+                                if element.type == "text" {
+                                    rect.origin.y -= TextElementMetrics.selectedHandleTopPadding
+                                    rect.size.height += TextElementMetrics.selectedHandleTopPadding
+                                }
+                            }
+                            return rect.contains(location)
+                        }
+                        guard !hitExistingElement else { return }
+
+                        if viewModel.selectedTool == .text {
+                            if viewModel.selectedElementIds.isEmpty {
+                                // Nothing selected — place a new text block
+                                let canvasX = location.x
+                                let canvasY = location.y
+                                viewModel.addTextElement(at: CGPoint(x: canvasX, y: canvasY))
+                            } else {
+                                // Something is selected — dismiss keyboard, deselect, then
+                                // immediately place a new block at the tap location.
+                                // This matches GoodNotes: every tap with the text tool places
+                                // a block; it never wastes a tap on a "deselect only" step.
+                                UIApplication.shared.sendAction(
+                                    #selector(UIResponder.resignFirstResponder),
+                                    to: nil, from: nil, for: nil
+                                )
+                                viewModel.selectedElementIds = []
+                                let canvasX = location.x
+                                let canvasY = location.y
+                                viewModel.addTextElement(at: CGPoint(x: canvasX, y: canvasY))
+                            }
+                        } else if viewModel.selectedTool == .image {
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil, from: nil, for: nil
+                            )
+                            viewModel.beginImageInsertion(at: location)
+                        } else {
+                            // Resign keyboard FIRST before clearing selection
+                            // so UITextView has a chance to commit its content
+                            UIApplication.shared.sendAction(
+                                #selector(UIResponder.resignFirstResponder),
+                                to: nil, from: nil, for: nil
+                            )
+                            viewModel.selectedElementIds = []
+                            if !viewModel.isToolbarVisible {
+                                viewModel.showToolbar()
+                            }
+                        }
                     }
 
-                // Lasso selection rect
-                if let rect = lassoRect {
-                    Rectangle()
-                        .stroke(Color.blue.opacity(0.7), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
-                        .background(Color.blue.opacity(0.06))
-                        .frame(width: rect.width, height: rect.height)
-                        .position(x: rect.midX, y: rect.midY)
+
+
+                ForEach(viewModel.pages[viewModel.currentPageIndex].elements) { element in
+                    BlockElementView(element: element, viewModel: viewModel)
+                        .opacity(
+                            (viewModel.isPreviewingLassoMove || viewModel.isPreviewingLassoResize) &&
+                            viewModel.selectedElementIds.contains(element.id)
+                                ? 0
+                                : 1
+                        )
+                }
+                
+                if let highlightRect = viewModel.inlineAIHighlightRect {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color.gPrimary.opacity(0.16))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(Color.gPrimary.opacity(0.95), lineWidth: 2)
+                        )
+                        .frame(width: highlightRect.width, height: highlightRect.height)
+                        .position(x: highlightRect.midX, y: highlightRect.midY)
+                        .shadow(color: Color.gPrimary.opacity(0.14), radius: 8, y: 2)
                         .allowsHitTesting(false)
                 }
 
-                ForEach($viewModel.pages[viewModel.currentPageIndex].elements) { $element in
-                    BlockElementView(element: $element, viewModel: viewModel)
+                if viewModel.selectedTool == .image,
+                   let insertionPoint = viewModel.pendingImageInsertionPoint {
+                    ImageInsertionPlaceholderView(viewModel: viewModel, center: insertionPoint)
                 }
 
-                if viewModel.isResizing, let bbox = viewModel.selectionBoundingBox {
-                    SelectionResizeOverlay(viewModel: viewModel, boundingBox: bbox)
-                }
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
-            // CORRECT transform: scale from top-left, then shift by raw scroll offset
-            .scaleEffect(viewModel.canvasScale, anchor: .topLeading)
-            .offset(
-                x: -viewModel.canvasOffset.width,
-                y: -viewModel.canvasOffset.height
-            )
-            // NO .animation() modifiers here — overlay must track canvas with zero latency
+            .coordinateSpace(name: BlockOverlayView.canvasSpaceName)
+            // No transform — backgroundScrollView handles scroll/zoom automatically
         }
     }
 }
 
-struct SelectionResizeOverlay: View {
-    @ObservedObject var viewModel: CanvasViewModel
-    let boundingBox: CGRect
 
-    @GestureState private var resizeDelta: CGSize = .zero
 
-    // Live-preview scaled box during drag
-    var liveScale: CGFloat {
-        guard boundingBox.width > 0 else { return 1 }
-        let draggedWidth = boundingBox.width + resizeDelta.width
-        return max(0.1, draggedWidth / boundingBox.width)
+// MARK: - TextEditorView (UIViewRepresentable replacing UIViewControllerRepresentable)
+
+/// Hosts a UITextView directly as a UIViewRepresentable.
+/// Using UIViewRepresentable instead of UIViewControllerRepresentable avoids
+/// UIViewController containment, which fights CATransform3D applied to the
+/// UIHostingController parent during pan/zoom — causing text blocks to disappear.
+struct ScribbleFreeTextEditor: UIViewRepresentable {
+    @Binding var text: String
+    var fontSize: CGFloat
+    var textColor: UIColor
+    var fontName: String?
+    var isBold: Bool
+    var isItalic: Bool
+    var isUnderline: Bool
+    var isStrikethrough: Bool
+    var lineSpacing: CGFloat
+    var textAlignment: NSTextAlignment
+    var isEditable: Bool
+    var isUserResized: Bool
+    var fixedWidth: CGFloat
+    var onEditingBegan: () -> Void
+    var onEditingEnded: () -> Void
+    var onNaturalSizeChanged: (CGSize) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
     }
 
-    var liveBox: CGRect {
-        CGRect(
-            x: boundingBox.minX,
-            y: boundingBox.minY,
-            width: max(40, boundingBox.width  * liveScale),
-            height: max(40, boundingBox.height * liveScale)
+    func makeUIView(context: Context) -> PassthroughTextView {
+        let tv = PassthroughTextView()
+        tv.backgroundColor = .clear
+        tv.isScrollEnabled = false
+        tv.textContainerInset = TextElementMetrics.editorInsets
+        tv.delegate = context.coordinator
+        tv.isUserInteractionEnabled = isEditable
+
+        let scribble = UIScribbleInteraction(delegate: context.coordinator)
+        tv.addInteraction(scribble)
+
+        return tv
+    }
+
+    func updateUIView(_ tv: PassthroughTextView, context: Context) {
+        context.coordinator.parent = self
+
+        // Font — apply bold/italic as symbolic traits
+        let baseFont: UIFont
+        if let name = fontName, let namedFont = UIFont(name: name, size: fontSize) {
+            baseFont = namedFont
+        } else {
+            baseFont = UIFont.systemFont(ofSize: fontSize)
+        }
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if isBold      { traits.insert(.traitBold) }
+        if isItalic    { traits.insert(.traitItalic) }
+        let font: UIFont
+        if !traits.isEmpty,
+           let descriptor = baseFont.fontDescriptor.withSymbolicTraits(traits) {
+            font = UIFont(descriptor: descriptor, size: fontSize)
+        } else {
+            font = baseFont
+        }
+
+        let isConstrained = isUserResized && fixedWidth > 0
+        let constrainedTextWidth = max(
+            1,
+            fixedWidth - tv.textContainerInset.left - tv.textContainerInset.right
         )
+
+        // Paragraph style
+        let paraStyle = NSMutableParagraphStyle()
+        paraStyle.lineSpacing = lineSpacing
+        paraStyle.alignment = textAlignment
+        // Important: UITextView wrapping respects paragraphStyle's lineBreakMode.
+        // In resized mode we must force wrapping even for long runs of characters.
+        paraStyle.lineBreakMode = isConstrained ? .byCharWrapping : .byClipping
+
+        // Build attributes with underline and strikethrough
+        var attrs: [NSAttributedString.Key: Any] = [
+            .paragraphStyle: paraStyle,
+            .font: font,
+            .foregroundColor: textColor
+        ]
+        if isUnderline     { attrs[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        if isStrikethrough { attrs[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        let newAttr = NSAttributedString(string: tv.text.isEmpty ? "" : tv.text, attributes: attrs)
+        if tv.text != text {
+            let sel = tv.selectedRange
+            tv.text = text
+            tv.selectedRange = sel
+        }
+        if tv.attributedText != newAttr {
+            let sel = tv.selectedRange
+            tv.attributedText = NSAttributedString(string: text, attributes: attrs)
+            tv.selectedRange = sel
+        }
+        tv.typingAttributes = attrs
+        tv.textAlignment = textAlignment
+
+        tv.isEditable = isEditable
+        tv.isUserInteractionEnabled = isEditable
+
+        if isEditable && !tv.isFirstResponder {
+            DispatchQueue.main.async { tv.becomeFirstResponder() }
+        }
+        if !isEditable && tv.isFirstResponder {
+            tv.resignFirstResponder()
+        }
+
+        // Text container sizing
+        if isConstrained {
+            tv.textContainer.maximumNumberOfLines = 0
+            tv.textContainer.lineBreakMode = .byCharWrapping
+            // Explicitly size the textContainer based on the provided fixedWidth.
+            // Relying on widthTracksTextView can fail during SwiftUI-driven resizing
+            // because updateUIView may run before the UITextView's bounds update.
+            tv.textContainer.widthTracksTextView = false
+            tv.textContainer.size = CGSize(
+                width: constrainedTextWidth,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        } else {
+            tv.textContainer.maximumNumberOfLines = 1
+            tv.textContainer.lineBreakMode = .byClipping
+            tv.textContainer.widthTracksTextView = false
+            tv.textContainer.size = CGSize(
+                width: CGFloat.greatestFiniteMagnitude,
+                height: CGFloat.greatestFiniteMagnitude
+            )
+        }
+
+        // Force layout so wrapping takes effect immediately when width changes.
+        tv.setNeedsLayout()
+        tv.layoutIfNeeded()
+
+        context.coordinator.measureAndReport(tv)
     }
 
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Bounding box border
-            Rectangle()
-                .stroke(Color.blue, style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [6]))
-                .frame(width: liveBox.width, height: liveBox.height)
-                .position(x: liveBox.midX, y: liveBox.midY)
-                .allowsHitTesting(false)
+    // MARK: - Coordinator
 
-            // Resize handle — bottom right corner
-            ZStack {
-                Circle()
-                    .fill(Color.blue)
-                    .frame(width: 28, height: 28)
-                Image(systemName: "arrow.up.left.and.arrow.down.right")
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(.white)
+    final class Coordinator: NSObject, UITextViewDelegate, UIScribbleInteractionDelegate {
+        var parent: ScribbleFreeTextEditor
+        private var lastReportedSize: CGSize = .zero
+
+        init(parent: ScribbleFreeTextEditor) {
+            self.parent = parent
+        }
+
+        func textViewDidChange(_ tv: UITextView) {
+            parent.text = tv.text
+            measureAndReport(tv)
+        }
+
+        func textViewDidBeginEditing(_ tv: UITextView) {
+            parent.onEditingBegan()
+            measureAndReport(tv)
+        }
+
+        func textViewDidEndEditing(_ tv: UITextView) {
+            parent.onEditingEnded()
+            measureAndReport(tv)
+        }
+
+        func measureAndReport(_ tv: UITextView) {
+            let size: CGSize
+            if parent.isUserResized && parent.fixedWidth > 0 {
+                size = tv.sizeThatFits(CGSize(width: parent.fixedWidth, height: CGFloat.greatestFiniteMagnitude))
+            } else {
+                size = tv.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude))
             }
-            // Position at bottom-right of live box
-            .position(x: liveBox.maxX, y: liveBox.maxY)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .updating($resizeDelta) { value, state, _ in
-                        state = CGSize(
-                            width:  value.translation.width  / viewModel.canvasScale,
-                            height: value.translation.height / viewModel.canvasScale
-                        )
-                    }
-                    .onEnded { value in
-                        viewModel.applySelectionResize(scale: liveScale)
-                    }
+            let rounded = CGSize(
+                width:  (size.width  * 2).rounded() / 2,
+                height: (size.height * 2).rounded() / 2
             )
+            let roundedOld = CGSize(
+                width:  (lastReportedSize.width  * 2).rounded() / 2,
+                height: (lastReportedSize.height * 2).rounded() / 2
+            )
+            guard rounded != roundedOld else { return }
+            lastReportedSize = rounded
+            DispatchQueue.main.async { [weak self] in
+                self?.parent.onNaturalSizeChanged(rounded)
+            }
+        }
 
-            // Dismiss resize mode — tap outside
-            Color.clear
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    viewModel.isResizing = false
-                }
-                .allowsHitTesting(!viewModel.isResizing)
+        // MARK: UIScribbleInteractionDelegate
+        func scribbleInteraction(_ interaction: UIScribbleInteraction,
+                                 shouldBeginAt location: CGPoint) -> Bool {
+            return parent.isEditable
         }
     }
 }
+
+// MARK: - PassthroughTextView
+
+/// UITextView subclass that only accepts touches within its text content bounds,
+/// letting touches on transparent areas fall through to SwiftUI underneath.
+final class PassthroughTextView: UITextView {
+    // Disable the system edit menu ("pills") for canvas textboxes.
+    // We provide our own canvas context menu instead.
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        return false
+    }
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let result = super.hitTest(point, with: event)
+        // Only pass through touches when not editable (not selected).
+        // When editable, return self so Scribble and keyboard input work.
+        if result == self && !isEditable {
+            return nil
+        }
+        return result
+    }
+}
+
+
 
 struct BlockElementView: View {
-    @Binding var element: CanvasElement
+    let element: CanvasElement
     @ObservedObject var viewModel: CanvasViewModel
 
-    @FocusState private var isFocused: Bool
     @GestureState private var dragOffset: CGSize = .zero
     @GestureState private var resizeDelta: CGSize = .zero
-    @State private var removalTask: Task<Void, Never>? = nil
-    @State private var hasCommittedText: Bool = false
     @State private var loadedImage: UIImage? = nil
+    @State private var textContent: String = ""
+    @State private var saveTask: Task<Void, Never>? = nil
+    @State private var isEditing: Bool = false
+    @State private var naturalContentSize: CGSize = .zero
+    @State private var isCommittingResize: Bool = false
 
     var isSelected: Bool {
         viewModel.selectedElementIds.contains(element.id)
+    }
+
+    var isSelectedByLasso: Bool {
+        viewModel.isLassoSelectionActive && isSelected
+    }
+
+    var showsDirectSelectionChrome: Bool {
+        isSelected && !isSelectedByLasso
+    }
+
+    var selectionTopPadding: CGFloat {
+        guard showsDirectSelectionChrome else { return 0 }
+        if element.type == "text" { return 50 }
+        return 34
+    }
+
+    var selectionYOffsetCompensation: CGFloat {
+        selectionTopPadding / 2
     }
 
     var body: some View {
@@ -138,22 +385,32 @@ struct BlockElementView: View {
             elementContent
         }
         .frame(
-            width: max(60, CGFloat(element.width ?? 200) + (isSelected ? resizeDelta.width : 0)),
-            height: element.type == "text"
-                ? nil
-                : max(60, CGFloat(element.height ?? 200) + (isSelected ? resizeDelta.height : 0))
+            width: frameWidth,
+            height: frameHeight
         )
         .overlay(selectionOverlay)
-        .position(
-            x: CGFloat(element.positionX) + dragOffset.width,
-            y: CGFloat(element.positionY) + dragOffset.height
-        )
-        .allowsHitTesting(true)
+        // Padding exposes the overhanging handles to hit-testing without
+        // shifting the visual frame. Compensated in .position() below.
+        .padding(showsDirectSelectionChrome ? .init(top: selectionTopPadding, leading: 14, bottom: 16, trailing: 14) : .init())
+        .contentShape(Rectangle())
         .onTapGesture {
             viewModel.selectedElementIds = [element.id]
-            isFocused = element.type == "text"
         }
-        .gesture(dragGesture)
+        // No whole-block dragGesture — movement is via the top grabber only.
+        .position(
+            x: CGFloat(element.positionX) + dragOffset.width + frameWidth / 2,
+            y: CGFloat(element.positionY) + dragOffset.height + frameHeight / 2 - selectionYOffsetCompensation
+        )
+        .transaction { transaction in
+            if dragOffset != .zero {
+                transaction.animation = nil
+            }
+        }
+        .task(id: element.id) {
+            if element.type == "text" {
+                textContent = (element.content ?? "").replacingOccurrences(of: "\u{200B}", with: "")
+            }
+        }
         .task(id: element.content) {
             guard element.type == "image", let fileName = element.content,
                   !fileName.isEmpty else { return }
@@ -163,13 +420,7 @@ struct BlockElementView: View {
                 return
             }
 
-            let fileURL = FileManager.default
-                .urls(for: .documentDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(fileName)
-
-            let img = await Task.detached(priority: .userInitiated) {
-                UIImage(contentsOfFile: fileURL.path)
-            }.value
+            let img = await viewModel.resolveImage(for: element)
 
             guard let img else { return }
 
@@ -178,57 +429,129 @@ struct BlockElementView: View {
         }
     }
 
+    var frameWidth: CGFloat {
+        if element.type == "text" && !element.userResized {
+            return max(200, naturalContentSize.width + 16)
+        }
+        return max(60, CGFloat(element.width ?? 200) + (showsDirectSelectionChrome ? resizeDelta.width : 0))
+    }
+
+    var frameHeight: CGFloat {
+        if element.type == "text" && !element.userResized {
+            return max(32, naturalContentSize.height)
+        }
+        if element.type == "text" && element.userResized {
+            let storedHeight = CGFloat(element.height ?? 200)
+            let liveMeasuredHeight = max(
+                60,
+                naturalContentSize.height + TextElementMetrics.caretBottomAllowance
+            )
+            return max(storedHeight, liveMeasuredHeight) + (showsDirectSelectionChrome ? resizeDelta.height : 0)
+        }
+        return max(60, CGFloat(element.height ?? 200) + (showsDirectSelectionChrome ? resizeDelta.height : 0))
+    }
+
     // MARK: - Content
 
     @ViewBuilder
     var elementContent: some View {
-        if element.type == "text" {
-            TextField("", text: Binding(
-                get: {
-                    let raw = element.content ?? ""
-                    return raw == "\u{200B}" ? "" : raw
-                },
-                set: { newVal in
-                    element.content = newVal.isEmpty ? "\u{200B}" : newVal
-                }
-            ), axis: .vertical)
-            .focused($isFocused)
-            .font(.system(size: element.style?.fontSize != nil ? CGFloat(element.style!.fontSize!) : 24))
-            .foregroundColor(Color(hex: element.style?.textColor ?? "#000000"))
-            .padding(8)
-            .background(Color.clear)
-            .onChange(of: isFocused) { _, focused in
-                removalTask?.cancel()
-                guard !focused else { return }
-                let real = (element.content ?? "")
-                    .replacingOccurrences(of: "\u{200B}", with: "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if real.isEmpty {
-                    removalTask = Task {
-                        try? await Task.sleep(nanoseconds: 150_000_000)
-                        guard !Task.isCancelled else { return }
-                        viewModel.removeElement(id: element.id)
-                    }
-                } else {
-                    viewModel.updateElement(element)
-                    hasCommittedText = true
-                }
-            }
-            .onAppear {
-                let raw = element.content ?? ""
-                let isEmpty = raw.isEmpty || raw == "\u{200B}"
-                if isEmpty { isFocused = true }
-            }
-        } else if element.type == "image" {
+        if element.type == "image" {
             if let img = loadedImage {
                 Image(uiImage: img)
                     .resizable()
+                    .interpolation(.high)
                     .scaledToFill()
                     .clipped()
             } else {
                 Rectangle()
                     .fill(Color.gray.opacity(0.15))
                     .overlay(ProgressView().tint(.white))
+            }
+        } else if element.type == "text" {
+            let isEditingNow = isSelected && viewModel.selectedTool == .text
+            ZStack(alignment: .topLeading) {
+                ScribbleFreeTextEditor(
+                    text: $textContent,
+                    fontSize: element.style?.fontSize ?? 16,
+                    textColor: element.style?.textColor != nil
+                        ? UIColor(Color(hex: element.style!.textColor!))
+                        : UIColor.label,
+                    fontName: element.style?.fontName,
+                    isBold: element.style?.isBold ?? false,
+                    isItalic: element.style?.isItalic ?? false,
+                    isUnderline: element.style?.isUnderline ?? false,
+                    isStrikethrough: element.style?.isStrikethrough ?? false,
+                    lineSpacing: CGFloat(element.style?.lineSpacing ?? 0),
+                    textAlignment: {
+                        switch element.style?.textAlignment {
+                        case "center": return .center
+                        case "right":  return .right
+                        case "justified": return .justified
+                        default:       return .left
+                        }
+                    }(),
+                    isEditable: isEditingNow,
+                    isUserResized: element.userResized,
+                    fixedWidth: frameWidth,
+                    onEditingBegan: { DispatchQueue.main.async { isEditing = true } },
+                    onEditingEnded: { DispatchQueue.main.async { isEditing = false } },
+                    onNaturalSizeChanged: { size in
+                        DispatchQueue.main.async { naturalContentSize = size }
+                    }
+                )
+                .frame(width: frameWidth, height: frameHeight, alignment: .topLeading)
+                .clipped()
+                .onChange(of: naturalContentSize) { _, size in
+                    // naturalContentSize is in canvas space (reported by UITextView).
+                    // All comparisons and writes must stay in canvas space.
+                    guard element.type == "text", !isCommittingResize else { return }
+                    var updated = element
+                    if element.userResized {
+                        // In fixed/resized mode, only height auto-grows to fit content
+                        let newHeight = max(32, size.height + TextElementMetrics.caretBottomAllowance)
+                        let roundedNew = (newHeight * 2).rounded() / 2
+                        let roundedOld = ((CGFloat(element.height ?? 32)) * 2).rounded() / 2
+                        guard roundedNew != roundedOld else { return }
+                        updated.height = Double(roundedNew)
+                        viewModel.updateElement(updated)
+                    } else {
+                        // In free mode, both width and height follow content
+                        let newWidth = max(200, size.width + 16)
+                        let newHeight = max(32, size.height + TextElementMetrics.caretBottomAllowance)
+                        let roundedNewW = (newWidth * 2).rounded() / 2
+                        let roundedNewH = (newHeight * 2).rounded() / 2
+                        let roundedOldW = ((CGFloat(element.width ?? 200)) * 2).rounded() / 2
+                        let roundedOldH = ((CGFloat(element.height ?? 32)) * 2).rounded() / 2
+                        guard roundedNewW != roundedOldW || roundedNewH != roundedOldH else { return }
+                        updated.width = Double(roundedNewW)
+                        updated.height = Double(roundedNewH)
+                        viewModel.updateElement(updated)
+                    }
+                }
+                .onChange(of: textContent) { _, newValue in
+                    let newContent = newValue.isEmpty ? "\u{200B}" : newValue
+                    if element.content != newContent {
+                        var updated = element
+                        updated.content = newContent
+                        saveTask?.cancel()
+                        saveTask = Task {
+                            try? await Task.sleep(nanoseconds: 500_000_000)
+                            if !Task.isCancelled {
+                                viewModel.updateElement(updated)
+                            }
+                        }
+                    }
+                }
+
+                // Placeholder
+                if textContent.isEmpty && !isEditing {
+                    Text("Tap to type...")
+                        .font(.system(size: element.style?.fontSize ?? 16))
+                        .foregroundColor(.secondary.opacity(0.5))
+                        .padding(.top, TextElementMetrics.editorInsets.top)
+                        .padding(.leading, TextElementMetrics.editorInsets.left)
+                        .allowsHitTesting(false)
+                }
             }
         }
     }
@@ -242,54 +565,131 @@ struct BlockElementView: View {
     // MARK: - Drag Gesture (move)
 
     var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 4)
+        // IMPORTANT: use the block-overlay named space (canvas space), NOT .global.
+        // The overlay lives inside the zoomed pageContainerView, so element.positionX/Y
+        // are canvas points. A .global translation is in screen points (canvas × zoom):
+        // at any zoom ≠ 1 the block moves at the wrong speed and commits the wrong
+        // distance. The named space is stationary in canvas coordinates, so
+        // translations arrive pre-descaled and don't feed back as the block moves.
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(BlockOverlayView.canvasSpaceName))
             .updating($dragOffset) { value, state, _ in
                 guard isSelected else { return }
                 state = CGSize(
-                    width: value.translation.width / viewModel.canvasScale,
-                    height: value.translation.height / viewModel.canvasScale
+                    width: value.translation.width,
+                    height: value.translation.height
                 )
             }
             .onEnded { value in
                 guard isSelected else { return }
-                element.positionX += value.translation.width / viewModel.canvasScale
-                element.positionY += value.translation.height / viewModel.canvasScale
-                element.updatedAt = Date()
-                viewModel.updateElement(element)
+                var updated = element
+                updated.positionX += value.translation.width
+                updated.positionY += value.translation.height
+                updated.updatedAt = Date()
+                viewModel.updateElement(updated)
             }
     }
 
     // MARK: - Resize Gesture
 
+    /// Uniform scale factor for the diagonal (corner) handle so images keep their
+    /// aspect ratio while resizing. We project the drag translation onto the
+    /// image's diagonal resize vector, which avoids the rapid "big/small" flicker
+    /// that happens when switching back and forth between width-driven and
+    /// height-driven scaling near the diagonal threshold.
+    private func imageResizeScale(dw: CGFloat, dh: CGFloat) -> CGFloat {
+        let oldW = CGFloat(element.width ?? 200)
+        let oldH = CGFloat(element.height ?? 200)
+        guard oldW > 0, oldH > 0 else { return 1 }
+
+        let diagonalMagnitudeSquared = (oldW * oldW) + (oldH * oldH)
+        guard diagonalMagnitudeSquared > 0 else { return 1 }
+
+        let projectedScaleDelta = ((dw * oldW) + (dh * oldH)) / diagonalMagnitudeSquared
+        let proposedScale = 1 + projectedScaleDelta
+
+        // Don't let either dimension drop below the 60pt minimum.
+        let minScale = max(60 / oldW, 60 / oldH)
+        return max(minScale, proposedScale)
+    }
+
     var resizeGesture: some Gesture {
         DragGesture(minimumDistance: 0)
-            .updating($resizeDelta) { value, state, _ in
-                state = CGSize(
-                    width: value.translation.width / viewModel.canvasScale,
-                    height: value.translation.height / viewModel.canvasScale
-                )
+            .updating($resizeDelta) { [self] value, state, _ in
+                let scale = imageResizeScale(dw: value.translation.width, dh: value.translation.height)
+                let oldW = CGFloat(element.width ?? 200)
+                let oldH = CGFloat(element.height ?? 200)
+                state = CGSize(width: oldW * (scale - 1), height: oldH * (scale - 1))
             }
             .onEnded { value in
-                let dw = value.translation.width / viewModel.canvasScale
-                let dh = value.translation.height / viewModel.canvasScale
+                let scale = imageResizeScale(dw: value.translation.width, dh: value.translation.height)
                 let oldW = element.width ?? 200
-                let newW = max(60, oldW + dw)
-                if element.type == "text" {
-                    element.positionX += (newW - oldW) / 2
-                    element.width = newW
-                } else {
-                    let oldH = element.height ?? 50
-                    let newH = max(60, oldH + dh)
-                    
-                    // Shift center so the top-left remains fixed
-                    element.positionX += (newW - oldW) / 2
-                    element.positionY += (newH - oldH) / 2
-                    
-                    element.width = newW
-                    element.height = newH
+                let oldH = element.height ?? 200
+                let newW = oldW * scale
+                let newH = oldH * scale
+
+                // Suppress naturalContentSize onChange during this commit
+                // to prevent a re-render loop (AttributeGraph cycle)
+                isCommittingResize = true
+
+                var updated = element
+                updated.width = newW
+                updated.height = newH
+                updated.userResized = true
+                updated.updatedAt = Date()
+                viewModel.updateElement(updated)
+
+                // Re-enable after one run loop tick — long enough for
+                // the resize render pass to complete without triggering onChange
+                DispatchQueue.main.async {
+                    isCommittingResize = false
                 }
-                element.updatedAt = Date()
-                viewModel.updateElement(element)
+            }
+    }
+
+    /// Left-edge resize — drags left/right, grows/shrinks width from the left side.
+    /// positionX shifts so the right edge stays fixed.
+    var leftResizeGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($resizeDelta) { value, state, _ in
+                // Negative translation = dragging left = wider block
+                let dw = -value.translation.width
+                state = CGSize(width: -dw, height: 0)
+            }
+            .onEnded { value in
+                let dw = -value.translation.width
+                let oldW = element.width ?? Double(frameWidth)
+                let newW = max(60, oldW + dw)
+                isCommittingResize = true
+                var updated = element
+                // Right edge fixed: shift positionX left by the growth amount
+                updated.positionX -= (newW - oldW)
+                updated.width = newW
+                updated.userResized = true
+                updated.updatedAt = Date()
+                viewModel.updateElement(updated)
+                DispatchQueue.main.async { isCommittingResize = false }
+            }
+    }
+
+    /// Right-edge resize — drags left/right, grows/shrinks width from the right side.
+    /// positionX stays fixed (left edge is anchor).
+    var rightResizeGesture: some Gesture {
+        DragGesture(minimumDistance: 0)
+            .updating($resizeDelta) { value, state, _ in
+                let dw = value.translation.width
+                state = CGSize(width: dw, height: 0)
+            }
+            .onEnded { value in
+                let dw = value.translation.width
+                let oldW = element.width ?? Double(frameWidth)
+                let newW = max(60, oldW + dw)
+                isCommittingResize = true
+                var updated = element
+                updated.width = newW
+                updated.userResized = true
+                updated.updatedAt = Date()
+                viewModel.updateElement(updated)
+                DispatchQueue.main.async { isCommittingResize = false }
             }
     }
 
@@ -297,29 +697,110 @@ struct BlockElementView: View {
 
     @ViewBuilder
     var selectionOverlay: some View {
-        if isSelected {
+        if showsDirectSelectionChrome && element.type == "text" {
+            ZStack {
+                // Gold border
+                Rectangle()
+                    .stroke(Color.gPrimary, lineWidth: 1.5)
+
+                VStack {
+                    ObjectActionPill(
+                        onDuplicate: { viewModel.duplicateSelectedElement() },
+                        onDelete: { viewModel.deleteSelectedElement() }
+                    )
+                    .offset(y: -50)
+                    .zIndex(11)
+                    Spacer()
+                }
+
+                // ── TOP GRABBER PILL ──
+                // A draggable pill centred above the top edge. Drives the block's
+                // position via dragGesture which updates $dragOffset.
+                VStack {
+                    ZStack {
+                        Capsule()
+                            .fill(Color.gPrimary)
+                            .frame(width: 44, height: 22)
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 72, height: 40)
+                    .contentShape(Rectangle())
+                    // Float 14pt above the top border (offset upward by half height + gap)
+                    .offset(y: -22)
+                    .highPriorityGesture(dragGesture)
+                    .zIndex(10)
+                    Spacer()
+                }
+
+                // ── LEFT RESIZE DOT ──
+                HStack {
+                    ZStack {
+                        Circle()
+                            .fill(Color.gPrimary)
+                            .frame(width: 20, height: 20)
+                            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                        Image(systemName: "arrow.left.and.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .offset(x: -10)
+                    .highPriorityGesture(leftResizeGesture)
+                    .zIndex(10)
+                    Spacer()
+                }
+
+                // ── RIGHT RESIZE DOT ──
+                HStack {
+                    Spacer()
+                    ZStack {
+                        Circle()
+                            .fill(Color.gPrimary)
+                            .frame(width: 20, height: 20)
+                            .overlay(Circle().stroke(Color.white, lineWidth: 1.5))
+                        Image(systemName: "arrow.left.and.right")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    .offset(x: 10)
+                    .highPriorityGesture(rightResizeGesture)
+                    .zIndex(10)
+                }
+            }
+        } else if showsDirectSelectionChrome {
+            // Direct image selection: border + drag pill + top-right delete only
             ZStack {
                 // Dashed border
                 Rectangle()
                     .stroke(Color.blue, style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [5]))
 
-                // Delete button — top right
+                VStack {
+                    ZStack {
+                        Capsule()
+                            .fill(Color.blue)
+                            .frame(width: 44, height: 22)
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white)
+                    }
+                    .frame(width: 72, height: 40)
+                    .contentShape(Rectangle())
+                    .offset(y: -22)
+                    .highPriorityGesture(dragGesture)
+                    .zIndex(10)
+
+                    Spacer()
+                }
+
                 VStack {
                     HStack {
                         Spacer()
-                        Button {
-                            viewModel.removeElement(id: element.id)
-                        } label: {
-                            ZStack {
-                                Circle().fill(Color.red).frame(width: 26, height: 26)
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 11, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
+                        DeleteCornerButton {
+                            viewModel.deleteSelectedElement()
                         }
-                        .buttonStyle(.plain)
-                        .offset(x: 13, y: -13)
-                        .zIndex(10)
+                        .offset(x: 10, y: -10)
+                        .zIndex(11)
                     }
                     Spacer()
                 }
@@ -341,6 +822,855 @@ struct BlockElementView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+private struct ImageInsertionPlaceholderView: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    let center: CGPoint
+
+    var body: some View {
+        let size = viewModel.imageInsertionPlaceholderSize
+
+        ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(Color.gPrimary.opacity(0.9), style: SwiftUI.StrokeStyle(lineWidth: 1.5, dash: [8, 6]))
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.gPrimary.opacity(0.05))
+                )
+
+            VStack(spacing: 8) {
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 24, weight: .medium))
+                    .foregroundColor(.gPrimary)
+                Text("Add image")
+                    .font(.gCaption.weight(.medium))
+                    .foregroundColor(.gTextSecondary)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+        .position(center)
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ObjectActionPill: View {
+    let onDuplicate: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            pillButton("Duplicate", tint: .white, action: onDuplicate)
+            divider
+            pillButton("Delete", tint: .red, action: onDelete)
+        }
+        .background(Color(hex: "#1A1A18").opacity(0.93))
+        .clipShape(Capsule())
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 1)
+    }
+
+    private func pillButton(_ label: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 13, weight: .regular))
+                .foregroundColor(tint)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.2))
+            .frame(width: 0.5, height: 24)
+    }
+}
+
+private struct DeleteCornerButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 24, height: 24)
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.white)
+            }
+        }
+        .buttonStyle(.plain)
+        .shadow(color: .black.opacity(0.2), radius: 4, y: 1)
+    }
+}
+
+struct LassoSelectionOverlay: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("aiEnabled") private var aiEnabled: Bool = true
+    let box: CGRect
+    let onAskAI: (CGRect, Data) -> Void
+    @State private var isMenuVisible = false
+    @State private var showColorPicker = false
+    @State private var showSecondaryActions = false
+    @State private var pickedColor: Color = .white
+    @State private var screenshotImage: UIImage? = nil
+    @State private var showScreenshotPreview = false
+    @GestureState private var resizeDelta: CGSize = .zero
+    private let selectionPadding: CGFloat = 12
+    private let handleHitTargetSize: CGFloat = 56
+    private let handleVisualSize: CGFloat = 28
+    private let moveGestureThreshold: CGFloat = 6
+
+    // Convert canvas-space box to screen-space for rendering
+    // Since this view is now in CanvasContainerView (screen space), we must project.
+    /// Anchor for resize previews, in canvas space.
+    /// MUST match finalizeLassoResize, which scales strokes/elements around
+    /// lassoContentBounds.origin. Previewing around any other anchor (the old code
+    /// used the box CENTER) makes the ghost drift away from the marquee during the
+    /// drag and makes the committed content land somewhere the preview never showed.
+    private var resizeAnchorCanvas: CGPoint {
+        viewModel.lassoContentBounds?.origin ?? box.origin
+    }
+
+    private func scaled(_ rect: CGRect, by scale: CGFloat, around anchor: CGPoint) -> CGRect {
+        CGRect(
+            x: anchor.x + (rect.minX - anchor.x) * scale,
+            y: anchor.y + (rect.minY - anchor.y) * scale,
+            width: rect.width * scale,
+            height: rect.height * scale
+        )
+    }
+
+    private func scaledPoint(_ p: CGPoint, by scale: CGFloat, around anchor: CGPoint) -> CGPoint {
+        CGPoint(x: anchor.x + (p.x - anchor.x) * scale,
+                y: anchor.y + (p.y - anchor.y) * scale)
+    }
+
+    var screenBox: CGRect {
+        let projectedTranslation = viewModel.isPreviewingLassoMove
+            ? viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
+            : .zero
+        let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
+        let baseRect = scaled(box, by: scale, around: resizeAnchorCanvas)
+        return viewModel.projectCanvasRectToViewport(baseRect)
+            .offsetBy(dx: projectedTranslation.width, dy: projectedTranslation.height)
+    }
+
+    var floatingScreenRect: CGRect? {
+        guard let floatingRect = viewModel.lassoFloatingCanvasRect else { return nil }
+        let projectedTranslation = viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
+        let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
+        // Scale in canvas space around the same anchor the commit will use,
+        // THEN project — identical math to screenBox so ghost and marquee can't diverge.
+        let scaledCanvasRect = scaled(floatingRect, by: scale, around: resizeAnchorCanvas)
+        return viewModel.projectCanvasRectToViewport(scaledCanvasRect)
+            .offsetBy(dx: projectedTranslation.width, dy: projectedTranslation.height)
+    }
+
+    /// The committed lasso polygon projected to screen space, with the same
+    /// move/resize preview transforms applied as `screenBox`.
+    private var screenPolygon: [CGPoint]? {
+        guard let poly = viewModel.lassoSelectionPolygon, poly.count > 2 else { return nil }
+        let projectedTranslation = viewModel.isPreviewingLassoMove
+            ? viewModel.projectCanvasTranslationToViewport(viewModel.lassoMoveTranslation)
+            : .zero
+        let scale = viewModel.isPreviewingLassoResize ? viewModel.lassoResizeScale : 1.0
+        return poly.map { pt in
+            let scaledCanvas = scaledPoint(pt, by: scale, around: resizeAnchorCanvas)
+            let screen = viewModel.projectCanvasPointToViewport(scaledCanvas)
+            return CGPoint(x: screen.x + projectedTranslation.width,
+                           y: screen.y + projectedTranslation.height)
+        }
+    }
+
+    var liveScale: CGFloat {
+        guard screenBox.width > 0 else { return 1 }
+        if viewModel.isPreviewingLassoResize {
+            return 1.0
+        }
+        return max(0.1, (screenBox.width + resizeDelta.width) / screenBox.width)
+    }
+
+    var liveBox: CGRect {
+        let sb = screenBox
+        return CGRect(
+            x: sb.minX,
+            y: sb.minY,
+            width: max(40, sb.width * liveScale),
+            height: max(40, sb.height * liveScale)
+        )
+    }
+
+    var isNearTop: Bool {
+        liveBox.minY < 180
+    }
+
+    var primaryPillY: CGFloat {
+        isNearTop ? liveBox.maxY + 32 : liveBox.minY - 52
+    }
+
+    var secondaryPillY: CGFloat {
+        isNearTop ? liveBox.maxY + 76 : liveBox.minY - 96
+    }
+
+    var colorPickerY: CGFloat {
+        isNearTop ? liveBox.maxY + 124 : liveBox.minY - 144
+    }
+
+    private var needsSideMenuLayout: Bool {
+        let topClearance = liveBox.minY - 120
+        let bottomClearance = UIScreen.main.bounds.height - liveBox.maxY - 120
+        return topClearance < 0 && bottomClearance < 0
+    }
+
+    private var prefersRightSideMenu: Bool {
+        liveBox.maxX < UIScreen.main.bounds.width * 0.58
+    }
+
+    private var genieEdge: Edge {
+        if needsSideMenuLayout {
+            return prefersRightSideMenu ? .leading : .trailing
+        }
+        return isNearTop ? .top : .bottom
+    }
+
+    private var isPreviewingSelectionInteraction: Bool {
+        viewModel.isPreviewingLassoMove || viewModel.isPreviewingLassoResize
+    }
+
+    private var shouldRenderMenu: Bool {
+        isMenuVisible && !isPreviewingSelectionInteraction
+    }
+
+    private func closeMenu() {
+        isMenuVisible = false
+        showColorPicker = false
+        showSecondaryActions = false
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .topLeading) {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .allowsHitTesting(shouldRenderMenu)
+                    .onTapGesture {
+                        closeMenu()
+                    }
+
+                Rectangle()
+                    .fill(Color.clear)
+                    .contentShape(Rectangle())
+                    .frame(width: liveBox.width + 18, height: liveBox.height + 18)
+                    .position(x: liveBox.midX, y: liveBox.midY)
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            guard !isPreviewingSelectionInteraction else { return }
+                            isMenuVisible = true
+                        }
+                    )
+                    .gesture(
+                        DragGesture(minimumDistance: moveGestureThreshold)
+                            .onChanged { value in
+                                if isMenuVisible || showColorPicker { closeMenu() }
+                                viewModel.beginLassoMoveIfNeeded()
+                                // Convert the screen-space drag into canvas points via the
+                                // live UIKit geometry. Dividing by the published canvasScale
+                                // is wrong mid-gesture: that value only updates when a
+                                // scroll/zoom gesture ends, so the move distance was
+                                // computed against a stale zoom.
+                                viewModel.previewLassoMove(
+                                    translation: viewModel.projectViewportTranslationToCanvas(value.translation)
+                                )
+                            }
+                            .onEnded { _ in
+                                viewModel.finalizeLassoMove()
+                            }
+                    )
+
+                if let sp = screenPolygon, sp.count > 2 {
+                    Path { path in
+                        path.move(to: sp[0])
+                        for pt in sp.dropFirst() { path.addLine(to: pt) }
+                        path.closeSubpath()
+                    }
+                    .stroke(Color(hex: "#C9A84C"),
+                            style: SwiftUI.StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [6]))
+                    .allowsHitTesting(false)
+                }
+
+                if let image = viewModel.lassoFloatingImage,
+                   let rect = floatingScreenRect {
+                    Image(uiImage: image)
+                        .resizable()
+                        .frame(width: rect.width, height: rect.height)
+                        .position(x: rect.midX, y: rect.midY)
+                        .allowsHitTesting(false)
+                }
+
+                if shouldRenderMenu {
+                    if needsSideMenuLayout {
+                        singleRowMenu(proxy: proxy)
+                    } else {
+                        primaryPill
+                            .position(
+                                x: clampedX(liveBox.midX, viewWidth: proxy.size.width, menuWidth: currentMenuWidth),
+                                y: clampedY(primaryPillY, viewHeight: proxy.size.height, menuHeight: 44)
+                            )
+                            .transition(.genie(edge: genieEdge, travel: 34).combined(with: .opacity))
+                    }
+
+                    if showSecondaryActions && showColorPicker {
+                        colorPickerStrip
+                            .position(
+                                x: colorPickerX(in: proxy),
+                                y: colorPickerY(in: proxy)
+                            )
+                            .transition(.genie(edge: genieEdge, travel: 46).combined(with: .opacity))
+                    }
+                }
+
+                Circle()
+                    .fill(Color.clear)
+                    .contentShape(Circle())
+                    .frame(width: handleHitTargetSize, height: handleHitTargetSize)
+                    .overlay {
+                        Circle()
+                            .fill(Color(hex: "#C9A84C"))
+                            .frame(width: handleVisualSize, height: handleVisualSize)
+                    }
+                    .position(x: liveBox.maxX, y: liveBox.maxY)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                if isMenuVisible || showColorPicker { closeMenu() }
+                                let sb = screenBox
+                                guard sb.width > 0 else { return }
+                                viewModel.beginLassoResizeIfNeeded()
+                                let scale = max(0.1, (sb.width + value.translation.width) / sb.width)
+                                viewModel.previewLassoResize(scale: scale)
+                            }
+                            .updating($resizeDelta) { value, state, _ in
+                                state = CGSize(
+                                    width: value.translation.width,
+                                    height: value.translation.height
+                                )
+                            }
+                            .onEnded { value in
+                                let sb = screenBox
+                                guard sb.width > 0 else { return }
+                                let finalScale = max(0.1, (sb.width + value.translation.width) / sb.width)
+                                viewModel.previewLassoResize(scale: finalScale)
+                                viewModel.finalizeLassoResize()
+                            }
+                    )
+            }
+            .sheet(isPresented: $showScreenshotPreview) {
+                if let img = screenshotImage {
+                    LassoScreenshotPreview(image: img)
+                }
+            }
+            .onAppear {
+                closeMenu()
+            }
+            .onChange(of: box) { _, _ in
+                closeMenu()
+            }
+            .onChange(of: viewModel.isPreviewingLassoMove) { _, isPreviewing in
+                if isPreviewing { closeMenu() }
+            }
+            .onChange(of: viewModel.isPreviewingLassoResize) { _, isPreviewing in
+                if isPreviewing { closeMenu() }
+            }
+            .animation(GAnimation.motionSafe(GAnimation.springFast), value: shouldRenderMenu)
+            .animation(GAnimation.motionSafe(GAnimation.springFast), value: showSecondaryActions)
+            .animation(GAnimation.motionSafe(GAnimation.springFast), value: showColorPicker)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var currentMenuWidth: CGFloat {
+        showSecondaryActions ? (aiEnabled ? 380 : 310) : 430
+    }
+
+    private var primaryPill: some View {
+        HStack(spacing: 0) {
+            if showSecondaryActions {
+                pillIconButton(systemName: "chevron.left") {
+                    showSecondaryActions = false
+                    showColorPicker = false
+                }
+                pillDivider()
+                pillButton("Duplicate") { viewModel.duplicateSelection() }
+                pillDivider()
+                pillButton("Color") { showColorPicker.toggle() }
+                if aiEnabled {
+                    pillDivider()
+                    pillButton("Ask AI") {
+                        if let img = viewModel.screenshotSelection(),
+                           let data = img.pngData() {
+                            onAskAI(box, data)
+                        }
+                    }
+                }
+                pillDivider()
+                pillButton("Screenshot") {
+                    if let img = viewModel.screenshotSelection() {
+                        screenshotImage = img
+                        showScreenshotPreview = true
+                    }
+                }
+            } else {
+                pillButton("Cut") { viewModel.cutSelection() }
+                pillDivider()
+                pillButton("Copy") { viewModel.copySelection() }
+                pillDivider()
+                pillButton("Paste") { viewModel.pasteSelection() }
+                pillDivider()
+                pillButton("Delete", tint: .red) { viewModel.deleteSelectedLassoContent() }
+                pillDivider()
+                pillIconButton(systemName: "chevron.right") {
+                    showSecondaryActions = true
+                }
+            }
+        }
+        .glassPill()
+    }
+
+    @ViewBuilder
+    private func singleRowMenu(proxy: GeometryProxy) -> some View {
+        primaryPill
+        .frame(width: min(proxy.size.width - 24, 560))
+        .position(
+            x: sidePillX(in: proxy),
+            y: clampedY(liveBox.midY, viewHeight: proxy.size.height, menuHeight: 44)
+        )
+        .transition(.genie(edge: genieEdge, travel: 34).combined(with: .opacity))
+    }
+
+    private var colorPickerStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 12) {
+                ForEach(viewModel.lassoRecolorPalette(), id: \.hexString) { preset in
+                    Circle()
+                        .fill(preset)
+                        .frame(width: 28, height: 28)
+                        .overlay(Circle().stroke(Color.white.opacity(0.4), lineWidth: 1))
+                        .onTapGesture {
+                            viewModel.applyLassoColorChange(preset)
+                            showColorPicker = false
+                        }
+                }
+
+                ZStack {
+                    Circle()
+                        .fill(
+                            AngularGradient(
+                                colors: [.red, .yellow, .green, .cyan, .blue, .purple, .red],
+                                center: .center
+                            )
+                        )
+                        .frame(width: 28, height: 28)
+
+                    ColorPicker("Custom", selection: $pickedColor, supportsOpacity: false)
+                        .labelsHidden()
+                        .frame(width: 28, height: 28)
+                        .opacity(0.01)
+                        .onChange(of: pickedColor) { _, newColor in
+                            viewModel.applyLassoColorChange(newColor)
+                        }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .frame(maxWidth: 320)
+        .glassPill()
+    }
+
+    private func clampedX(_ preferred: CGFloat, viewWidth: CGFloat, menuWidth: CGFloat) -> CGFloat {
+        let safeHalfWidth = min(menuWidth / 2, max(0, viewWidth / 2 - 16))
+        return min(max(preferred, safeHalfWidth + 12), viewWidth - safeHalfWidth - 12)
+    }
+
+    private func clampedY(_ preferred: CGFloat, viewHeight: CGFloat, menuHeight: CGFloat) -> CGFloat {
+        let safeHalfHeight = menuHeight / 2
+        return min(max(preferred, safeHalfHeight + 12), viewHeight - safeHalfHeight - 12)
+    }
+
+    private func sidePillX(in proxy: GeometryProxy) -> CGFloat {
+        let width = min(proxy.size.width - 24, 560)
+        let preferred = prefersRightSideMenu
+            ? liveBox.maxX + (width / 2) + 18
+            : liveBox.minX - (width / 2) - 18
+        return clampedX(preferred, viewWidth: proxy.size.width, menuWidth: width)
+    }
+
+    private func colorPickerX(in proxy: GeometryProxy) -> CGFloat {
+        if needsSideMenuLayout {
+            return sidePillX(in: proxy)
+        }
+        return clampedX(liveBox.midX, viewWidth: proxy.size.width, menuWidth: min(320, proxy.size.width - 24))
+    }
+
+    private func colorPickerY(in proxy: GeometryProxy) -> CGFloat {
+        if needsSideMenuLayout {
+            return clampedY(liveBox.midY + 52, viewHeight: proxy.size.height, menuHeight: 54)
+        }
+        return clampedY(colorPickerY, viewHeight: proxy.size.height, menuHeight: 54)
+    }
+
+    private var defaultPillTextColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.94) : Color.black.opacity(0.82)
+    }
+
+    // Apple-style text pill button — no icon, just label
+    @ViewBuilder
+    private func pillButton(_ label: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(tint ?? defaultPillTextColor)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func pillIconButton(systemName: String, tint: Color? = nil, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(tint ?? defaultPillTextColor)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func pillDivider() -> some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.10))
+            .frame(width: 0.5, height: 28)
+    }
+}
+
+private extension View {
+    func glassPill() -> some View {
+        self
+            .padding(.vertical, 2)
+            .background(
+                Capsule(style: .continuous)
+                    .fill(.regularMaterial)
+            )
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color.white.opacity(0.34))
+            )
+            .background(
+                Capsule(style: .continuous)
+                    .fill(Color(hex: "#CFA43A").opacity(0.26))
+            )
+            .clipShape(Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color.white.opacity(0.52), lineWidth: 0.8)
+            )
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(Color(hex: "#C79A2B").opacity(0.42), lineWidth: 1.1)
+            )
+            .shadow(color: Color.black.opacity(0.10), radius: 8, y: 2)
+            .shadow(color: Color(hex: "#8A6516").opacity(0.10), radius: 14, y: 4)
+    }
+}
+
+// MARK: - Canvas Context Menu (empty canvas)
+
+struct CanvasContextMenuOverlay: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    let canvasPoint: CGPoint
+
+    private var screenPoint: CGPoint {
+        let s = viewModel.canvasScale
+        let ox = viewModel.canvasOffset.width
+        let oy = viewModel.canvasOffset.height
+        return CGPoint(
+            x: canvasPoint.x * s - ox,
+            y: canvasPoint.y * s - oy
+        )
+    }
+
+    var body: some View {
+        ZStack {
+            // Dismiss layer
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { viewModel.hideCanvasContextMenu() }
+
+            // System-like pill menu (horizontal capsule)
+            HStack(spacing: 0) {
+                if viewModel.canCopySelection {
+                    pillButton("Copy") {
+                        viewModel.copyForCanvasMenu()
+                        viewModel.hideCanvasContextMenu()
+                    }
+                    pillDivider()
+                }
+                pillButton("Paste", enabled: UIPasteboard.general.hasStrings || UIPasteboard.general.data(forPasteboardType: "com.apple.ink.drawing") != nil) {
+                    viewModel.pasteForCanvasMenu(at: canvasPoint)
+                    viewModel.hideCanvasContextMenu()
+                }
+                pillDivider()
+                pillButton("Undo", enabled: viewModel.canUndo) {
+                    viewModel.undo()
+                    viewModel.hideCanvasContextMenu()
+                }
+                pillDivider()
+                pillButton("Redo", enabled: viewModel.canRedo) {
+                    viewModel.redo()
+                    viewModel.hideCanvasContextMenu()
+                }
+                pillDivider()
+                pillButton("Add Image") {
+                    viewModel.selectTool(.image)
+                    viewModel.hideCanvasContextMenu()
+                }
+            }
+            .background(Color(hex: "#1A1A18").opacity(0.93))
+            .clipShape(Capsule())
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
+            .position(x: screenPoint.x, y: max(70, screenPoint.y - 46))
+        }
+    }
+
+    @ViewBuilder
+    private func pillButton(_ label: String, enabled: Bool = true, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundColor(enabled ? .white : .white.opacity(0.35))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+    }
+
+    private func pillDivider() -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.2))
+            .frame(width: 0.5, height: 28)
+    }
+}
+
+// MARK: - Custom Lasso Gesture
+
+/// Purely visual overlay that draws the gold dashed lasso path while the user drags.
+///
+/// The actual pencil gesture is captured by a recognizer attached directly to the
+/// canvas host (see `CanvasHostView`/`FixedCanvasHostView`), which reports points to
+/// `CanvasViewModel.liveLassoPoints`. Keeping the capture on the canvas — instead of
+/// a blocking overlay — lets fingers pan and pinch-zoom freely while the lasso tool
+/// is selected, since only Apple Pencil touches drive the lasso.
+struct CustomLassoGestureView: View {
+    @ObservedObject var viewModel: CanvasViewModel
+
+    var body: some View {
+        Canvas { context, _ in
+            let points = viewModel.liveLassoPoints
+            guard points.count > 1 else { return }
+            var path = Path()
+            path.addLines(points)
+            if points.count > 2 {
+                path.addLine(to: points[0])
+            }
+            context.stroke(
+                path,
+                with: .color(Color(hex: "#D8B547").opacity(0.95)),
+                style: SwiftUI.StrokeStyle(
+                    lineWidth: 2,
+                    lineCap: SwiftUI.CGLineCap.round,
+                    lineJoin: SwiftUI.CGLineJoin.round,
+                    dash: [7, 5]
+                )
+            )
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Shape Snap Morph
+
+/// Brief overlay that animates the hand-drawn stroke morphing into the clean
+/// recognised shape. Rendered in screen space (projected from canvas space) so it
+/// sits above both canvas types regardless of their layer ordering.
+struct ShapeSnapMorphOverlay: View {
+    @ObservedObject var viewModel: CanvasViewModel
+    let morph: ShapeSnapMorph
+    @State private var progress: CGFloat = 0
+
+    private func project(_ p: CGPoint) -> CGPoint {
+        CGPoint(x: p.x * viewModel.canvasScale - viewModel.canvasOffset.width,
+                y: p.y * viewModel.canvasScale - viewModel.canvasOffset.height)
+    }
+
+    var body: some View {
+        MorphShape(
+            from: morph.fromPoints.map(project),
+            to: morph.toPoints.map(project),
+            progress: progress,
+            closed: morph.closed
+        )
+        .stroke(
+            morph.color,
+            style: SwiftUI.StrokeStyle(
+                lineWidth: max(1.5, morph.width * viewModel.canvasScale),
+                lineCap: .round,
+                lineJoin: .round
+            )
+        )
+        .allowsHitTesting(false)
+        .onAppear {
+            progress = 0
+            withAnimation(.easeOut(duration: 0.24)) { progress = 1 }
+        }
+    }
+}
+
+/// Linearly interpolates between two equal-length point arrays as `progress` 0→1.
+struct MorphShape: Shape {
+    var from: [CGPoint]
+    var to: [CGPoint]
+    var progress: CGFloat
+    var closed: Bool
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        guard from.count == to.count, from.count > 1 else { return Path() }
+        var path = Path()
+        func point(_ i: Int) -> CGPoint {
+            CGPoint(x: from[i].x + (to[i].x - from[i].x) * progress,
+                    y: from[i].y + (to[i].y - from[i].y) * progress)
+        }
+        path.move(to: point(0))
+        for i in 1..<from.count { path.addLine(to: point(i)) }
+        if closed { path.closeSubpath() }
+        return path
+    }
+}
+
+// MARK: - Lasso Screenshot Preview
+
+/// Simple preview sheet for a lasso screenshot image.
+struct LassoScreenshotPreview: View {
+    let image: UIImage
+    @Environment(\.dismiss) private var dismiss
+    @State private var showShareSheet = false
+    @State private var alertMessage = ""
+    @State private var showAlert = false
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(16)
+            }
+            .navigationTitle("Screenshot")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Close") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showShareSheet = true
+                    } label: {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    previewActionButton("Copy", systemImage: "doc.on.doc") {
+                        UIPasteboard.general.image = image
+                        presentAlert("Screenshot copied.")
+                    }
+
+                    previewActionButton("Save", systemImage: "square.and.arrow.down") {
+                        Task {
+                            await saveToPhotos()
+                        }
+                    }
+
+                    previewActionButton("Share", systemImage: "square.and.arrow.up") {
+                        showShareSheet = true
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+                .background(.ultraThinMaterial)
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ShareSheet(items: [image])
+            }
+            .alert(alertMessage, isPresented: $showAlert) {
+                Button("OK", role: .cancel) {}
+            }
+        }
+    }
+
+    private func previewActionButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(.system(size: 15, weight: .medium))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(Color(hex: "#1A1A18"))
+    }
+
+    @MainActor
+    private func presentAlert(_ message: String) {
+        alertMessage = message
+        showAlert = true
+    }
+
+    private func saveToPhotos() async {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+
+        switch status {
+        case .authorized, .limited:
+            do {
+                try await PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.creationRequestForAsset(from: image)
+                }
+                presentAlert("Screenshot saved to Photos.")
+            } catch {
+                presentAlert("Couldn’t save screenshot. Please try again.")
+            }
+        case .denied, .restricted:
+            presentAlert("Photos access is off. Enable it in Settings to save screenshots.")
+        case .notDetermined:
+            presentAlert("Photos permission is still pending. Please try again.")
+        @unknown default:
+            presentAlert("Couldn’t save screenshot. Please try again.")
         }
     }
 }
