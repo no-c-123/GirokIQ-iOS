@@ -41,6 +41,14 @@ struct SettingsView: View {
                 // MARK: - Data & Export
                 dataSection
 
+                // MARK: - Administration
+                // Only rendered for an administrator. This is presentation
+                // only: admin_user_overview() rejects a non-admin caller
+                // regardless of what the client decides to show.
+                if authViewModel.currentUserRole.isAdministrator {
+                    adminSection
+                }
+
                 // MARK: - About
                 aboutSection
             }
@@ -130,6 +138,22 @@ struct SettingsView: View {
             } message: {
                 Text(forceBackfillErrorMessage ?? "")
             }
+        }
+    }
+
+    // MARK: - Administration Section
+
+    var adminSection: some View {
+        Section {
+            NavigationLink {
+                AdminOverviewView()
+            } label: {
+                Label("Administration", systemImage: "person.2.badge.gearshape")
+            }
+        } header: {
+            Text("Administration")
+        } footer: {
+            Text("Visible because this account carries the administrator role.")
         }
     }
 

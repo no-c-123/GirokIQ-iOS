@@ -9,6 +9,7 @@
   ],
   "threshold": 80,
   "files": [
+    "GirokIQ-ios/Core/Models/AdminUserOverviewRow.swift",
     "GirokIQ-ios/Core/Models/AppState.swift",
     "GirokIQ-ios/Core/Models/AppUserRole.swift",
     "GirokIQ-ios/Features/Flashcards/FlashcardsModels.swift"

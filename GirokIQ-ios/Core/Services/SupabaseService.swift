@@ -283,6 +283,20 @@ final class SupabaseService {
             .execute()
     }
 
+    // MARK: - Administration
+
+    /// Per-user aggregates for the administrator panel.
+    ///
+    /// Backed by `public.admin_user_overview()`, which is `security definer`
+    /// and raises 42501 for anyone whose JWT does not carry the admin role. The
+    /// function returns counts and timestamps only -- never note content.
+    func fetchAdminUserOverview() async throws -> [AdminUserOverviewRow] {
+        try await supabase
+            .rpc("admin_user_overview")
+            .execute()
+            .value
+    }
+
     // MARK: - Canvas Images
 
     func uploadCanvasImage(data: Data, path: String, contentType: String = "image/jpeg") async throws {
