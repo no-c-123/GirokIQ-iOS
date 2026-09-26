@@ -191,3 +191,90 @@ final class FlashcardsCustomInstructionsTests: XCTestCase {
         XCTAssertTrue(config.selectedPageIds.isEmpty)
     }
 }
+
+/// Adding questions to a set that is already under review.
+final class FlashcardsQuestionAdditionTests: XCTestCase {
+
+    private func question(_ text: String, id: UUID = UUID()) -> FlashcardsQuestion {
+        FlashcardsQuestion(
+            id: id, kind: .openEnded, question: text,
+            options: nil, correctIndex: nil, expectedAnswer: "answer",
+            explanation: nil, sourcePageId: nil, sourcePageTitle: nil, sourceQuote: nil
+        )
+    }
+
+    // MARK: - Count
+
+    func testTheRequestedCountIsClampedToTheSupportedRange() {
+        // The UI offers 1 to 3; anything else would be a caller bug, and
+        // clamping is cheaper than trusting it.
+        XCTAssertEqual(FlashcardsQuestionEditor.clampAdditionCount(0), 1)
+        XCTAssertEqual(FlashcardsQuestionEditor.clampAdditionCount(-5), 1)
+        XCTAssertEqual(FlashcardsQuestionEditor.clampAdditionCount(1), 1)
+        XCTAssertEqual(FlashcardsQuestionEditor.clampAdditionCount(2), 2)
+        XCTAssertEqual(FlashcardsQuestionEditor.clampAdditionCount(3), 3)
+        XCTAssertEqual(FlashcardsQuestionEditor.clampAdditionCount(50), 3)
+    }
+
+    // MARK: - Appending
+
+    func testAdditionsGoToTheEndOfTheSet() {
+        let existing = [question("first"), question("second")]
+        let merged = FlashcardsQuestionEditor.append([question("third")], to: existing)
+        XCTAssertEqual(merged.map(\.question), ["first", "second", "third"])
+    }
+
+    func testAQuestionWithAnExistingIdIsRejected() {
+        // The model is told not to reuse ids. It is told, not forced.
+        let shared = UUID()
+        let existing = [question("first", id: shared)]
+        let merged = FlashcardsQuestionEditor.append([question("different wording", id: shared)], to: existing)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged.first?.question, "first")
+    }
+
+    func testAQuestionThatRepeatsExistingTextIsRejected() {
+        // Being asked the same thing twice in one session is the failure this
+        // prevents, and a fresh id would otherwise sail straight past.
+        let existing = [question("What is osmosis?")]
+        let merged = FlashcardsQuestionEditor.append([question("What is osmosis?")], to: existing)
+        XCTAssertEqual(merged.count, 1)
+    }
+
+    func testDuplicateDetectionIgnoresCaseAndSurroundingWhitespace() {
+        let existing = [question("What is osmosis?")]
+        let merged = FlashcardsQuestionEditor.append(
+            [question("  what is OSMOSIS?  ")], to: existing
+        )
+        XCTAssertEqual(merged.count, 1)
+    }
+
+    func testDuplicatesWithinTheSameBatchAreCollapsed() {
+        let merged = FlashcardsQuestionEditor.append(
+            [question("Repeated"), question("Repeated"), question("Unique")],
+            to: []
+        )
+        XCTAssertEqual(merged.map(\.question), ["Repeated", "Unique"])
+    }
+
+    func testBlankQuestionsAreNeverAdded() {
+        let merged = FlashcardsQuestionEditor.append(
+            [question("   "), question(""), question("Real one")],
+            to: []
+        )
+        XCTAssertEqual(merged.map(\.question), ["Real one"])
+    }
+
+    func testAppendingNothingLeavesTheSetUnchanged() {
+        let existing = [question("first")]
+        XCTAssertEqual(FlashcardsQuestionEditor.append([], to: existing).count, 1)
+    }
+
+    func testAdditionsPreserveTheirAnswers() {
+        // The added question has to be gradeable, which is the whole reason the
+        // model is asked to supply an answer even for a verbatim question.
+        let addition = question("Added")
+        let merged = FlashcardsQuestionEditor.append([addition], to: [])
+        XCTAssertEqual(merged.first?.expectedAnswer, "answer")
+    }
+}

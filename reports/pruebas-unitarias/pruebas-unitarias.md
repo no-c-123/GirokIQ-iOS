@@ -4,8 +4,8 @@
 
 | Métrica | Valor |
 | --- | ---: |
-| Pruebas ejecutadas | 106 |
-| Aprobadas | 106 |
+| Pruebas ejecutadas | 115 |
+| Aprobadas | 115 |
 | Fallidas | 0 |
 | Omitidas | 0 |
 
@@ -149,6 +149,22 @@ producido por `xcodebuild test`.
 | Setting Study Mode Writes Back Mode And Question Type | ✅ Passed |
 | Study Mode Flattens Mode And Question Type | ✅ Passed |
 | Study Mode Round Trips Through Every Case | ✅ Passed |
+
+## FlashcardsQuestionAdditionTests
+
+9 de 9 pruebas aprobadas.
+
+| Prueba | Resultado |
+| --- | --- |
+| Additions Go To The End Of The Set | ✅ Passed |
+| Additions Preserve Their Answers | ✅ Passed |
+| Appending Nothing Leaves The Set Unchanged | ✅ Passed |
+| A Question That Repeats Existing Text Is Rejected | ✅ Passed |
+| A Question With An Existing Id Is Rejected | ✅ Passed |
+| Blank Questions Are Never Added | ✅ Passed |
+| Duplicate Detection Ignores Case And Surrounding Whitespace | ✅ Passed |
+| Duplicates Within The Same Batch Are Collapsed | ✅ Passed |
+| The Requested Count Is Clamped To The Supported Range | ✅ Passed |
 
 ## FlashcardsQuestionEditorTests
 

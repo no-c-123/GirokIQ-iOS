@@ -231,6 +231,45 @@ enum FlashcardsQuestionEditor {
     static func canStudy(_ questions: [FlashcardsQuestion]) -> Bool {
         !questions.isEmpty
     }
+
+    /// How many questions a single "add" may request.
+    static let additionRange = 1...3
+
+    /// Clamps a requested addition count into the supported range.
+    static func clampAdditionCount(_ count: Int) -> Int {
+        min(max(count, additionRange.lowerBound), additionRange.upperBound)
+    }
+
+    /// Appends newly generated questions, dropping anything already present.
+    ///
+    /// The model is asked not to repeat what is already in the set, but it is
+    /// asked, not forced: it can return a question it has seen, or reuse an id.
+    /// Both are filtered here, by id and by question text compared without case
+    /// or surrounding whitespace, so an "add" can never quietly duplicate a card
+    /// the learner is about to be asked twice.
+    static func append(
+        _ additions: [FlashcardsQuestion],
+        to questions: [FlashcardsQuestion]
+    ) -> [FlashcardsQuestion] {
+        var result = questions
+        var seenIds = Set(questions.map(\.id))
+        var seenText = Set(questions.map { normalizedText($0.question) })
+
+        for addition in additions {
+            let text = normalizedText(addition.question)
+            guard !text.isEmpty, !seenIds.contains(addition.id), !seenText.contains(text) else {
+                continue
+            }
+            seenIds.insert(addition.id)
+            seenText.insert(text)
+            result.append(addition)
+        }
+        return result
+    }
+
+    private static func normalizedText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
 }
 
 // MARK: - Results

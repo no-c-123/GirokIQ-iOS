@@ -50,6 +50,10 @@ final class FlashcardsViewModel: ObservableObject {
     /// Most recently deleted question during review, for a single-step undo.
     @Published var lastDeleted: (question: FlashcardsQuestion, index: Int)? = nil
 
+    /// Adding questions during review.
+    @Published var isAddingQuestions: Bool = false
+    @Published var addQuestionsError: String? = nil
+
     /// Per-question outcome, mirrored from `answered` so the navigator strip and
     /// the results pips can observe it.
     @Published private(set) var outcomes: [UUID: Bool] = [:]
@@ -64,6 +68,12 @@ final class FlashcardsViewModel: ObservableObject {
     // MARK: - Session
 
     private var answered: [FlashcardsAnsweredQuestion] = []
+
+    /// Page text from the last generation, kept so adding a question during
+    /// review does not re-run the vision extraction over every selected page.
+    /// That work is the slow, expensive part of generation, and the notes have
+    /// not changed since.
+    private var cachedStudyMaterials: [(pageId: UUID, title: String, text: String)] = []
     private var sessionRecordID: UUID?
     private var sessionCreatedAt: Date?
     private var studyStartedAt: Date?
@@ -169,6 +179,8 @@ final class FlashcardsViewModel: ObservableObject {
                 preparationState = .failed("The selected pages don’t contain readable notes yet. Add more legible content, then try again.")
                 return
             }
+
+            cachedStudyMaterials = selected
 
             let generated = try await generator.generateQuestions(
                 notebookName: notebook.name,
@@ -296,6 +308,53 @@ final class FlashcardsViewModel: ObservableObject {
     }
 
     func discardUndo() { lastDeleted = nil }
+
+    /// Asks the model for `count` more questions about `instruction`.
+    ///
+    /// With `verbatim` true the instruction is used as the question text itself
+    /// and the model only supplies the answer, which is how a hand-written
+    /// question becomes gradeable.
+    func addQuestions(instruction: String, count: Int, verbatim: Bool = false) async {
+        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isAddingQuestions else { return }
+
+        guard !cachedStudyMaterials.isEmpty else {
+            addQuestionsError = "The notes from this session aren't available any more. Generate a new set to add questions."
+            return
+        }
+
+        isAddingQuestions = true
+        addQuestionsError = nil
+        defer { isAddingQuestions = false }
+
+        do {
+            let additions = try await generator.generateAdditionalQuestions(
+                notebookName: notebook.name,
+                pages: cachedStudyMaterials,
+                config: config,
+                instruction: trimmed,
+                count: count,
+                existingQuestions: questions,
+                verbatim: verbatim
+            )
+
+            let merged = FlashcardsQuestionEditor.append(additions, to: questions)
+            guard merged.count > questions.count else {
+                // Either the model returned nothing usable, or everything it
+                // returned duplicated the set. Both read the same to the
+                // learner: nothing appeared.
+                addQuestionsError = "Couldn't find anything new to ask about that in these notes."
+                return
+            }
+
+            questions = merged
+            persistReviewedQuestions()
+        } catch {
+            addQuestionsError = Self.describe(error)
+        }
+    }
+
+    func dismissAddQuestionsError() { addQuestionsError = nil }
 
     /// Keeps the stored session in step with the edits, so a learner who leaves
     /// mid-review comes back to the set they curated, not the generated one.

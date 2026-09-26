@@ -17,6 +17,10 @@ struct FlashcardsReviewView: View {
     let onClose: () -> Void
 
     @FocusState private var focusedQuestion: UUID?
+    @FocusState private var composerFocused: Bool
+
+    @State private var newQuestionText: String = ""
+    @State private var requestedCount: Int = 1
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,6 +36,8 @@ struct FlashcardsReviewView: View {
                 undoBar
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+            composer
 
             footer
         }
@@ -164,6 +170,103 @@ struct FlashcardsReviewView: View {
         .padding(.bottom, GSpacing.xs)
         .frame(maxWidth: FMetrics.contentWidth)
         .frame(maxWidth: .infinity)
+    }
+
+    // MARK: Composer
+
+    /// Adds questions without leaving the review.
+    ///
+    /// One field, two ways out. "Ask AI" treats the text as a topic and asks
+    /// for one, two or three questions about it. "Use as question" takes the
+    /// text as the question itself and has the model work out the answer from
+    /// the notes -- a question with no answer could not be graded.
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: GSpacing.xs) {
+            if let error = viewModel.addQuestionsError {
+                HStack(alignment: .top, spacing: GSpacing.xs) {
+                    Image(systemName: "exclamationmark.circle")
+                        .font(.fMeta)
+                        .foregroundColor(.fWrong)
+                    Text(error)
+                        .font(.fMeta)
+                        .foregroundColor(.fWrong)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                    Button("Dismiss") { viewModel.dismissAddQuestionsError() }
+                        .font(.fMeta)
+                        .buttonStyle(.plain)
+                        .foregroundColor(.gTextTertiary)
+                }
+            }
+
+            TextField(
+                "Add a question, or a topic to ask about",
+                text: $newQuestionText,
+                axis: .vertical
+            )
+            .font(.fBody)
+            .foregroundColor(.gTextPrimary)
+            .textFieldStyle(.plain)
+            .lineLimit(1...3)
+            .focused($composerFocused)
+            .disabled(viewModel.isAddingQuestions)
+            .padding(FMetrics.rowPaddingH)
+            .background(Color.fInset, in: RoundedRectangle(cornerRadius: GRadius.sm))
+
+            HStack(spacing: GSpacing.xs) {
+                if viewModel.isAddingQuestions {
+                    ProgressView().controlSize(.small)
+                    Text("Writing…")
+                        .font(.fMeta)
+                        .foregroundColor(.gTextTertiary)
+                } else {
+                    Text("How many")
+                        .font(.fMeta)
+                        .foregroundColor(.gTextTertiary)
+
+                    ForEach(Array(FlashcardsQuestionEditor.additionRange), id: \.self) { count in
+                        FChip(title: "\(count)", isSelected: requestedCount == count) {
+                            requestedCount = count
+                        }
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                FMiniButton(title: "Use as question") { submit(verbatim: true) }
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.4)
+
+                FPrimaryButton(title: "Ask AI") { submit(verbatim: false) }
+                    .disabled(!canSubmit)
+                    .opacity(canSubmit ? 1 : 0.4)
+            }
+        }
+        .padding(.horizontal, FMetrics.cardPadding)
+        .padding(.bottom, GSpacing.xs)
+        .frame(maxWidth: FMetrics.contentWidth)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var canSubmit: Bool {
+        !viewModel.isAddingQuestions
+            && !newQuestionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func submit(verbatim: Bool) {
+        let text = newQuestionText
+        composerFocused = false
+        Task {
+            await viewModel.addQuestions(
+                instruction: text,
+                // A question used word for word is always exactly one.
+                count: verbatim ? 1 : requestedCount,
+                verbatim: verbatim
+            )
+            // Keep the text when it failed, so the learner does not have to
+            // type it again to retry.
+            if viewModel.addQuestionsError == nil { newQuestionText = "" }
+        }
     }
 
     // MARK: Empty
