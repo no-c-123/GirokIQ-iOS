@@ -110,6 +110,14 @@ desde el principio:
 | Límite de tres cuadernos en el plan gratuito | Decisión de producto tomada durante la implementación |
 | Suscripciones y control de almacenamiento | Derivado de la preparación para TestFlight |
 
+[CAPTURA 1 — Módulo de flashcards en el iPad: pantalla de configuración con las tres modalidades de estudio, la cantidad de preguntas, la dificultad y el campo de instrucciones para la IA]
+
+[CAPTURA 2 — Pantalla de revisión previa al estudio: preguntas editables, botón de borrar y compositor para añadir. Debe verse que NO aparece ninguna respuesta]
+
+[CAPTURA 3 — Panel de administración con datos reales: indicadores, gráfica de tendencia y lista de cuentas]
+
+[CAPTURA 4 — Contraste de roles: Ajustes con una cuenta normal, sin sección de Administración, junto a la misma pantalla con la cuenta de administrador. Es la evidencia de que el rol cambia el comportamiento del sistema]
+
 ### 2.5 Pendientes al cierre
 
 | Pendiente | Situación |
@@ -159,6 +167,10 @@ en `Scripts/coverage_targets.json`, y la cobertura del target completo
 desaparezca del reporte hace fallar la compilación, de modo que la lista no
 puede manipularse para inflar el resultado.
 
+[CAPTURA 5 — Resultado de la ejecución de las pruebas: 115 aprobadas, 0 fallidas]
+
+[CAPTURA 6 — Resumen de cobertura publicado por el pipeline en el Job Summary de GitHub Actions]
+
 ### 3.2 Integración y entrega continuas
 
 `.github/workflows/ci.yml` se ejecuta en cada push y en cada pull request, con
@@ -181,7 +193,11 @@ antes de subirlo, para que un rechazo no consuma un número de build; y
 sobrescribe `CURRENT_PROJECT_VERSION` con el número de ejecución, porque App
 Store Connect rechaza un número de build repetido.
 
-El primer despliegue exitoso corresponde al **build 15**.
+El despliegue más reciente corresponde al **build 22**.
+
+[CAPTURA 7 — Pipeline completo en verde en GitHub Actions: los tres trabajos, pruebas, análisis de SonarQube y despliegue]
+
+[CAPTURA 8 — El build 22 disponible en TestFlight, desde App Store Connect o desde la app TestFlight]
 
 ### 3.3 Calidad de código (SonarQube Cloud)
 
@@ -197,6 +213,8 @@ Métricas del análisis desde el pipeline:
 | Deuda técnica (`sqale_index`) | 0 minutos |
 | Duplicación de líneas | 2.8 % |
 
+[CAPTURA 9 — Panel de SonarQube Cloud con las métricas del proyecto y las calificaciones A en fiabilidad, seguridad y mantenibilidad]
+
 Los ceros son el estado **después** de corregir. El primer análisis real
 reportó cuatro hallazgos, todos resueltos antes de integrar a la rama
 principal:
@@ -206,6 +224,8 @@ principal:
 | Elemento de llavero sin control de acceso | `swift:S6288` | Al investigarlo resultó que la clase `KeychainService` era **código muerto**: su única referencia era su propia declaración, y el comentario que decía que `AIService` la usaba estaba obsoleto. Se eliminó por completo, lo que resuelve la vulnerabilidad y elimina código sin uso |
 | Condicional sobre una promesa en `verify-subscription` | `typescript:S6544` | Falso positivo en intención: era una memoización deliberada. Se hizo explícita con `!== null` y un comentario |
 | Dos condicionales con el mismo valor en ambas ramas | `swift:S3923` | Restos de condiciones que alguna vez difirieron. Eliminadas |
+
+[CAPTURA 10 — Los cuatro hallazgos de SonarQube marcados como Fixed, filtrando por estado en la pestaña Issues]
 
 Un `sqale_index` en cero merece una advertencia: la deuda técnica de SonarQube
 se calcula como el tiempo estimado de remediación de los *code smells*, y sin
@@ -249,6 +269,8 @@ repositorio y es auditable, y no varía según los archivos que toque cada
 commit, a diferencia de la métrica de código nuevo. Elevar la cobertura de los
 view models sigue siendo una acción del plan de mejora continua.
 
+[CAPTURA 11 — El quality gate propio `GirokIQ` superado, con sus condiciones en verde]
+
 ### 3.4 Seguridad
 
 **Escaneo OWASP ZAP.** Modo *baseline* (pasivo) contra los endpoints de
@@ -266,6 +288,8 @@ Las seis alertas se refieren a la misma cookie, `__cf_bm`, que es la cookie de
 gestión de bots de Cloudflare situada delante de Supabase. No la establece el
 código de GirokIQ, no la lee la aplicación y sus atributos no son modificables
 desde el proyecto.
+
+[CAPTURA 12 — Resumen de alertas del reporte de OWASP ZAP, abriendo reports/seguridad/zap-baseline-report.html]
 
 **Limitación que conviene declarar.** El propio reporte indica que el escaneo
 alcanzó **4 endpoints** con **100 % de respuestas 4xx**: llegó a `/`,
@@ -434,3 +458,5 @@ donde estaba el procedimiento.
 | Diseño de roles | `Docs/Roles.md` |
 | Procedimiento de despliegue | `Docs/Despliegue.md` |
 | Migraciones de base de datos | `supabase/migrations/` |
+
+[CAPTURA 13 — Estructura del repositorio mostrando la carpeta reports/ con los cuatro tipos de reporte]

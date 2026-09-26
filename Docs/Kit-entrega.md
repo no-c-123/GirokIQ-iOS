@@ -18,7 +18,7 @@ sección indica a qué criterio responde.
 | --- | --- | ---: | --- | --- |
 | 1 | Implementación del módulo y seguridad | 20 | Módulo de flashcards funcional, autenticación JWT con roles administrador/usuario, 115 pruebas unitarias con 98.6 % de cobertura sobre los módulos bajo prueba | `GirokIQ-ios/Features/Flashcards/`, `supabase/migrations/20260916_add_user_roles.sql`, `GirokIQ-iosTests/`, `reports/cobertura/` |
 | 2 | Implementación de pipeline CI/CD | 25 | Pipeline con tres etapas automatizadas —pruebas, construcción y despliegue— verificadas en verde y con build publicado en TestFlight | `.github/workflows/ci.yml`, run 35970922769 |
-| 3 | Pruebas de seguridad y análisis de calidad | 25 | Escaneo OWASP ZAP ejecutado y documentado; SonarQube con cuatro vulnerabilidades/bugs **identificados y corregidos**, y todas las métricas documentadas | `reports/seguridad/`, `reports/calidad/sonarqube.md`, run 35963119773 |
+| 3 | Pruebas de seguridad y análisis de calidad | 25 | Escaneo OWASP ZAP ejecutado y documentado; SonarQube con cuatro hallazgos **identificados y corregidos**, todas las métricas documentadas y un quality gate propio superado | `reports/seguridad/`, `reports/calidad/sonarqube.md`, run 35963119773 |
 | 4 | Cierre del proyecto y análisis | 15 | Comparación semana por semana de cronograma planificado contra real, con causas, y ocho lecciones aprendidas | Sección 6 de la Parte A |
 | 5 | Plan de mejora continua | 15 | Plan con acciones específicas, métrica y meta medible para cada una, más cuatro propuestas de innovación | Sección 7 de la Parte A |
 
@@ -742,25 +742,35 @@ insumo principal del plan de mejora continua.
 
 # PARTE B — Capturas que debes tomar
 
-Estas son las evidencias visuales que el documento necesita y que solo puedes
-generar tú. Se sugiere insertarlas en la sección indicada.
+El PDF generado (`reports/Informe-de-cierre-GirokIQ.pdf`) ya tiene **13 marcos
+punteados** repartidos por el documento, cada uno rotulado con la captura que
+le corresponde. Solo hay que sustituir cada marco por su imagen.
 
-| # | Captura | Dónde obtenerla | Sección |
+Las de la aplicación y las de App Store Connect necesitan tu sesión, así que
+tienen que salir de tu iPad y de tu cuenta.
+
+| # | Captura | Dónde obtenerla | Sección del informe |
 | ---: | --- | --- | --- |
-| 1 | Pipeline completo en verde, con los tres trabajos visibles | GitHub → Actions → run 35970922769 | 3 |
-| 2 | Detalle del resumen de cobertura del run | El mismo run, al final de la página (Job Summary) | 2.5 |
-| 3 | Panel de SonarQube con las métricas y las calificaciones A | sonarcloud.io, panel del proyecto | 5.2 |
-| 4 | Los cuatro hallazgos de SonarQube marcados como corregidos | SonarQube → Issues → filtro por estado *Fixed* | 5.3 |
-| 5 | Resumen de alertas del reporte ZAP | Abrir `reports/seguridad/zap-baseline-report.html` en el navegador | 4.1 |
-| 6 | Build disponible en TestFlight | App Store Connect → TestFlight, o la app TestFlight | 3.4 |
-| 7 | La app ejecutándose: módulo de flashcards en las tres modalidades | iPad | 2.1 |
-| 8 | Panel de administración con datos reales | iPad, con cuenta de administrador | 2.3 |
-| 9 | Contraste de roles: Ajustes con cuenta normal (sin sección Administración) y con cuenta admin | iPad, dos cuentas | 2.3 |
-| 10 | Estructura del repositorio mostrando la carpeta `reports/` | GitHub | 9 |
+| 1 | Configuración de flashcards: modalidades, cantidad, dificultad y campo de instrucciones para la IA | iPad | 2.4 |
+| 2 | Pantalla de revisión: preguntas editables, borrar y compositor. **Debe verse que no aparece ninguna respuesta** | iPad | 2.4 |
+| 3 | Panel de administración con datos reales | iPad, cuenta admin | 2.4 |
+| 4 | Contraste de roles: Ajustes con cuenta normal frente a cuenta admin | iPad, dos cuentas | 2.4 |
+| 5 | 115 pruebas aprobadas, 0 fallidas | Xcode, navegador de pruebas | 3.1 |
+| 6 | Resumen de cobertura del pipeline | GitHub → Actions → run → Job Summary | 3.1 |
+| 7 | Pipeline completo en verde, tres trabajos | GitHub → Actions → run 36225036192 | 3.2 |
+| 8 | Build 22 en TestFlight | App Store Connect o app TestFlight | 3.2 |
+| 9 | Métricas y calificaciones A | sonarcloud.io, panel del proyecto | 3.3 |
+| 10 | Los cuatro hallazgos marcados como Fixed | SonarQube → Issues → filtro *Fixed* | 3.3 |
+| 11 | Quality gate `GirokIQ` superado | SonarQube → panel del proyecto | 3.3.1 |
+| 12 | Resumen de alertas de ZAP | Abrir `reports/seguridad/zap-baseline-report.html` | 3.4 |
+| 13 | Estructura del repositorio con la carpeta `reports/` | GitHub | 6 |
 
-La captura 9 es la más valiosa del conjunto: demuestra visualmente que el rol
-cambia el comportamiento del sistema, que es exactamente lo que pide el primer
-criterio.
+**La número 4 es la más valiosa del conjunto.** Demuestra visualmente que el rol
+cambia el comportamiento del sistema, que es exactamente lo que evalúa el
+primer criterio de la rúbrica. Las demás documentan; esa prueba.
+
+La número 2 conviene encuadrarla mostrando varias preguntas a la vez, para que
+se aprecie que ninguna muestra su respuesta.
 
 ---
 

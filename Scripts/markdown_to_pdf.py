@@ -146,6 +146,20 @@ td.center, th.center { text-align: center; }
 
 /* Long tables are allowed to break, but their rows are not. */
 tr { break-inside: avoid; }
+
+/* Placeholder for a screenshot the author still has to paste in. Drawn as an
+   obvious empty frame so it cannot be mistaken for body text or missed. */
+p.shot {
+  border: 1px dashed var(--accent);
+  border-radius: 4px;
+  background: #fbf8f1;
+  color: var(--muted);
+  font-size: 9pt;
+  padding: 14pt 10pt;
+  margin: 10pt 0 12pt;
+  text-align: center;
+  break-inside: avoid;
+}
 """
 
 
@@ -299,7 +313,11 @@ def convert(markdown):
             if raw.endswith("  ") and n < len(buffer) - 1:
                 joined.append(BREAK)
         text = " ".join(joined).replace(f" {BREAK} ", BREAK)
-        out.append("<p>" + inline(text).replace(BREAK, "<br>") + "</p>")
+        # A paragraph that opens with [CAPTURA is a placeholder for an image
+        # the author will paste in later; it gets a frame of its own so it
+        # stands out from the prose around it.
+        css_class = ' class="shot"' if text.lstrip().startswith("[CAPTURA") else ""
+        out.append(f"<p{css_class}>" + inline(text).replace(BREAK, "<br>") + "</p>")
 
     return "\n".join(out)
 
