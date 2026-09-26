@@ -4,8 +4,8 @@
 
 | Métrica | Valor |
 | --- | ---: |
-| Pruebas ejecutadas | 89 |
-| Aprobadas | 89 |
+| Pruebas ejecutadas | 106 |
+| Aprobadas | 106 |
 | Fallidas | 0 |
 | Omitidas | 0 |
 
@@ -90,6 +90,20 @@ producido por `xcodebuild test`.
 | Titles Are Non Empty | ✅ Passed |
 | Unknown Role Falls Back To User | ✅ Passed |
 
+## FlashcardsCustomInstructionsTests
+
+7 de 7 pruebas aprobadas.
+
+| Prueba | Resultado |
+| --- | --- |
+| A Completely Empty Object Decodes To Defaults | ✅ Passed |
+| A Session Stored Before This Field Existed Still Decodes | ✅ Passed |
+| Empty By Default | ✅ Passed |
+| Instructions Are Capped In Length | ✅ Passed |
+| Instructions Are Trimmed | ✅ Passed |
+| Instructions Survive A Codable Round Trip | ✅ Passed |
+| Whitespace Only Counts As Absent | ✅ Passed |
+
 ## FlashcardsGeneratorParsingTests
 
 16 de 16 pruebas aprobadas.
@@ -135,6 +149,23 @@ producido por `xcodebuild test`.
 | Setting Study Mode Writes Back Mode And Question Type | ✅ Passed |
 | Study Mode Flattens Mode And Question Type | ✅ Passed |
 | Study Mode Round Trips Through Every Case | ✅ Passed |
+
+## FlashcardsQuestionEditorTests
+
+10 de 10 pruebas aprobadas.
+
+| Prueba | Resultado |
+| --- | --- |
+| An Empty Set Cannot Be Studied | ✅ Passed |
+| A Set With One Question Can Be Studied | ✅ Passed |
+| Blank Text Leaves The Question Untouched | ✅ Passed |
+| Deleting An Unknown Id Changes Nothing | ✅ Passed |
+| Deleting Every Question Yields An Empty Set | ✅ Passed |
+| Deleting Removes Only That Question | ✅ Passed |
+| Editing An Unknown Id Changes Nothing | ✅ Passed |
+| Editing Preserves The Answer And Attribution | ✅ Passed |
+| Editing Rewrites Only The Target Question | ✅ Passed |
+| Editing Trims Surrounding Whitespace | ✅ Passed |
 
 ## SubscriptionTierTests
 

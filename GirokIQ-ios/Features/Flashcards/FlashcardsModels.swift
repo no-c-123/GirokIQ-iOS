@@ -82,6 +82,25 @@ struct FlashcardsSessionConfig: Hashable, Codable, Sendable {
     var difficulty: FlashcardsDifficulty = .medium
     var selectedPageIds: Set<UUID> = []
 
+    /// Free-text preferences the learner writes before generating, e.g. "ask in
+    /// English even though the notes are in Korean".
+    var customInstructions: String = ""
+
+    /// Upper bound on what is sent to the model. The instruction shares a token
+    /// budget with the notes themselves, so an essay here would crowd out the
+    /// material the questions are supposed to come from.
+    static let customInstructionsLimit = 400
+
+    /// The instruction as it should be sent: trimmed, capped, and empty when it
+    /// carries nothing.
+    var normalizedCustomInstructions: String {
+        let trimmed = customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return String(trimmed.prefix(Self.customInstructionsLimit))
+    }
+
+    var hasCustomInstructions: Bool { !normalizedCustomInstructions.isEmpty }
+
     var canContinueFromSelection: Bool { !selectedPageIds.isEmpty }
 
     /// Flattens `mode` + `questionType` into the three-way UI choice.
@@ -105,6 +124,24 @@ struct FlashcardsSessionConfig: Hashable, Codable, Sendable {
                 mode = .focus
             }
         }
+    }
+
+    init() {}
+
+    /// Written by hand because Swift's synthesized decoder ignores a property's
+    /// default value and throws `keyNotFound` instead. Sessions stored before
+    /// `customInstructions` existed would fail to decode, and the caller's
+    /// fallback would quietly reset the learner's mode and difficulty on resume.
+    /// Every field is optional here so adding the next one cannot break the old
+    /// rows either.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try container.decodeIfPresent(FlashcardsMode.self, forKey: .mode) ?? .quiz
+        questionType = try container.decodeIfPresent(FlashcardsQuestionType.self, forKey: .questionType) ?? .multipleChoice
+        questionCount = try container.decodeIfPresent(Int.self, forKey: .questionCount) ?? 10
+        difficulty = try container.decodeIfPresent(FlashcardsDifficulty.self, forKey: .difficulty) ?? .medium
+        selectedPageIds = try container.decodeIfPresent(Set<UUID>.self, forKey: .selectedPageIds) ?? []
+        customInstructions = try container.decodeIfPresent(String.self, forKey: .customInstructions) ?? ""
     }
 
     /// Rough minutes the session should take, for the setup summary line.
@@ -152,6 +189,48 @@ struct FlashcardsQuestion: Identifiable, Hashable, Codable, Sendable {
     var sourcePageId: UUID?
     var sourcePageTitle: String?
     var sourceQuote: String?
+}
+
+// MARK: - Editing
+
+/// Edition of a generated set, kept as free functions over an array so the
+/// rules can be tested without standing up a view model.
+///
+/// The learner reviews the questions before studying, and may fix a badly
+/// worded one or drop it. Both operations happen on the question text only:
+/// answers are never shown at review time, so they are never edited here.
+enum FlashcardsQuestionEditor {
+
+    /// Replaces a question's wording.
+    ///
+    /// Returns the array unchanged when the id is unknown or the new text is
+    /// blank. Blank is rejected rather than accepted because a question with no
+    /// text is unanswerable, and silently deleting it would not be what
+    /// somebody clearing a field meant to do.
+    static func edit(
+        _ questions: [FlashcardsQuestion],
+        id: UUID,
+        newText: String
+    ) -> [FlashcardsQuestion] {
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = questions.firstIndex(where: { $0.id == id }) else {
+            return questions
+        }
+        var updated = questions
+        updated[index].question = trimmed
+        return updated
+    }
+
+    /// Removes a question. Unknown ids are a no-op.
+    static func delete(_ questions: [FlashcardsQuestion], id: UUID) -> [FlashcardsQuestion] {
+        questions.filter { $0.id != id }
+    }
+
+    /// Whether a set can still be studied. An empty set cannot.
+    static func canStudy(_ questions: [FlashcardsQuestion]) -> Bool {
+        !questions.isEmpty
+    }
 }
 
 // MARK: - Results

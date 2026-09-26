@@ -7,6 +7,10 @@ final class FlashcardsViewModel: ObservableObject {
     enum Screen: Equatable {
         case selectContent
         case configure
+        /// Between generation and studying: the learner reads the questions,
+        /// fixes the wording of any that came out badly and drops the ones that
+        /// are not worth answering. Answers are deliberately not shown here.
+        case reviewQuestions
         case quiz
         case focus
         case results(FlashcardsSessionResult)
@@ -42,6 +46,9 @@ final class FlashcardsViewModel: ObservableObject {
 
     // Focus UI state
     @Published var focusRevealed: Bool = false
+
+    /// Most recently deleted question during review, for a single-step undo.
+    @Published var lastDeleted: (question: FlashcardsQuestion, index: Int)? = nil
 
     /// Per-question outcome, mirrored from `answered` so the navigator strip and
     /// the results pips can observe it.
@@ -224,13 +231,90 @@ final class FlashcardsViewModel: ObservableObject {
         return "Flashcards couldn’t create questions right now. \(error.localizedDescription)"
     }
 
+    /// Generation finished: show the questions for review instead of dropping
+    /// the learner straight into the first one.
+    func beginQuestionReview() {
+        preparationState = .idle
+        screen = .reviewQuestions
+    }
+
     func beginPreparedSession() {
         preparationState = .idle
+        guard FlashcardsQuestionEditor.canStudy(questions) else {
+            // Everything was deleted during review; there is nothing to study.
+            screen = .configure
+            return
+        }
+        // The clock starts when studying starts, not when the questions were
+        // generated, so time spent reviewing does not count against the learner.
         studyStartedAt = Date()
+        currentQuestionIndex = 0
+        resetPerQuestionUIState()
         if config.mode == .focus {
             screen = .focus
         } else {
             screen = .quiz
+        }
+    }
+
+    // MARK: - Review editing
+
+    var canStartStudying: Bool { FlashcardsQuestionEditor.canStudy(questions) }
+
+    /// Rewrites a question as the learner types. Blank text is rejected, so
+    /// clearing the field leaves the original wording rather than producing an
+    /// unanswerable card.
+    ///
+    /// In memory only: persisting on every keystroke would mean a database
+    /// write per character. `commitReviewEdits()` stores the result.
+    func updateQuestionText(id: UUID, to newText: String) {
+        questions = FlashcardsQuestionEditor.edit(questions, id: id, newText: newText)
+    }
+
+    /// Writes the reviewed set to storage. Called when a field loses focus and
+    /// when leaving the review screen.
+    func commitReviewEdits() {
+        persistReviewedQuestions()
+    }
+
+    func deleteQuestion(id: UUID) {
+        guard let index = questions.firstIndex(where: { $0.id == id }) else { return }
+        // Kept so a mistaken tap can be undone; deleting a question the model
+        // took thirty seconds to write is not worth losing to a slip.
+        lastDeleted = (question: questions[index], index: index)
+        questions = FlashcardsQuestionEditor.delete(questions, id: id)
+        persistReviewedQuestions()
+    }
+
+    func undoDelete() {
+        guard let pending = lastDeleted else { return }
+        var restored = questions
+        restored.insert(pending.question, at: min(pending.index, restored.count))
+        questions = restored
+        lastDeleted = nil
+        persistReviewedQuestions()
+    }
+
+    func discardUndo() { lastDeleted = nil }
+
+    /// Keeps the stored session in step with the edits, so a learner who leaves
+    /// mid-review comes back to the set they curated, not the generated one.
+    private func persistReviewedQuestions() {
+        guard let userId, let sessionRecordID else { return }
+        let record = FlashcardsSessionRecord(
+            id: sessionRecordID,
+            userId: userId,
+            notebookId: notebook.id,
+            status: .active,
+            config: config,
+            questions: questions,
+            answers: answered,
+            currentQuestionIndex: 0,
+            createdAt: sessionCreatedAt ?? Date(),
+            updatedAt: Date()
+        )
+        Task { [localDatabase] in
+            try? await localDatabase.saveFlashcardsSession(record)
         }
     }
 

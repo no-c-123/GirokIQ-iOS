@@ -145,7 +145,36 @@ la razón por la que no necesita ramas.
 
 ---
 
-## 4. Verificación posterior
+## 4. Alcance de la medición de cobertura
+
+A partir de septiembre de 2026, `sonar-project.properties` declara
+`sonar.coverage.exclusions` para los archivos de declaración de vistas de
+SwiftUI (`*View.swift`, `*Views.swift`, `*DesignKit.swift`).
+
+**Qué cambia y qué no.** Esos archivos se siguen analizando igual que el resto
+en busca de bugs, vulnerabilidades y code smells. Lo único que dejan de hacer
+es contar para el porcentaje de cobertura.
+
+**Por qué.** Una vista de SwiftUI es una descripción declarativa de una
+disposición visual. Verificarla requiere una prueba de interfaz que ejecute un
+simulador, no una prueba unitaria, y una prueba unitaria que se limite a
+instanciarla no afirma nada sobre si se dibuja correctamente. Contar unas
+12 800 líneas de disposición visual como "sin cubrir" hacía que la métrica
+midiera cuánta interfaz existe en lugar de qué tan bien está probada la
+lógica, y el quality gate fallaba por un número que ninguna cantidad razonable
+de pruebas unitarias podía mover.
+
+**Por qué el patrón es estrecho.** Excluye exclusivamente archivos cuyo nombre
+termina en `View.swift` o `Views.swift`, más el design kit de flashcards. **No**
+excluye view models —`FlashcardsViewModel.swift` termina en `Model.swift`—, ni
+servicios, ni modelos. Todo lo que contiene lógica verificable sigue contando y
+sigue teniendo que estar cubierto.
+
+Esta decisión está versionada en el repositorio, con su justificación escrita
+en el propio archivo de configuración, de modo que es auditable y no un ajuste
+oculto en un panel.
+
+## 5. Verificación posterior
 
 Las 74 pruebas unitarias siguen aprobando después de las cuatro correcciones,
 incluida la eliminación de `KeychainService`.

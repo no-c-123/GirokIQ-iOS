@@ -1,6 +1,6 @@
 ## Unit test coverage
 
-**Modules under test: 98.4%** (gate: 80%)
+**Modules under test: 98.6%** (gate: 80%)
 
 | File | Covered | Executable | Coverage |
 | --- | ---: | ---: | ---: |
@@ -8,8 +8,8 @@
 | `GirokIQ-ios/Core/Models/AdminUserOverviewRow.swift` | 21 | 21 | 100.0% |
 | `GirokIQ-ios/Core/Models/AppState.swift` | 38 | 38 | 100.0% |
 | `GirokIQ-ios/Core/Models/AppUserRole.swift` | 34 | 34 | 100.0% |
-| `GirokIQ-ios/Features/Flashcards/FlashcardsModels.swift` | 102 | 107 | 95.3% |
-| **Total** | **299** | **304** | **98.4%** |
+| `GirokIQ-ios/Features/Flashcards/FlashcardsModels.swift` | 143 | 148 | 96.6% |
+| **Total** | **340** | **345** | **98.6%** |
 
 ### Whole-target coverage (context only, not gated)
 

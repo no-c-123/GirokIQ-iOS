@@ -368,6 +368,7 @@ struct FlashcardsConfigureSessionView: View {
                         studyMode
                         questionCount
                         difficulty
+                        customInstructions
                     }
                     .padding(.horizontal, FMetrics.cardPadding)
                     .padding(.bottom, FMetrics.blockGap)
@@ -463,6 +464,45 @@ struct FlashcardsConfigureSessionView: View {
                 .font(.fMeta)
                 .foregroundColor(.gTextTertiary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Free-text guidance for the model, e.g. asking for the questions in one
+    /// language when the notes are in another.
+    private var customInstructions: some View {
+        VStack(alignment: .leading, spacing: FMetrics.rowGap) {
+            FSectionLabel(
+                title: "Instructions for the AI",
+                hint: "Optional"
+            )
+
+            TextField(
+                "e.g. Ask the questions in English even though my notes are in Korean",
+                text: $viewModel.config.customInstructions,
+                axis: .vertical
+            )
+            .font(.fBody)
+            .foregroundColor(.gTextPrimary)
+            .textFieldStyle(.plain)
+            .lineLimit(2...4)
+            .padding(FMetrics.rowPaddingH)
+            .background(Color.fInset, in: RoundedRectangle(cornerRadius: GRadius.sm))
+
+            HStack(spacing: GSpacing.xs) {
+                Text("Guides wording, language and emphasis. It cannot invent material that is not in your notes.")
+                    .font(.fMeta)
+                    .foregroundColor(.gTextTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Spacer(minLength: 0)
+
+                if viewModel.config.customInstructions.count > FlashcardsSessionConfig.customInstructionsLimit - 100 {
+                    Text("\(viewModel.config.normalizedCustomInstructions.count)/\(FlashcardsSessionConfig.customInstructionsLimit)")
+                        .font(.fMeta)
+                        .foregroundColor(.gTextTertiary)
+                        .monospacedDigit()
+                }
+            }
         }
     }
 

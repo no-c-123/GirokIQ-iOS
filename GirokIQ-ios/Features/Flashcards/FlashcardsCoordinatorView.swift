@@ -49,9 +49,10 @@ struct FlashcardsCoordinatorView: View {
         .task { await viewModel.load() }
         .toolbar(.hidden, for: .navigationBar)
         .onChange(of: viewModel.preparationState) { _, state in
-            // Questions are ready — go straight into the session rather than
-            // asking the learner to confirm a screen they didn't ask for.
-            if state == .ready { viewModel.beginPreparedSession() }
+            // Questions are ready: hand them to the learner to review before
+            // studying, so a badly worded or irrelevant one can be fixed or
+            // dropped instead of being answered.
+            if state == .ready { viewModel.beginQuestionReview() }
         }
     }
 
@@ -67,6 +68,9 @@ struct FlashcardsCoordinatorView: View {
                 notebookName: notebook.name,
                 onClose: { dismiss() }
             )
+
+        case .reviewQuestions:
+            FlashcardsReviewView(viewModel: viewModel, onClose: { dismiss() })
 
         case .quiz:
             FlashcardsQuizView(viewModel: viewModel, onClose: { dismiss() })
