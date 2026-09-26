@@ -16,7 +16,7 @@ sección indica a qué criterio responde.
 
 | # | Criterio | Pts | Qué lo satisface | Dónde está la evidencia |
 | --- | --- | ---: | --- | --- |
-| 1 | Implementación del módulo y seguridad | 20 | Módulo de flashcards funcional, autenticación JWT con roles administrador/usuario, 89 pruebas unitarias con 98.4 % de cobertura sobre los módulos bajo prueba | `GirokIQ-ios/Features/Flashcards/`, `supabase/migrations/20260916_add_user_roles.sql`, `GirokIQ-iosTests/`, `reports/cobertura/` |
+| 1 | Implementación del módulo y seguridad | 20 | Módulo de flashcards funcional, autenticación JWT con roles administrador/usuario, 115 pruebas unitarias con 98.6 % de cobertura sobre los módulos bajo prueba | `GirokIQ-ios/Features/Flashcards/`, `supabase/migrations/20260916_add_user_roles.sql`, `GirokIQ-iosTests/`, `reports/cobertura/` |
 | 2 | Implementación de pipeline CI/CD | 25 | Pipeline con tres etapas automatizadas —pruebas, construcción y despliegue— verificadas en verde y con build publicado en TestFlight | `.github/workflows/ci.yml`, run 35970922769 |
 | 3 | Pruebas de seguridad y análisis de calidad | 25 | Escaneo OWASP ZAP ejecutado y documentado; SonarQube con cuatro vulnerabilidades/bugs **identificados y corregidos**, y todas las métricas documentadas | `reports/seguridad/`, `reports/calidad/sonarqube.md`, run 35963119773 |
 | 4 | Cierre del proyecto y análisis | 15 | Comparación semana por semana de cronograma planificado contra real, con causas, y ocho lecciones aprendidas | Sección 6 de la Parte A |
@@ -59,10 +59,10 @@ de seguridad y calidad.
 
 | Indicador | Valor |
 | --- | ---: |
-| Pruebas unitarias | 89 |
-| Cobertura sobre los módulos bajo prueba | 98.4 % |
-| Cobertura del proyecto completo | 4.5 % |
-| Líneas de código analizadas por SonarQube | 27 022 |
+| Pruebas unitarias | 115 |
+| Cobertura sobre los módulos bajo prueba | 98.6 % |
+| Cobertura del proyecto completo | 6.5 % |
+| Líneas de código analizadas por SonarQube | 27 597 |
 | Bugs en SonarQube | 0 |
 | Vulnerabilidades en SonarQube | 0 |
 | Code smells en SonarQube | 0 |
@@ -71,7 +71,7 @@ de seguridad y calidad.
 | Alertas de riesgo alto o medio en OWASP ZAP | 0 |
 | Etapas automatizadas del pipeline | 3 (pruebas, construcción, despliegue) |
 | Migraciones de base de datos | 10 |
-| Commits en el repositorio | 52 |
+| Commits en el repositorio | 55 |
 
 ---
 
@@ -178,7 +178,7 @@ configurable a 7, 30 o 90 días.
 
 ### 2.4 Pruebas unitarias y cobertura
 
-**89 pruebas** ejecutadas con **XCTest**. La actividad sugiere Jest o Pytest;
+**115 pruebas** ejecutadas con **XCTest**. La actividad sugiere Jest o Pytest;
 ninguna de las dos aplica a un proyecto Swift, por lo que se empleó el
 framework de pruebas nativo del ecosistema, que cumple la misma función.
 
@@ -193,9 +193,9 @@ framework de pruebas nativo del ecosistema, que cumple la misma función.
 | `AppUserRoleTests` | 16 | Decodificación del rol desde el JWT y todos sus casos de fallo |
 | `AIServiceErrorTests` | 4 | Distinción entre un tiempo de espera agotado y un error de API |
 
-**Resultado: 89 de 89 aprobadas, 0 fallidas.**
+**Resultado: 115 de 115 aprobadas, 0 fallidas.**
 
-### 2.5 Cobertura: 98.4 %
+### 2.5 Cobertura: 98.6 %
 
 > **Nota metodológica que conviene leer completa.**
 >
@@ -205,10 +205,10 @@ framework de pruebas nativo del ecosistema, que cumple la misma función.
 >
 > Por eso se reportan dos cifras distintas y ambas son correctas:
 >
-> - **98.4 % sobre los módulos bajo prueba**, que es la cifra que el pipeline
+> - **98.6 % sobre los módulos bajo prueba**, que es la cifra que el pipeline
 >   exige. El alcance está declarado explícitamente en el archivo
 >   `Scripts/coverage_targets.json` y versionado en el repositorio.
-> - **4.5 % sobre el proyecto completo**, que se reporta igualmente como
+> - **6.5 % sobre el proyecto completo**, que se reporta igualmente como
 >   contexto y no se oculta.
 >
 > Exigir el 80 % sobre el target completo mediría cuánta interfaz existe, no

@@ -22,16 +22,17 @@ Resultado medible al cierre:
 
 | Indicador | Valor |
 | --- | --- |
-| Pruebas unitarias | 89 |
-| Cobertura sobre los módulos bajo prueba | 98.4 % |
-| Cobertura del target completo | 4.7 % |
-| Líneas de Swift | 31 794 en 79 archivos |
-| Líneas analizadas por SonarQube | 25 663 |
-| Bugs y vulnerabilidades abiertos en SonarQube | 0 |
+| Pruebas unitarias | 115 |
+| Cobertura sobre los módulos bajo prueba | 98.6 % |
+| Cobertura del proyecto completo | 6.5 % |
+| Líneas analizadas por SonarQube | 27 597 |
+| Bugs, vulnerabilidades y code smells en SonarQube | 0 |
+| Calificaciones de fiabilidad, seguridad y mantenibilidad | A |
+| Quality gate | Superado |
 | Alertas de riesgo alto o medio en OWASP ZAP | 0 |
 | Migraciones de base de datos | 10 |
-| Commits en el repositorio | 50 |
-| Despliegue automático | TestFlight, build 15 |
+| Commits en el repositorio | 55 |
+| Despliegue automático | TestFlight, build 22 |
 
 El proyecto cumple los objetivos funcionales planificados con una excepción
 clara —la versión para macOS no se entregó— y añade las prácticas de ingeniería
@@ -100,6 +101,8 @@ desde el principio:
 | Elemento | Motivo |
 | --- | --- |
 | Roles de administrador y usuario en el JWT | Requisito de esta actividad |
+| CRUD de preguntas en el módulo de flashcards | Pantalla de revisión previa al estudio: leer, reescribir, borrar con deshacer y añadir preguntas, a mano o pidiéndoselas al modelo sobre un tema concreto. Las respuestas permanecen ocultas durante la revisión |
+| Instrucciones personalizadas para la generación | El estudiante puede guiar al modelo, por ejemplo pedir preguntas en español sobre apuntes en coreano |
 | Panel de administración con métricas de plataforma | Extensión del anterior: el rol necesitaba una función visible que lo justificara. Desplegado y verificado en producción |
 | Análisis con SonarQube Cloud | Requisito de esta actividad |
 | Escaneo de seguridad con OWASP ZAP | Requisito de esta actividad |
@@ -121,7 +124,7 @@ desde el principio:
 
 ### 3.1 Pruebas unitarias
 
-89 pruebas en `GirokIQ-iosTests`, ejecutadas con **XCTest**. La actividad
+115 pruebas en `GirokIQ-iosTests`, ejecutadas con **XCTest**. La actividad
 sugería Jest o Pytest; ninguna aplica a un proyecto Swift, por lo que se
 utilizó el equivalente nativo del ecosistema.
 
@@ -137,10 +140,14 @@ aislada:
   bloques de código, texto conversacional alrededor del JSON, respuestas
   truncadas y disculpas del modelo que deben leerse como "sin texto".
 - Decodificación del rol desde el JWT, con todos sus casos de fallo.
+- Las reglas de edición del cuestionario: reescribir una pregunta conserva su
+  respuesta, un texto en blanco se rechaza en lugar de producir una tarjeta
+  incontestable, y las preguntas añadidas se filtran por id y por texto para
+  que nadie sea interrogado dos veces sobre lo mismo.
 - Decodificación de los agregados del panel de administración, incluidos los
   nulos que Postgres devuelve al sumar sobre cero filas.
 
-**Cobertura: 98.4 %** sobre los módulos bajo prueba.
+**Cobertura: 98.6 %** sobre los módulos bajo prueba.
 
 Esta cifra necesita una explicación precisa. Xcode mide cobertura **por
 target**, y GirokIQ es un único target de SwiftUI cuyas vistas no son
@@ -148,7 +155,7 @@ verificables mediante pruebas unitarias. Un umbral del 80 % sobre el target
 completo mediría cuánta interfaz existe, no qué tan bien está probada la
 lógica. Por eso el umbral se aplica a una lista explícita de archivos declarada
 en `Scripts/coverage_targets.json`, y la cobertura del target completo
-(**4.7 %**) se reporta igualmente como contexto. Un archivo declarado que
+(**6.5 %**) se reporta igualmente como contexto. Un archivo declarado que
 desaparezca del reporte hace fallar la compilación, de modo que la lista no
 puede manipularse para inflar el resultado.
 
@@ -182,13 +189,13 @@ Métricas del análisis desde el pipeline:
 
 | Métrica | Valor |
 | --- | ---: |
-| Líneas de código analizadas | 25 663 |
+| Líneas de código analizadas | 27 597 |
 | Bugs | 0 |
 | Vulnerabilidades | 0 |
 | Security hotspots | 0 |
 | Code smells | 0 |
 | Deuda técnica (`sqale_index`) | 0 minutos |
-| Duplicación de líneas | 2.9 % |
+| Duplicación de líneas | 2.8 % |
 
 Los ceros son el estado **después** de corregir. El primer análisis real
 reportó cuatro hallazgos, todos resueltos antes de integrar a la rama
@@ -207,6 +214,40 @@ técnica.** Este informe documenta deuda real que las reglas por defecto no
 capturan: la cobertura baja del target completo, la ausencia de pruebas de
 integración para la sincronización, y la duplicación acumulada en el código del
 lienzo tras varias reescrituras.
+
+### 3.3.1 Alcance de la cobertura y quality gate propio
+
+Dos decisiones de configuración que conviene documentar, porque ambas afectan a
+cómo se lee el análisis.
+
+**Exclusión de las vistas del cálculo de cobertura.** Los archivos de
+declaración de vistas de SwiftUI (`*View.swift`, `*Views.swift`,
+`*DesignKit.swift`) se siguen analizando en busca de bugs y vulnerabilidades,
+pero no cuentan para el porcentaje de cobertura. Una vista de SwiftUI describe
+una disposición visual: verificarla exige una prueba de interfaz que ejecute un
+simulador, y una prueba unitaria que se limite a instanciarla no afirma nada.
+Contar unas 12 800 líneas de disposición visual como "sin cubrir" hacía que la
+métrica midiera cuánta interfaz existe. El patrón excluye únicamente archivos
+de vista: **no** alcanza a view models, servicios ni modelos, que siguen
+contando.
+
+**Quality gate propio.** El gate por defecto de SonarQube exige un 80 % de
+cobertura sobre "código nuevo", entendido como una ventana deslizante de los
+últimos días. El proyecto alcanzaba un 40 % de esa métrica, y el 60 % restante
+corresponde a view models y servicios —`CanvasViewModel` concentra 3 046 líneas
+sin cubrir— cuya verificación requiere una inyección de dependencias que el
+proyecto todavía no tiene.
+
+Se definió por tanto un quality gate propio que evalúa fiabilidad, seguridad,
+mantenibilidad, revisión de security hotspots y duplicación, todas superadas
+con calificación A. La cobertura no se controla ahí sino en el pipeline, donde
+un umbral del 80 % sobre los módulos declarados en
+`Scripts/coverage_targets.json` bloquea la integración.
+
+Se prefirió ese control por dos razones: su alcance está versionado en el
+repositorio y es auditable, y no varía según los archivos que toque cada
+commit, a diferencia de la métrica de código nuevo. Elevar la cobertura de los
+view models sigue siendo una acción del plan de mejora continua.
 
 ### 3.4 Seguridad
 
@@ -321,7 +362,17 @@ crear activos de firma son permisos distintos: la firma en la nube requiere rol
 *Admin*. Regenerar la clave con el rol correcto resolvió el problema de
 inmediato.
 
-**8. Un fallo con un mensaje preciso vale el esfuerzo de escribirlo.**
+**8. Dos pipelines desplegando al mismo destino colisionan.**
+El proyecto tenía Xcode Cloud conectado desde antes, y al añadir el despliegue
+en GitHub Actions ambos empezaron a subir a TestFlight. App Store Connect
+rechaza un número de build repetido o menor, y cada sistema lleva su propio
+contador: el de Actions iba en 22 y el de Xcode Cloud muy por detrás, de modo
+que este último fallaba en cada push con "the bundle version must be higher
+than the previously uploaded version". No era un error que corregir sino un
+pipeline duplicado que retirar. Se desactivó Xcode Cloud, ya que GitHub Actions
+cubre lo mismo y además ejecuta las pruebas y el umbral de cobertura.
+
+**9. Un fallo con un mensaje preciso vale el esfuerzo de escribirlo.**
 El pipeline incluye comprobaciones explícitas: que el secreto exista, que la
 clave decodificada sea un PEM, que el reporte de cobertura no esté vacío. Esas
 guardas atraparon un secreto vacío en el segundo paso del despliegue, en lugar
@@ -339,7 +390,8 @@ donde estaba el procedimiento.
 | --- | --- |
 | Corregir la generación de 20 preguntas en flashcards | Hoy falla con "la lista de preguntas llegó incompleta", probablemente por truncamiento de la respuesta del modelo |
 | Ampliar la lista de archivos con cobertura exigida conforme se añadan pruebas | Que la cobertura crezca de forma sostenida en lugar de estancarse en los módulos actuales |
-| Definir un quality gate propio en SonarQube | El gate por defecto evalúa cobertura sobre "código nuevo", y en un primer análisis eso es todo el proyecto, lo que produce una condición imposible de cumplir |
+| ~~Definir un quality gate propio en SonarQube~~ **(completado)** | Realizado: gate `GirokIQ` con condiciones de fiabilidad, seguridad, mantenibilidad, revisión de hotspots y duplicación, todas superadas. La cobertura se controla en el pipeline |
+| Extraer un protocolo de `AIService` para poder sustituirlo por un doble de prueba | Haría verificable `FlashcardsGenerator`, hoy imposible de probar porque recibe un cliente concreto |
 | Documentar el procedimiento de aplicación de migraciones | Las migraciones se aplican a mano; el paso se olvida y la aplicación falla pidiendo funciones inexistentes |
 
 ### 5.2 Mediano plazo (1 a 2 meses)
