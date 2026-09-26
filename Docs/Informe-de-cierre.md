@@ -16,7 +16,8 @@ pruebas unitarias, integración y entrega continuas, y análisis automatizado de
 seguridad y calidad de código.
 
 El módulo se acompaña de un **panel de administración** que da función visible
-al rol de administrador, y de las pruebas de ambos.
+al rol de administrador, y de las pruebas de ambos. La plataforma objetivo es
+iPadOS, donde el módulo está desarrollado, probado y distribuido.
 
 **Resultados medibles:**
 
@@ -194,21 +195,25 @@ vista sobre las tablas.
 La aplicación está construida para iPadOS y **es ejecutable y utilizable en
 Macs con Apple Silicon** mediante la modalidad "Designed for iPad", sin
 modificaciones en el código: el proyecto declara
-`SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`, y su objetivo de despliegue (iOS 17.6)
-la hace compatible con macOS 14 en adelante.
+`SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD` y su objetivo de despliegue (iOS 17.6)
+la hace compatible con macOS 14 en adelante. La compilación para ese destino se
+verificó explícitamente.
 
-Todas las funciones operan en esa plataforma: cuentas, sincronización,
-generación de flashcards, las tres modalidades de estudio y el panel de
-administración.
+**El módulo de flashcards opera en macOS**: la selección de páginas, la
+generación del cuestionario, la pantalla de revisión con edición y borrado, las
+tres modalidades de estudio y la pantalla de resultados funcionan en esa
+plataforma, igual que el resto de la aplicación —cuentas, sincronización y
+panel de administración.
 
-La diferencia está en el lienzo. La escritura y el dibujo sobre las páginas
-están diseñados para **Apple Pencil en iPad**, que aporta presión, inclinación
-y precisión de punta; en un Mac esa interacción ocurre con trackpad o ratón y
-resulta menos natural. Es una diferencia de comodidad en una función concreta,
-no una limitación funcional: **la aplicación es completamente funcional en
-macOS**.
+La única diferencia está en el lienzo. La escritura y el dibujo sobre las
+páginas están diseñados para **Apple Pencil en iPad**, que aporta presión,
+inclinación y precisión de punta; en un Mac esa interacción ocurre con trackpad
+o ratón y resulta menos natural. Es una diferencia de comodidad en una función
+concreta, no una limitación funcional.
 
----
+Esa compatibilidad tiene un efecto práctico relevante: la aplicación puede
+evaluarse en un Mac sin necesidad de un iPad, aunque la experiencia de
+escritura manuscrita sea mejor en el dispositivo para el que fue diseñada.
 
 ## 4. Pruebas unitarias
 
