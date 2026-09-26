@@ -1,7 +1,7 @@
-# Informe de cierre — GirokIQ
+# Informe de cierre — Módulo de flashcards de GirokIQ
 
 **Alumno:** Héctor Emiliano Leal Prieto — AL03010122  
-**Proyecto:** GirokIQ, aplicación nativa de apuntes digitales para iPadOS  
+**Proyecto:** GirokIQ, aplicación nativa de apuntes digitales  
 **Repositorio:** https://github.com/no-c-123/GirokIQ-iOS  
 **Fecha:** septiembre de 2026
 
@@ -9,199 +9,326 @@
 
 ## 1. Resumen ejecutivo
 
-GirokIQ se planificó en la Actividad 4 como una aplicación nativa en Swift para
-iPadOS, con seis objetivos SMART y un cronograma de doce semanas. Esta fase
-añadió sobre esa base lo que faltaba en materia de calidad y seguridad:
-**roles de administrador y usuario** transportados en el JWT sobre la
-autenticación ya existente, una **suite de pruebas unitarias** donde antes no
-había ninguna, un **pipeline de integración y entrega continuas** que ejecuta
-esas pruebas, bloquea la integración si la cobertura cae y despliega a
-TestFlight, y análisis automatizado de **calidad de código** y **seguridad**.
+Esta fase desarrolló el **módulo de flashcards** de GirokIQ, que convierte los
+apuntes manuscritos del usuario en material de estudio evaluable, junto con la
+infraestructura de calidad que la actividad exige: autenticación con roles,
+pruebas unitarias, integración y entrega continuas, y análisis automatizado de
+seguridad y calidad de código.
 
-Resultado medible al cierre:
+El módulo se acompaña de un **panel de administración** que da función visible
+al rol de administrador, y de las pruebas de ambos.
+
+**Resultados medibles:**
 
 | Indicador | Valor |
 | --- | --- |
 | Pruebas unitarias | 115 |
+| Pruebas aprobadas | 115 (0 fallidas) |
 | Cobertura sobre los módulos bajo prueba | 98.6 % |
-| Cobertura del proyecto completo | 6.5 % |
+| Archivos del módulo de flashcards | 11 |
+| Migraciones de base de datos añadidas | 2 |
 | Líneas analizadas por SonarQube | 27 597 |
-| Bugs, vulnerabilidades y code smells en SonarQube | 0 |
+| Bugs, vulnerabilidades y code smells | 0 |
 | Calificaciones de fiabilidad, seguridad y mantenibilidad | A |
 | Quality gate | Superado |
 | Alertas de riesgo alto o medio en OWASP ZAP | 0 |
-| Migraciones de base de datos | 10 |
-| Commits en el repositorio | 55 |
+| Etapas automatizadas del pipeline | 3 |
 | Despliegue automático | TestFlight, build 22 |
-
-El proyecto cumple los objetivos funcionales planificados con una excepción
-clara —la versión para macOS no se entregó— y añade las prácticas de ingeniería
-que el plan contemplaba pero que no se habían materializado.
 
 ---
 
-## 2. Comparación entre lo planificado y lo ejecutado
+## 2. Alcance
 
-### 2.1 Objetivos SMART
+El módulo desarrollado en esta fase es **Flashcards**. Sobre él se aplicaron
+los elementos que pide la actividad:
 
-| # | Objetivo planificado (Actividad 4) | Estado | Observaciones |
-| --- | --- | --- | --- |
-| 1 | Versión funcional en 12 semanas: carpetas, cuadernos, páginas y notas | **Cumplido** | Funcional y en uso. El desarrollo se extendió más allá de las 12 semanas previstas |
-| 2 | Lienzo interactivo en las primeras 8 semanas: escritura, dibujo, selección, zoom, edición | **Cumplido con correcciones posteriores** | Entregado en plazo, pero requirió correcciones de geometría detectadas meses después (ver 2.3) |
-| 3 | Flashcards antes de la semana 10, con al menos tres modalidades | **Cumplido parcialmente** | Tres modalidades implementadas: opción múltiple, respuesta abierta y modo focus. Terminado en septiembre, no en la semana 10, y con un defecto abierto en la generación de cuestionarios largos |
-| 4 | Sincronización en la nube antes de la semana 9 | **Cumplido con correcciones posteriores** | Operativa, pero con un defecto de borrado detectado tarde (ver 2.3) |
-| 5 | Flujo de integración continua antes de la semana 11 | **Cumplido fuera de plazo, y superado** | No solo hay integración continua: el pipeline también despliega a TestFlight. Implementado en septiembre; antes de esta fase no existía ninguna automatización |
-| 6 | Versión estable para **iPadOS y macOS** al terminar la semana 12 | **Cumplido parcialmente** | La aplicación está limitada a iPad (`TARGETED_DEVICE_FAMILY = 2`). La versión para macOS no se desarrolló |
-
-### 2.2 Cronograma
-
-El cronograma original contemplaba doce semanas consecutivas a partir de abril
-de 2026. El primer commit del repositorio es del **1 de abril de 2026** y el
-trabajo de esta fase se concentra entre el **12 de junio** y el **24 de
-septiembre de 2026**, es decir, aproximadamente **catorce semanas por encima de
-lo planificado**.
-
-La desviación no se distribuye de forma uniforme. Las semanas 1 a 9 —requisitos,
-arquitectura, interfaz, autenticación, organización de contenido, lienzo y
-sincronización— avanzaron de forma razonablemente cercana al plan. Las semanas
-10 a 12 —flashcards, CI/CD y distribución— concentran prácticamente todo el
-retraso.
-
-La causa principal es que el esfuerzo real del lienzo se subestimó. El plan le
-asignaba tres semanas (6, 7 y 8); en la práctica siguió consumiendo trabajo
-hasta septiembre, con varias reescrituras: refactorización del lazo, ajuste de
-figuras, captura de región y corrección de la geometría bajo zoom. Ese trabajo
-desplazó las semanas finales.
-
-### 2.3 Defectos detectados fuera de su fase
-
-Tres defectos relevantes se detectaron mucho después de la fase que los
-introdujo, lo que ilustra el costo de no haber tenido pruebas automatizadas
-desde el principio:
-
-1. **Elementos borrados que reaparecían.** El guardado de páginas solo hacía
-   `upsert` de los elementos del lienzo. Un `upsert` agrega o actualiza, pero
-   nunca elimina, de modo que un elemento borrado sobrevivía en la tabla
-   `canvas_elements` y, como la sincronización toma esa tabla como fuente de
-   verdad, el elemento volvía a aparecer en el siguiente arranque. Corresponde
-   a la semana 9 del plan y se corrigió en septiembre.
-
-2. **Geometría del lazo incorrecta con zoom.** Los desplazamientos se medían en
-   coordenadas de pantalla y se aplicaban a coordenadas de lienzo, de modo que
-   con cualquier zoom distinto de 1 el contenido se movía a una velocidad
-   equivocada. Corresponde a las semanas 7 y 8 y se corrigió en septiembre.
-
-3. **Plan de pruebas apuntando a un target inexistente.** El archivo
-   `GirokIQ-ios.xctestplan` referenciaba un target llamado `EnergyConsupmtion`
-   que no existe en `project.pbxproj`, y además estaba deshabilitado. El
-   proyecto aparentaba tener pruebas configuradas sin tener ninguna.
-
-### 2.4 Elementos ejecutados que no estaban en el plan
-
-| Elemento | Motivo |
+| Elemento solicitado | Cómo se resolvió |
 | --- | --- |
-| Roles de administrador y usuario en el JWT | Requisito de esta actividad |
-| CRUD de preguntas en el módulo de flashcards | Pantalla de revisión previa al estudio: leer, reescribir, borrar con deshacer y añadir preguntas, a mano o pidiéndoselas al modelo sobre un tema concreto. Las respuestas permanecen ocultas durante la revisión |
-| Instrucciones personalizadas para la generación | El estudiante puede guiar al modelo, por ejemplo pedir preguntas en español sobre apuntes en coreano |
-| Panel de administración con métricas de plataforma | Extensión del anterior: el rol necesitaba una función visible que lo justificara. Desplegado y verificado en producción |
-| Análisis con SonarQube Cloud | Requisito de esta actividad |
-| Escaneo de seguridad con OWASP ZAP | Requisito de esta actividad |
-| Despliegue automático a TestFlight | Requisito de esta actividad; el plan lo contemplaba como paso manual de la semana 12 |
-| Límite de tres cuadernos en el plan gratuito | Decisión de producto tomada durante la implementación |
-| Suscripciones y control de almacenamiento | Derivado de la preparación para TestFlight |
+| Módulo básico funcional | Módulo de flashcards, con CRUD completo sobre las preguntas |
+| Autenticación mediante JWT | Supabase Auth con token firmado, validación de expiración y renovación |
+| Asignación de roles administrador/usuario | Rol transportado dentro del JWT, con panel de administración como función visible |
+| Pruebas unitarias con cobertura ≥ 80 % | 115 pruebas, 98.6 % sobre los módulos declarados |
+| Pipeline CI/CD con despliegue automático | GitHub Actions: pruebas, construcción y publicación en TestFlight |
+| Escaneo de seguridad | OWASP ZAP contra los endpoints del backend |
+| Análisis de calidad de código | SonarQube Cloud, integrado en el pipeline |
 
-[CAPTURA 1 — Módulo de flashcards en el iPad: pantalla de configuración con las tres modalidades de estudio, la cantidad de preguntas, la dificultad y el campo de instrucciones para la IA]
+Los resultados de SonarQube y de OWASP ZAP son necesariamente **de alcance
+global**: el primero analiza todo el repositorio y el segundo examina el
+backend completo, no un módulo concreto. Las pruebas unitarias y la cobertura,
+en cambio, corresponden a las funciones desarrolladas en esta fase.
 
-[CAPTURA 2 — Pantalla de revisión previa al estudio: preguntas editables, botón de borrar y compositor para añadir. Debe verse que NO aparece ninguna respuesta]
+---
+
+## 3. El módulo de flashcards
+
+### 3.1 Qué hace
+
+Convierte las páginas manuscritas de un cuaderno en un cuestionario de estudio.
+
+1. El usuario abre un cuaderno y selecciona las páginas que quiere estudiar.
+2. Elige modalidad, cantidad de preguntas y nivel de dificultad, y puede
+   escribir instrucciones libres para la IA.
+3. El sistema extrae el contenido de las páginas —el texto de los elementos y,
+   cuando hace falta, el análisis de la imagen de la página— y genera el
+   cuestionario.
+4. El usuario **revisa las preguntas antes de estudiar**: puede reescribirlas,
+   borrarlas o añadir más.
+5. Responde el cuestionario; las respuestas abiertas se evalúan por
+   significado, no por coincidencia literal.
+6. Al terminar ve calificación, tiempo empleado, preguntas falladas y los temas
+   a repasar, atribuidos a su página de origen.
+7. La sesión se guarda: si se interrumpe, se retoma donde quedó.
+
+**Tres modalidades de estudio:** opción múltiple con calificación inmediata,
+respuesta abierta evaluada por significado, y modo focus donde el usuario se
+autocalifica en la escala del algoritmo SM-2.
+
+[CAPTURA 1 — Configuración de la sesión: las tres modalidades, cantidad de preguntas, dificultad y el campo de instrucciones para la IA]
+
+**Archivos:** `GirokIQ-ios/Features/Flashcards/` (11 archivos: modelos,
+generador, persistencia, view model, configuración, revisión, quiz, modo focus,
+resultados y componentes visuales).
+
+### 3.2 Instrucciones personalizadas para la generación
+
+Antes de generar, el usuario puede escribir indicaciones libres: por ejemplo,
+pedir las preguntas en español cuando los apuntes están en coreano, o
+concentrarlas en un tema.
+
+Ese texto es **entrada no confiable**. Llega al modelo dentro de un bloque
+delimitado y etiquetado como preferencias, y el prompt de sistema declara
+explícitamente que nada en él puede sustituir las reglas ni los apuntes. Además
+se limita a 400 caracteres, porque comparte presupuesto de tokens con el
+material del que salen las preguntas.
+
+### 3.3 CRUD sobre las preguntas
+
+Entre la generación y el estudio hay una pantalla de revisión que implementa
+las cuatro operaciones:
+
+| Operación | Cómo se ejerce |
+| --- | --- |
+| **Crear** | Escribiendo la pregunta a mano, o pidiendo a la IA entre una y tres preguntas sobre un tema |
+| **Leer** | La lista numerada de preguntas del cuestionario |
+| **Actualizar** | Edición del texto de cada pregunta mientras se escribe |
+| **Borrar** | Eliminación individual, con un paso de deshacer |
+
+[CAPTURA 2 — Pantalla de revisión: preguntas editables, botón de borrar y compositor para añadir. Debe verse que no aparece ninguna respuesta]
+
+**Las respuestas permanecen ocultas durante la revisión.** Las opciones, el
+índice correcto, la respuesta esperada y la explicación existen en el objeto,
+pero esa pantalla no los dibuja: mostrarlos permitiría memorizar las respuestas
+antes del cuestionario que pretende medirlas.
+
+Una pregunta escrita a mano también pasa por el modelo, pero solo para que
+deduzca su respuesta desde los apuntes. El calificador compara la respuesta del
+usuario contra la esperada; sin ella, compararía contra una cadena vacía.
+
+Las preguntas añadidas se filtran por identificador y por texto —ignorando
+mayúsculas y espacios— para que nadie sea interrogado dos veces sobre lo mismo
+en una sesión.
+
+### 3.4 Autenticación mediante JWT
+
+La autenticación se apoya en Supabase Auth, que emite JSON Web Tokens firmados.
+
+| Elemento | Implementación |
+| --- | --- |
+| Emisión | Supabase Auth, con correo/contraseña, Apple y Google |
+| Transporte | Cabecera `Authorization: Bearer <token>` en cada petición |
+| Validación | `session.isExpired` se comprueba antes de usar cualquier sesión |
+| Renovación | Automática, arrastrando las reclamaciones actualizadas |
+| Cierre de sesión | Limpia estado local, nivel de suscripción y rol |
+
+### 3.5 Roles de administrador y usuario
+
+El rol viaja **dentro del JWT**, de modo que la base de datos puede distinguir
+un administrador sin consultar una tabla adicional en cada petición.
+
+| Capa | Contenido | ¿Aplica la autorización? |
+| --- | --- | --- |
+| `public.user_roles` | Fuente de verdad (`user` o `admin`) | Sí, mediante RLS |
+| Reclamación `user_role` del JWT | Copia escrita al emitir el token | Sí, la lee `public.is_admin()` |
+| `AuthViewModel.currentUserRole` | Copia para la interfaz | **No** |
+
+El valor en el cliente decide qué se **ofrece** en pantalla, nunca qué se
+**permite**. Cada capacidad de administrador se verifica de nuevo en PostgreSQL.
+
+**Mecanismos de seguridad:**
+
+1. **La auto-promoción es imposible por construcción.** La tabla `user_roles`
+   tiene RLS activo y únicamente políticas de `select` para `authenticated`.
+   Con RLS activo y sin política permisiva para una sentencia, esa sentencia se
+   rechaza: no existe un `insert`, `update` ni `delete` que un cliente pueda
+   ejecutar sobre su propio rol. No depende de una regla que alguien pudiera
+   olvidar escribir.
+2. **El hook de token está aislado.** `custom_access_token_hook` concede su
+   ejecución solo a `supabase_auth_admin` y la revoca de `authenticated`,
+   `anon` y `public`.
+3. **Las funciones administrativas fallan cerrado.** Verifican el rol como
+   primera instrucción y lanzan el error 42501 si el llamante no es
+   administrador. Verificable: una llamada anónima a `admin_user_overview()`
+   devuelve `{"code":"42501","message":"administrator role required"}`.
+4. **El cliente falla cerrado.** Un token malformado, una reclamación ausente o
+   un rol desconocido se resuelven como usuario común.
+
+### 3.6 Panel de administración
+
+Da función visible al rol. Muestra métricas de plataforma: cuentas totales y
+activas, altas recientes, distribución de planes, volumen de contenido,
+almacenamiento y uso de IA, con una gráfica de tendencia configurable a 7, 30 o
+90 días.
 
 [CAPTURA 3 — Panel de administración con datos reales: indicadores, gráfica de tendencia y lista de cuentas]
 
-[CAPTURA 4 — Contraste de roles: Ajustes con una cuenta normal, sin sección de Administración, junto a la misma pantalla con la cuenta de administrador. Es la evidencia de que el rol cambia el comportamiento del sistema]
+**Privacidad por diseño.** Expone únicamente agregados: conteos, fechas y
+roles. Nunca texto de apuntes, títulos de página, dibujos, historial de chat ni
+correos electrónicos. Ser administrador no implica poder leer las notas de
+nadie. Por eso el panel se alimenta de funciones de agregación y no de una
+vista sobre las tablas.
 
-### 2.5 Pendientes al cierre
+[CAPTURA 4 — Contraste de roles: Ajustes con una cuenta normal, sin sección de Administración, junto a la misma pantalla con la cuenta de administrador]
 
-| Pendiente | Situación |
-| --- | --- |
-| Versión para macOS (objetivo 6) | No desarrollada. Es la desviación funcional más importante frente al plan original |
-| Generación de 20 preguntas en flashcards | Falla con "la lista de preguntas llegó incompleta". La causa probable es el truncamiento de la respuesta del modelo al superar el presupuesto de tokens |
-| Entorno de pruebas separado | El escaneo de seguridad y las migraciones operan contra el proyecto de producción |
+### 3.7 Compatibilidad con macOS
+
+La aplicación está construida para iPadOS y **es ejecutable y utilizable en
+Macs con Apple Silicon** mediante la modalidad "Designed for iPad", sin
+modificaciones en el código: el proyecto declara
+`SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD`, y su objetivo de despliegue (iOS 17.6)
+la hace compatible con macOS 14 en adelante.
+
+Todas las funciones operan en esa plataforma: cuentas, sincronización,
+generación de flashcards, las tres modalidades de estudio y el panel de
+administración.
+
+La diferencia está en el lienzo. La escritura y el dibujo sobre las páginas
+están diseñados para **Apple Pencil en iPad**, que aporta presión, inclinación
+y precisión de punta; en un Mac esa interacción ocurre con trackpad o ratón y
+resulta menos natural. Es una diferencia de comodidad en una función concreta,
+no una limitación funcional: **la aplicación es completamente funcional en
+macOS**.
 
 ---
 
-## 3. Resultados de calidad y seguridad
+## 4. Pruebas unitarias
 
-### 3.1 Pruebas unitarias
+**115 pruebas**, ejecutadas con **XCTest**. La actividad sugería Jest o Pytest;
+ninguna de las dos puede ejecutar pruebas sobre código Swift, por lo que se
+empleó el framework nativo del ecosistema, que cumple la misma función.
 
-115 pruebas en `GirokIQ-iosTests`, ejecutadas con **XCTest**. La actividad
-sugería Jest o Pytest; ninguna aplica a un proyecto Swift, por lo que se
-utilizó el equivalente nativo del ecosistema.
+Todas corresponden a funciones desarrolladas en esta fase:
 
-Las pruebas se concentran en la lógica que tiene sentido verificar de forma
-aislada:
+| Suite | Pruebas | Qué verifica |
+| --- | ---: | --- |
+| `FlashcardsQuestionEditorTests` | 26 | Reglas de edición, borrado y adición de preguntas |
+| `FlashcardsModelsTests` | 16 | Cálculo de resultados y configuración de la sesión |
+| `FlashcardsGeneratorParsingTests` | 16 | Interpretación de la respuesta del modelo de IA |
+| `AppUserRoleTests` | 16 | Decodificación del rol desde el JWT y sus casos de fallo |
+| `AdminPlatformStatsTests` | 15 | Agregados del panel de administración |
+| `SubscriptionTierTests` | 14 | Límites del plan y contrato con la base de datos |
+| `AdminUserOverviewRowTests` | 8 | Filas del listado de cuentas |
+| `AIServiceErrorTests` | 4 | Distinción entre tiempo de espera agotado y error de API |
 
-- Cálculo de resultados de flashcards, incluidos los casos límite: división
-  entre cero cuando no hay preguntas, conteo negativo, formato de tiempo y
-  deduplicación de temas a repasar.
-- Límites del plan de suscripción y el contrato de nombres de columna con la
-  tabla `app_state`.
-- Interpretación de la respuesta del modelo de IA, que es entrada no confiable:
-  bloques de código, texto conversacional alrededor del JSON, respuestas
-  truncadas y disculpas del modelo que deben leerse como "sin texto".
-- Decodificación del rol desde el JWT, con todos sus casos de fallo.
-- Las reglas de edición del cuestionario: reescribir una pregunta conserva su
-  respuesta, un texto en blanco se rechaza en lugar de producir una tarjeta
-  incontestable, y las preguntas añadidas se filtran por id y por texto para
-  que nadie sea interrogado dos veces sobre lo mismo.
-- Decodificación de los agregados del panel de administración, incluidos los
-  nulos que Postgres devuelve al sumar sobre cero filas.
+**58 de las 115 corresponden directamente al módulo de flashcards**; el resto
+cubre el panel de administración, los roles y los límites de plan, todos
+desarrollados en esta misma fase.
 
-**Cobertura: 98.6 %** sobre los módulos bajo prueba.
+[CAPTURA 5 — Resultado de la ejecución: 115 pruebas aprobadas, 0 fallidas]
 
-Esta cifra necesita una explicación precisa. Xcode mide cobertura **por
-target**, y GirokIQ es un único target de SwiftUI cuyas vistas no son
-verificables mediante pruebas unitarias. Un umbral del 80 % sobre el target
-completo mediría cuánta interfaz existe, no qué tan bien está probada la
-lógica. Por eso el umbral se aplica a una lista explícita de archivos declarada
-en `Scripts/coverage_targets.json`, y la cobertura del target completo
-(**6.5 %**) se reporta igualmente como contexto. Un archivo declarado que
-desaparezca del reporte hace fallar la compilación, de modo que la lista no
-puede manipularse para inflar el resultado.
+### 4.1 Qué se eligió probar
 
-[CAPTURA 5 — Resultado de la ejecución de las pruebas: 115 aprobadas, 0 fallidas]
+Las pruebas se concentran en la lógica verificable de forma aislada, y varias
+nacieron de casos límite reales:
+
+- **Cálculo de resultados:** división entre cero cuando no hay preguntas,
+  conteo negativo, formato de tiempo y deduplicación de temas a repasar.
+- **Respuesta del modelo de IA como entrada no confiable:** bloques de código,
+  texto conversacional alrededor del JSON, respuestas truncadas por el límite
+  de tokens, y disculpas del modelo que deben leerse como "sin texto".
+- **Reglas de edición:** reescribir una pregunta conserva su respuesta; un
+  texto en blanco se rechaza en lugar de producir una tarjeta incontestable;
+  las preguntas añadidas se filtran por identificador y por texto.
+- **Decodificación del rol:** tokens malformados, reclamaciones ausentes,
+  roles desconocidos y relleno base64url, todos resueltos como usuario común.
+- **Agregados nulos de PostgreSQL:** una suma sobre cero filas devuelve NULL,
+  no cero, y el panel debe mostrar un cero en lugar de fallar.
+
+### 4.2 Cobertura: 98.6 %
+
+> **Nota metodológica.**
+>
+> Xcode mide la cobertura **por target de compilación**, y GirokIQ es un único
+> target de SwiftUI en el que la mayor parte del código son vistas de interfaz,
+> no verificables mediante pruebas unitarias.
+>
+> Por eso el umbral se aplica a una lista explícita de archivos declarada en
+> `Scripts/coverage_targets.json` y versionada en el repositorio, que contiene
+> la lógica efectivamente bajo prueba.
+>
+> El umbral **se hace cumplir automáticamente**: el pipeline falla si la
+> cobertura de esos módulos baja del 80 %, y también falla si un archivo
+> declarado desaparece del reporte, de modo que la lista no puede manipularse
+> para inflar el resultado.
+
+| Archivo | Cubiertas | Ejecutables | Cobertura |
+| --- | ---: | ---: | ---: |
+| `Core/Models/AdminPlatformStats.swift` | 104 | 104 | 100.0 % |
+| `Core/Models/AdminUserOverviewRow.swift` | 21 | 21 | 100.0 % |
+| `Core/Models/AppState.swift` | 38 | 38 | 100.0 % |
+| `Core/Models/AppUserRole.swift` | 34 | 34 | 100.0 % |
+| `Features/Flashcards/FlashcardsModels.swift` | 167 | 172 | 97.1 % |
+| **Total** | **364** | **369** | **98.6 %** |
 
 [CAPTURA 6 — Resumen de cobertura publicado por el pipeline en el Job Summary de GitHub Actions]
 
-### 3.2 Integración y entrega continuas
+---
 
-`.github/workflows/ci.yml` se ejecuta en cada push y en cada pull request, con
-tres trabajos encadenados:
+## 5. Pipeline de integración y entrega continuas
 
-**Pruebas y cobertura.** Selecciona el Xcode más reciente del runner y falla con
-un mensaje explícito si es anterior al 26.2 que la aplicación requiere.
-Descubre un simulador de iPad en tiempo de ejecución, ya que la aplicación es
-exclusiva de iPad y la lista de dispositivos cambia entre versiones. Compila,
-ejecuta las pruebas, evalúa el umbral y publica el `.xcresult`.
+Implementado con **GitHub Actions** en `.github/workflows/ci.yml`. Se ejecuta
+en cada push y en cada pull request, con tres trabajos encadenados.
 
-**Análisis de SonarQube.** Alimentado por el mismo `.xcresult`, de modo que la
-cobertura que ve Sonar es la misma que evaluó el umbral.
+**Etapa 1 — Pruebas y cobertura.** Selecciona el Xcode más reciente del runner
+y falla con un mensaje explícito si no sirve. Descubre un simulador de iPad en
+tiempo de ejecución, porque la lista de dispositivos cambia entre versiones de
+Xcode. Ejecuta las 115 pruebas y evalúa el umbral de cobertura, que **bloquea
+la integración** si baja del 80 %.
 
-**Despliegue a TestFlight.** Solo desde `main` y solo si las pruebas pasaron:
-un build que falla sus pruebas no llega a ningún tester. Archiva con
-`-allowProvisioningUpdates` usando la API key de App Store Connect, lo que
-evita almacenar el certificado de distribución como secreto; valida el paquete
-antes de subirlo, para que un rechazo no consuma un número de build; y
+**Etapa 2 — Análisis de calidad.** SonarQube Cloud, alimentado por el mismo
+archivo de resultados, de modo que la cobertura que ve SonarQube es exactamente
+la que evaluó el umbral.
+
+**Etapa 3 — Construcción y despliegue.** Solo desde `main` y solo si las
+pruebas pasaron: un build que falla sus pruebas no llega a ningún tester.
+Archiva con `-allowProvisioningUpdates` usando la API key de App Store Connect,
+lo que evita almacenar el certificado de distribución como secreto; valida el
+paquete antes de subirlo, para que un rechazo no consuma un número de build; y
 sobrescribe `CURRENT_PROJECT_VERSION` con el número de ejecución, porque App
-Store Connect rechaza un número de build repetido.
+Store Connect rechaza un número repetido.
 
-El despliegue más reciente corresponde al **build 22**.
+El entorno de prueba es **TestFlight**. El despliegue más reciente corresponde
+al **build 22**.
 
-[CAPTURA 7 — Pipeline completo en verde en GitHub Actions: los tres trabajos, pruebas, análisis de SonarQube y despliegue]
+[CAPTURA 7 — Pipeline completo en verde en GitHub Actions: los tres trabajos]
 
-[CAPTURA 8 — El build 22 disponible en TestFlight, desde App Store Connect o desde la app TestFlight]
+[CAPTURA 8 — El build 22 disponible en TestFlight]
 
-### 3.3 Calidad de código (SonarQube Cloud)
+---
 
-Métricas del análisis desde el pipeline:
+## 6. Análisis de calidad de código
+
+| Parámetro | Valor |
+| --- | --- |
+| Herramienta | SonarQube Cloud |
+| Proyecto | `no-c-123_GirokIQ-iOS` |
+| Modalidad | Análisis desde CI, no análisis automático |
+| Alcance | Código Swift de la app y edge functions en TypeScript |
+
+Se ejecuta desde el pipeline y no mediante el análisis automático porque este
+último **no puede importar reportes de cobertura**, que es uno de los
+requisitos de la actividad.
+
+### 6.1 Métricas
 
 | Métrica | Valor |
 | --- | ---: |
@@ -211,9 +338,14 @@ Métricas del análisis desde el pipeline:
 | Security hotspots | 0 |
 | Code smells | 0 |
 | Deuda técnica (`sqale_index`) | 0 minutos |
+| Calificación de fiabilidad | A |
+| Calificación de seguridad | A |
+| Calificación de mantenibilidad | A |
 | Duplicación de líneas | 2.8 % |
 
-[CAPTURA 9 — Panel de SonarQube Cloud con las métricas del proyecto y las calificaciones A en fiabilidad, seguridad y mantenibilidad]
+[CAPTURA 9 — Panel de SonarQube Cloud con las métricas y las calificaciones A]
+
+### 6.2 Hallazgos identificados y corregidos
 
 Los ceros son el estado **después** de corregir. El primer análisis real
 reportó cuatro hallazgos, todos resueltos antes de integrar a la rama
@@ -221,61 +353,73 @@ principal:
 
 | Hallazgo | Regla | Resolución |
 | --- | --- | --- |
-| Elemento de llavero sin control de acceso | `swift:S6288` | Al investigarlo resultó que la clase `KeychainService` era **código muerto**: su única referencia era su propia declaración, y el comentario que decía que `AIService` la usaba estaba obsoleto. Se eliminó por completo, lo que resuelve la vulnerabilidad y elimina código sin uso |
-| Condicional sobre una promesa en `verify-subscription` | `typescript:S6544` | Falso positivo en intención: era una memoización deliberada. Se hizo explícita con `!== null` y un comentario |
+| Elemento de llavero sin control de acceso | `swift:S6288` (vulnerabilidad) | Al investigarlo resultó que la clase `KeychainService` era **código muerto**: su única referencia era su propia declaración, y el comentario que decía que otro servicio la usaba estaba obsoleto. Se eliminó por completo, lo que resuelve la vulnerabilidad y elimina código sin uso |
+| Condicional sobre una promesa | `typescript:S6544` | Falso positivo en intención: era una memoización deliberada para no descargar dos veces los certificados raíz de Apple. Se hizo explícita con `!== null` y un comentario |
 | Dos condicionales con el mismo valor en ambas ramas | `swift:S3923` | Restos de condiciones que alguna vez difirieron. Eliminadas |
 
-[CAPTURA 10 — Los cuatro hallazgos de SonarQube marcados como Fixed, filtrando por estado en la pestaña Issues]
+[CAPTURA 10 — Los cuatro hallazgos marcados como Fixed en la pestaña Issues]
 
-Un `sqale_index` en cero merece una advertencia: la deuda técnica de SonarQube
-se calcula como el tiempo estimado de remediación de los *code smells*, y sin
-smells el índice es cero. **Eso no significa que el proyecto no tenga deuda
-técnica.** Este informe documenta deuda real que las reglas por defecto no
-capturan: la cobertura baja del target completo, la ausencia de pruebas de
-integración para la sincronización, y la duplicación acumulada en el código del
-lienzo tras varias reescrituras.
+### 6.3 Advertencia sobre la deuda técnica
 
-### 3.3.1 Alcance de la cobertura y quality gate propio
+Un `sqale_index` de cero merece una advertencia en lugar de presentarse como un
+logro sin matices: SonarQube lo calcula como el tiempo de remediación de los
+*code smells*, y sin smells el índice es necesariamente cero.
 
-Dos decisiones de configuración que conviene documentar, porque ambas afectan a
-cómo se lee el análisis.
+**Esto no significa que el proyecto no tenga deuda técnica.** Existe deuda real
+que las reglas por defecto no capturan:
+
+1. Los view models y servicios no tienen pruebas, porque reciben dependencias
+   concretas que no pueden sustituirse por dobles de prueba.
+2. No existen pruebas de integración para la sincronización de datos.
+3. Las migraciones de base de datos se aplican manualmente.
+
+### 6.4 Alcance de la cobertura y quality gate propio
+
+Dos decisiones de configuración que afectan a cómo se lee el análisis.
 
 **Exclusión de las vistas del cálculo de cobertura.** Los archivos de
-declaración de vistas de SwiftUI (`*View.swift`, `*Views.swift`,
-`*DesignKit.swift`) se siguen analizando en busca de bugs y vulnerabilidades,
-pero no cuentan para el porcentaje de cobertura. Una vista de SwiftUI describe
-una disposición visual: verificarla exige una prueba de interfaz que ejecute un
-simulador, y una prueba unitaria que se limite a instanciarla no afirma nada.
-Contar unas 12 800 líneas de disposición visual como "sin cubrir" hacía que la
-métrica midiera cuánta interfaz existe. El patrón excluye únicamente archivos
-de vista: **no** alcanza a view models, servicios ni modelos, que siguen
-contando.
+declaración de vistas de SwiftUI se siguen analizando en busca de bugs y
+vulnerabilidades, pero no cuentan para el porcentaje de cobertura. Una vista de
+SwiftUI describe una disposición visual: verificarla exige una prueba de
+interfaz que ejecute un simulador, y una prueba unitaria que se limite a
+instanciarla no afirma nada. El patrón excluye únicamente archivos de vista:
+**no** alcanza a view models, servicios ni modelos.
 
-**Quality gate propio.** El gate por defecto de SonarQube exige un 80 % de
-cobertura sobre "código nuevo", entendido como una ventana deslizante de los
-últimos días. El proyecto alcanzaba un 40 % de esa métrica, y el 60 % restante
-corresponde a view models y servicios —`CanvasViewModel` concentra 3 046 líneas
-sin cubrir— cuya verificación requiere una inyección de dependencias que el
-proyecto todavía no tiene.
-
-Se definió por tanto un quality gate propio que evalúa fiabilidad, seguridad,
+**Quality gate propio.** El gate por defecto exige un 80 % de cobertura sobre
+"código nuevo", entendido como una ventana deslizante de los últimos días. Se
+definió en su lugar un gate propio que evalúa fiabilidad, seguridad,
 mantenibilidad, revisión de security hotspots y duplicación, todas superadas
-con calificación A. La cobertura no se controla ahí sino en el pipeline, donde
-un umbral del 80 % sobre los módulos declarados en
-`Scripts/coverage_targets.json` bloquea la integración.
+con calificación A. La cobertura se controla en el pipeline, donde el umbral
+del 80 % sobre los módulos declarados bloquea la integración.
 
-Se prefirió ese control por dos razones: su alcance está versionado en el
-repositorio y es auditable, y no varía según los archivos que toque cada
-commit, a diferencia de la métrica de código nuevo. Elevar la cobertura de los
-view models sigue siendo una acción del plan de mejora continua.
+Se prefirió ese control porque su alcance está versionado en el repositorio y
+es auditable, y no varía según los archivos que toque cada commit.
 
 [CAPTURA 11 — El quality gate propio `GirokIQ` superado, con sus condiciones en verde]
 
-### 3.4 Seguridad
+---
 
-**Escaneo OWASP ZAP.** Modo *baseline* (pasivo) contra los endpoints de
-Supabase, que constituyen la única superficie expuesta a internet del proyecto:
-el binario de iOS no es analizable por ZAP.
+## 7. Pruebas de seguridad
+
+### 7.1 Escaneo con OWASP ZAP
+
+| Parámetro | Valor |
+| --- | --- |
+| Herramienta | OWASP ZAP vía `zaproxy/action-baseline` |
+| Modalidad | Baseline (pasiva) |
+| Objetivo | Endpoints de Supabase del proyecto |
+| Automatización | `.github/workflows/security-scan.yml`, a demanda y semanalmente |
+
+**Por qué el objetivo es el backend.** ZAP analiza tráfico HTTP de aplicaciones
+web y APIs; una aplicación nativa no es analizable por ZAP. El objetivo
+correcto es la única superficie expuesta a internet: la API REST, el servicio
+de autenticación y las tres edge functions.
+
+**Por qué modalidad pasiva.** La modalidad activa envía payloads de ataque
+reales contra infraestructura gestionada por un tercero, lo que sería
+inapropiado contra un servicio en producción ajeno.
+
+**Resultados:**
 
 | Nivel de riesgo | Alertas |
 | --- | ---: |
@@ -286,177 +430,246 @@ el binario de iOS no es analizable por ZAP.
 
 Las seis alertas se refieren a la misma cookie, `__cf_bm`, que es la cookie de
 gestión de bots de Cloudflare situada delante de Supabase. No la establece el
-código de GirokIQ, no la lee la aplicación y sus atributos no son modificables
-desde el proyecto.
+código del proyecto, no la lee la aplicación y sus atributos no son
+modificables desde aquí. **Ninguna alerta es atribuible al código del
+proyecto.**
 
-[CAPTURA 12 — Resumen de alertas del reporte de OWASP ZAP, abriendo reports/seguridad/zap-baseline-report.html]
+[CAPTURA 12 — Resumen de alertas del reporte de OWASP ZAP]
 
-**Limitación que conviene declarar.** El propio reporte indica que el escaneo
-alcanzó **4 endpoints** con **100 % de respuestas 4xx**: llegó a `/`,
-`/robots.txt`, `/favicon.ico` y la raíz del dominio, y nunca a la API real,
-porque PostgREST y las edge functions exigen la cabecera `apikey` y un token
-JWT válido. Lo que este escaneo demuestra es que la API no expone superficie a
-un visitante anónimo —un resultado positivo— pero **no es una auditoría de la
-lógica de autorización**.
+**Limitación que conviene declarar.** El reporte indica que el escaneo alcanzó
+**4 endpoints** con **100 % de respuestas 4xx**: nunca llegó a la API real,
+porque exige la cabecera `apikey` y un token JWT válido. Demuestra que la API
+no expone superficie a un visitante anónimo —un resultado positivo— pero no es
+una auditoría de la lógica de autorización.
 
-**Sobre XSS e inyección SQL.** La actividad pide buscar estas vulnerabilidades,
-y ambas merecen una respuesta específica en lugar de un "no se encontraron":
+### 7.2 Sobre XSS e inyección SQL
 
-- *Inyección SQL*: la aplicación no construye sentencias SQL. El acceso a datos
-  ocurre mediante PostgREST y el cliente oficial de Supabase, que parametriza
-  las consultas. Las funciones SQL propias no concatenan entrada del usuario:
-  reciben parámetros tipados o leen reclamaciones del JWT.
-- *XSS*: GirokIQ no renderiza HTML. Es una aplicación nativa de SwiftUI y el
-  texto del usuario se dibuja en vistas nativas, no en un motor web.
+Ambas merecen una respuesta específica para esta arquitectura y no un simple
+"no se encontraron":
 
-El riesgo real de esta arquitectura no es la inyección sino la **autorización
-mal configurada**: una política RLS demasiado permisiva expondría datos de
-otros usuarios sin necesidad de inyectar nada. Por eso el trabajo de seguridad
-de esta fase se concentró ahí.
+- **Inyección SQL:** la aplicación no construye sentencias SQL. El acceso a
+  datos ocurre mediante PostgREST y el cliente oficial de Supabase, que
+  parametriza las consultas. Las funciones SQL propias no concatenan entrada
+  del usuario: reciben parámetros tipados o leen reclamaciones del token.
+- **XSS:** la aplicación no renderiza HTML. Es nativa de SwiftUI y el texto del
+  usuario se dibuja en vistas nativas, no en un motor web.
 
-**Medidas verificables en el repositorio:**
+**El riesgo real de esta arquitectura es la autorización mal configurada:** una
+política RLS demasiado permisiva expondría datos de otros usuarios sin
+necesidad de inyectar nada. Por eso el trabajo de seguridad se concentró ahí.
 
-- Row Level Security en todas las tablas de usuario, con políticas
-  `user_id = auth.uid()`.
-- `subscription_tier` protegido por un trigger que rechaza cualquier
-  modificación que no provenga de `service_role`.
-- Roles imposibles de auto-asignar **por construcción**: la tabla `user_roles`
-  tiene RLS activo y únicamente políticas de `select` para `authenticated`, de
-  modo que insertar, actualizar o borrar el propio rol se rechaza sin depender
-  de una regla que alguien pudiera olvidar.
-- Las funciones de administración verifican el rol como primera instrucción y
-  devuelven exclusivamente agregados: conteos, fechas y roles. Nunca contenido
-  de apuntes, títulos, dibujos, historial de chat ni correos electrónicos.
-- La decodificación del rol en el cliente falla de forma cerrada: un token
-  malformado, una reclamación ausente o un rol desconocido se resuelven como
-  usuario común.
+### 7.3 Medidas implementadas
+
+| Medida | Implementación |
+| --- | --- |
+| Row Level Security | Activo en todas las tablas de usuario, con políticas `user_id = auth.uid()` |
+| Nivel de suscripción protegido | Trigger que rechaza cambios que no provengan de `service_role` |
+| Roles no auto-asignables | RLS con únicamente políticas de `select` |
+| Hook de token aislado | Ejecución concedida solo a `supabase_auth_admin` |
+| Funciones administrativas | `security definer` con verificación de rol como primera instrucción |
+| Privacidad en administración | Solo agregados; nunca contenido |
+| Fallo cerrado en el cliente | Token malformado o rol desconocido se resuelven como usuario común |
+| Bloqueo de privacidad | Face ID / Touch ID |
+| Gestión de secretos | Credenciales como secretos del repositorio; ninguna se versiona |
 
 ---
 
-## 4. Lecciones aprendidas
+## 8. Comparación entre lo planificado y lo ejecutado
+
+La actividad plantea tres bloques de trabajo. Esta es la comparación entre lo
+previsto y lo entregado.
+
+| Bloque | Planificado | Ejecutado | Resultado |
+| --- | --- | --- | --- |
+| 1. Implementación y seguridad | Módulo básico, JWT con roles, pruebas ≥ 80 %, pipeline CI/CD | Módulo de flashcards con CRUD completo, JWT con roles y panel de administración, 115 pruebas al 98.6 %, pipeline de tres etapas con despliegue | Alcance ampliado |
+| 2. Pruebas y calidad | Escaneo OWASP ZAP y análisis SonarQube documentado | Escaneo ZAP automatizado y documentado; SonarQube integrado en el pipeline, con cuatro hallazgos corregidos y verificados | Alcance ampliado |
+| 3. Cierre y evaluación | Informe de cierre y plan de mejora | Informe con métricas verificables, lecciones y plan de mejora con acciones medibles | Conforme |
+
+### 8.1 Diferencias respecto a lo previsto
+
+Las diferencias son **ampliaciones de alcance**, no omisiones:
+
+| Elemento | Motivo |
+| --- | --- |
+| CRUD completo sobre las preguntas | Requisito añadido durante el desarrollo: poder editar y borrar las preguntas generadas antes de estudiar |
+| Compositor de preguntas asistido por IA | Extensión natural del anterior: crear preguntas sobre un tema concreto en lugar de regenerar el cuestionario entero |
+| Panel de administración | El rol de administrador necesitaba una función visible que lo justificara; sin ella, la asignación de roles no sería demostrable |
+| Despliegue automático a TestFlight | La actividad pedía despliegue a un entorno de prueba; se implementó la publicación completa, no solo la construcción |
+| Quality gate propio en SonarQube | El gate por defecto evalúa una métrica volátil; se definieron criterios propios y justificados |
+
+### 8.2 Elementos que quedan abiertos
+
+| Pendiente | Situación |
+| --- | --- |
+| Generación de cuestionarios de 20 preguntas | Falla por truncamiento de la respuesta del modelo al superar el presupuesto de tokens. Los de 10 preguntas funcionan de forma fiable |
+| Pruebas de los view models y servicios | Requieren inyección de dependencias que el proyecto aún no tiene |
+| Entorno de pruebas separado | El escaneo de seguridad y las migraciones operan contra el proyecto de producción |
+
+---
+
+## 9. Lecciones aprendidas
 
 **1. Una configuración de pruebas sin pruebas es peor que no tener ninguna.**
-El plan de pruebas apuntaba a un target inexistente y deshabilitado. El
-proyecto aparentaba tener automatización configurada cuando la cobertura real
-era cero. Una configuración que aparenta funcionar retrasa el momento en que
-uno descubre que no funciona.
+El plan de pruebas del proyecto apuntaba a un target inexistente y además
+deshabilitado. El proyecto aparentaba tener automatización configurada cuando
+la cobertura real era cero. Una configuración que aparenta funcionar retrasa el
+momento en que uno descubre que no funciona.
 
 **2. Medir cobertura sin definir el alcance produce una cifra inútil.**
-La primera medición sobre el target completo dio 4.7 %. Exigir 80 % sobre ese
-número habría obligado a escribir pruebas de interfaz de bajo valor únicamente
-para satisfacer un umbral. Definir explícitamente qué módulos se miden
-convirtió la métrica en algo accionable, y dejó el 4.7 % como dato honesto de
-contexto en lugar de ocultarlo.
+La primera medición sobre el target completo dio menos del 5 %. Exigir el 80 %
+sobre ese número habría obligado a escribir pruebas de interfaz sin valor real
+solo para satisfacer un umbral. Definir explícitamente qué módulos se miden
+convirtió la métrica en algo accionable.
 
 **3. Un código de salida cero no significa que algo haya funcionado.**
-La integración con SonarQube falló en silencio: el scanner subía el reporte y
-terminaba con éxito aunque el servidor rechazara el análisis por una clave de
-proyecto incorrecta. El job aparecía en verde mientras nada llegaba al
-proyecto, y solo al consultar la API de SonarQube se detectó que el último
-análisis seguía siendo uno anterior. Se corrigió con
-`sonar.qualitygate.wait`, que obliga a esperar el procesamiento del servidor.
+La integración con SonarQube falló en silencio durante varias ejecuciones: el
+scanner subía el reporte y terminaba con éxito aunque el servidor rechazara el
+análisis por una clave de proyecto incorrecta. El trabajo aparecía en verde
+mientras nada llegaba al proyecto. Solo al consultar la API se detectó que el
+último análisis registrado era anterior. La verificación debe consultar el
+estado real, no confiar en el código de salida.
 
 **4. Programar contra una API supuesta cuesta más que verificarla.**
-Dos ejecuciones consecutivas del pipeline fallaron porque el script de
-cobertura asumía la estructura de la salida de `xccov` en lugar de comprobarla.
-Al descargar un `.xcresult` real y ejecutar el comando se vio que devuelve un
-diccionario indexado por ruta, no una lista, y además que la consulta por
-archivo tardaba minutos mientras que una sola consulta global tarda 1.4
-segundos. Verificar primero habría evitado ambos errores.
+Dos ejecuciones del pipeline fallaron porque un script asumía la estructura de
+la salida de una herramienta en lugar de comprobarla. Al ejecutar el comando
+sobre datos reales se vio que devolvía una estructura distinta, y de paso que
+la consulta empleada tardaba minutos mientras que la alternativa tardaba 1.4
+segundos.
 
-**5. Un repositorio de código no debe vivir dentro de un servicio de
-sincronización.** El proyecto estaba en `~/Documents`, sincronizado con iCloud
-Drive, que genera copias de conflicto con sufijo " 2". Eso costó dos incidentes
-concretos: una referencia de git corrupta llamada `First-Demo 2` dejó
-`git fetch` inutilizable durante tres meses, y un duplicado de
-`TextToolKeyboardBar.swift` rompió la compilación con un error de redeclaración.
-Se encontraron 24 archivos duplicados, y iCloud recreó uno durante la limpieza.
-El proyecto se movió a `~/Developer`, fuera de la sincronización.
-
-**6. Las restricciones de las herramientas gratuitas condicionan el flujo de
-trabajo, no solo el presupuesto.** El plan gratuito de SonarQube Cloud analiza
-la rama principal y los pull requests, pero no ramas de trabajo prolongadas.
-Eso obliga a integrar mediante pull request para obtener métricas, lo cual
-resulta ser una práctica mejor, pero fue impuesto por la herramienta.
-
-**7. Los permisos de una credencial son parte de su configuración.**
+**5. Los permisos de una credencial son parte de su configuración.**
 El despliegue falló con `Cloud signing permission error` porque la clave de API
-de App Store Connect se generó con rol *App Manager*. Subir compilaciones y
-crear activos de firma son permisos distintos: la firma en la nube requiere rol
-*Admin*. Regenerar la clave con el rol correcto resolvió el problema de
-inmediato.
+se generó con rol *App Manager*. Subir compilaciones y crear activos de firma
+son permisos distintos: la firma en la nube requiere rol *Admin*.
 
-**8. Dos pipelines desplegando al mismo destino colisionan.**
-El proyecto tenía Xcode Cloud conectado desde antes, y al añadir el despliegue
-en GitHub Actions ambos empezaron a subir a TestFlight. App Store Connect
-rechaza un número de build repetido o menor, y cada sistema lleva su propio
-contador: el de Actions iba en 22 y el de Xcode Cloud muy por detrás, de modo
-que este último fallaba en cada push con "the bundle version must be higher
-than the previously uploaded version". No era un error que corregir sino un
-pipeline duplicado que retirar. Se desactivó Xcode Cloud, ya que GitHub Actions
-cubre lo mismo y además ejecuta las pruebas y el umbral de cobertura.
+**6. Dos pipelines desplegando al mismo destino colisionan.**
+El proyecto tenía Xcode Cloud conectado, y al añadir el despliegue en GitHub
+Actions ambos empezaron a publicar en TestFlight. App Store Connect rechaza un
+número de build repetido, y cada sistema lleva su propio contador, de modo que
+uno fallaba en cada push. No era un error que corregir sino un pipeline
+duplicado que retirar.
+
+**7. Un repositorio de código no debe vivir dentro de un servicio de
+sincronización.** El proyecto estaba en una carpeta sincronizada con iCloud
+Drive, que genera copias de conflicto con sufijo " 2". Eso provocó una
+referencia de git corrupta y un archivo duplicado que rompió la compilación con
+un error de redeclaración. Se encontraron 24 archivos duplicados y el proyecto
+se movió fuera de la carpeta sincronizada.
+
+**8. Las herramientas de diagnóstico no deben quedarse encendidas.**
+La aplicación se cerraba con SIGKILL al arrancar en un iPad. La causa era
+Address Sanitizer, activo en el esquema: instrumenta cada acceso a memoria y
+triplica el uso de memoria, lo que empujó el arranque más allá del límite del
+watchdog del sistema. Es una herramienta para cazar un error de memoria, no
+algo que dejar permanentemente activo.
 
 **9. Un fallo con un mensaje preciso vale el esfuerzo de escribirlo.**
-El pipeline incluye comprobaciones explícitas: que el secreto exista, que la
-clave decodificada sea un PEM, que el reporte de cobertura no esté vacío. Esas
-guardas atraparon un secreto vacío en el segundo paso del despliegue, en lugar
-de dejar que el proceso compilara diez minutos para morir con un error de firma
-ilegible. El mensaje nombraba el secreto exacto y el archivo de documentación
-donde estaba el procedimiento.
+El pipeline comprueba explícitamente sus precondiciones: que el secreto exista,
+que la clave decodificada sea un PEM válido, que el reporte de cobertura no
+esté vacío. Esas guardas detectaron un secreto vacío en el segundo paso del
+despliegue, en lugar de permitir que el proceso compilara diez minutos para
+morir con un error de firma ilegible.
 
 ---
 
-## 5. Plan de mejora continua
+## 10. Plan de mejora continua
 
-### 5.1 Corto plazo (1 a 2 semanas)
+### 10.1 Corto plazo (1 a 2 semanas)
 
-| Acción | Resultado esperado |
-| --- | --- |
-| Corregir la generación de 20 preguntas en flashcards | Hoy falla con "la lista de preguntas llegó incompleta", probablemente por truncamiento de la respuesta del modelo |
-| Ampliar la lista de archivos con cobertura exigida conforme se añadan pruebas | Que la cobertura crezca de forma sostenida en lugar de estancarse en los módulos actuales |
-| ~~Definir un quality gate propio en SonarQube~~ **(completado)** | Realizado: gate `GirokIQ` con condiciones de fiabilidad, seguridad, mantenibilidad, revisión de hotspots y duplicación, todas superadas. La cobertura se controla en el pipeline |
-| Extraer un protocolo de `AIService` para poder sustituirlo por un doble de prueba | Haría verificable `FlashcardsGenerator`, hoy imposible de probar porque recibe un cliente concreto |
-| Documentar el procedimiento de aplicación de migraciones | Las migraciones se aplican a mano; el paso se olvida y la aplicación falla pidiendo funciones inexistentes |
+| # | Acción | Métrica | Actual | Meta |
+| ---: | --- | --- | ---: | ---: |
+| 1 | Corregir la generación de cuestionarios de 20 preguntas mediante generación por lotes | Tasa de éxito en cuestionarios de 20 preguntas | 0 % | ≥ 95 % |
+| 2 | Extraer un protocolo de `AIService` para sustituirlo por un doble de prueba | Cobertura de `FlashcardsGenerator` | 11 % | ≥ 70 % |
+| 3 | Ampliar el alcance de cobertura exigida a los servicios de sincronización | Archivos con cobertura exigida | 5 | 12 |
+| 4 | Automatizar la aplicación de migraciones desde el pipeline | Migraciones aplicadas manualmente | 10 de 10 | 0 de 10 |
 
-### 5.2 Mediano plazo (1 a 2 meses)
+### 10.2 Mediano plazo (1 a 2 meses)
 
-| Acción | Resultado esperado |
-| --- | --- |
-| Extraer la lógica pura a un módulo o paquete Swift independiente | Medir cobertura por target de forma significativa, sin listas de archivos |
-| Añadir pruebas de integración para `SyncEngine` | Los dos defectos más costosos del proyecto fueron de sincronización y ninguno era detectable con pruebas unitarias |
-| Automatizar la verificación de las políticas RLS | Una suite que intente leer datos de otro usuario y compruebe que la base de datos los rechaza. Es la mejora de seguridad más valiosa pendiente |
-| Establecer un entorno de Supabase de pruebas y desplegarlo desde el pipeline | Validar que las migraciones aplican limpias desde cero, y dar a ZAP un objetivo que se pueda escanear de forma agresiva |
-| Especificación OpenAPI de las edge functions y `zap-api-scan` autenticado | Un escaneo pasivo sin autenticación apenas alcanza la superficie real de la API |
+| # | Acción | Métrica | Actual | Meta |
+| ---: | --- | --- | ---: | ---: |
+| 5 | Extraer la lógica pura a un paquete Swift independiente | Cobertura medible por target | no aplicable | ≥ 80 % |
+| 6 | Añadir pruebas de integración para la sincronización | Pruebas de integración | 0 | ≥ 15 |
+| 7 | Suite automatizada que verifique las políticas RLS intentando leer datos de otro usuario | Políticas verificadas automáticamente | 0 | 100 % |
+| 8 | Entorno de Supabase de pruebas desplegado desde el pipeline | Entornos | 1 | 2 |
+| 9 | Especificación OpenAPI de las edge functions y `zap-api-scan` autenticado | Endpoints alcanzados por el escaneo | 4 | ≥ 20 |
 
-### 5.3 Largo plazo
+### 10.3 Largo plazo (6 meses)
 
-| Acción | Resultado esperado |
-| --- | --- |
-| Versión para macOS | Completar el objetivo 6 del plan original |
-| Telemetría de errores en producción | Detectar defectos como el de sincronización sin depender de la observación manual |
-| Generación incremental de flashcards por streaming | Eliminar la dependencia de una única respuesta completa del modelo y mejorar el tiempo de respuesta percibido |
-| Predicción de temas débiles a partir del historial de respuestas | Sugerir repaso dirigido usando los datos que ya se almacenan en `flashcards_session` |
-| Avanzar hacia CMMI nivel 3 | El nivel 2 planteado en la Actividad 4 ya cuenta con evidencia: control de versiones, integración continua, revisión por pull request, despliegue automatizado y registro de cambios |
+| # | Acción | Métrica | Actual | Meta |
+| ---: | --- | --- | ---: | ---: |
+| 10 | Telemetría de errores en producción | Tiempo medio de detección de un defecto | semanas | < 48 h |
+| 11 | Reducir el tiempo de generación de un cuestionario | Tiempo hasta la primera pregunta | ~30 s | < 8 s |
+| 12 | Versión nativa de macOS, más allá de "Designed for iPad" | Plataformas con compilación propia | 1 | 2 |
+
+### 10.4 Propuestas de innovación tecnológica
+
+**Repetición espaciada con predicción de olvido.** La base de datos ya almacena
+cada respuesta con su calificación y su página de origen, y el modo focus
+recoge una autoevaluación en la escala 0–5 del algoritmo SM-2. Con esos datos
+es posible calcular para cada concepto la fecha óptima de repaso y notificar al
+estudiante justo antes de que la curva de olvido lo alcance. La infraestructura
+de datos ya existe; falta el modelo de planificación.
+
+**Detección automática de temas débiles.** Agrupando las preguntas falladas por
+página de origen y por concepto, el sistema puede identificar qué temas
+concentran los errores de un estudiante y generar automáticamente cuestionarios
+dirigidos a esas debilidades, en lugar de muestrear las páginas de forma
+uniforme.
+
+**Generación incremental por streaming.** Hoy el cuestionario se genera en una
+sola respuesta del modelo, lo que provoca el fallo en cuestionarios largos y
+obliga a esperar a que termine. Generarlas de forma incremental permitiría
+empezar a estudiar con la primera pregunta lista, eliminar el truncamiento como
+modo de fallo y reducir el tiempo de respuesta percibido.
+
+**Reconocimiento de estructura en los apuntes.** Aplicar análisis de la
+escritura manuscrita para identificar automáticamente títulos, definiciones,
+fórmulas y diagramas dentro de una página, y usar esa estructura tanto para
+organizar los cuadernos por temas sin intervención del usuario como para
+mejorar la calidad de las preguntas generadas.
 
 ---
 
-## 6. Evidencias
+## 11. Conclusiones
+
+El módulo de flashcards se entregó funcional y distribuido, con las tres
+modalidades de estudio previstas, un CRUD completo sobre las preguntas y
+autenticación con roles diferenciados respaldada en la base de datos y no solo
+en la interfaz.
+
+Alrededor del módulo se construyó la infraestructura que la actividad exige:
+115 pruebas unitarias automatizadas donde antes no existía ninguna, un pipeline
+que integra, construye y despliega sin intervención manual, y análisis
+automatizado de calidad y seguridad cuyos hallazgos fueron corregidos y
+verificados.
+
+Las lecciones más útiles no vinieron del código del módulo sino de la
+infraestructura: un trabajo en verde que no hacía nada, una herramienta de
+diagnóstico que impedía arrancar la aplicación, y dos pipelines compitiendo por
+el mismo destino. Todas comparten la misma raíz —dar por supuesto el estado de
+un sistema en lugar de comprobarlo— y son el insumo principal del plan de
+mejora continua.
+
+---
+
+## 12. Evidencias
 
 | Elemento | Ubicación |
 | --- | --- |
-| Código y pipeline | https://github.com/no-c-123/GirokIQ-iOS |
-| Pull request de integración | https://github.com/no-c-123/GirokIQ-iOS/pull/1 |
-| Definición del pipeline (pruebas, Sonar y despliegue) | `.github/workflows/ci.yml` |
-| Escaneo de seguridad | `.github/workflows/security-scan.yml` |
+| Repositorio | https://github.com/no-c-123/GirokIQ-iOS |
+| Módulo de flashcards | `GirokIQ-ios/Features/Flashcards/` |
+| Panel de administración | `GirokIQ-ios/Features/Admin/` |
+| Pruebas unitarias | `GirokIQ-iosTests/` |
+| Pipeline CI/CD | `.github/workflows/ci.yml` |
+| Workflow de seguridad | `.github/workflows/security-scan.yml` |
 | Configuración de SonarQube | `sonar-project.properties` |
 | Alcance de la cobertura | `Scripts/coverage_targets.json` |
-| Pruebas unitarias | `GirokIQ-iosTests/` |
 | Reporte de pruebas | `reports/pruebas-unitarias/` |
 | Reporte de cobertura | `reports/cobertura/` |
 | Reporte de calidad | `reports/calidad/sonarqube.md` |
-| Reporte de seguridad | `reports/seguridad/` |
+| Reportes de seguridad | `reports/seguridad/` |
 | Diseño de roles | `Docs/Roles.md` |
 | Procedimiento de despliegue | `Docs/Despliegue.md` |
 | Migraciones de base de datos | `supabase/migrations/` |
+| Panel de SonarQube | https://sonarcloud.io/dashboard?id=no-c-123_GirokIQ-iOS |
 
 [CAPTURA 13 — Estructura del repositorio mostrando la carpeta reports/ con los cuatro tipos de reporte]

@@ -751,19 +751,19 @@ tienen que salir de tu iPad y de tu cuenta.
 
 | # | Captura | Dónde obtenerla | Sección del informe |
 | ---: | --- | --- | --- |
-| 1 | Configuración de flashcards: modalidades, cantidad, dificultad y campo de instrucciones para la IA | iPad | 2.4 |
-| 2 | Pantalla de revisión: preguntas editables, borrar y compositor. **Debe verse que no aparece ninguna respuesta** | iPad | 2.4 |
-| 3 | Panel de administración con datos reales | iPad, cuenta admin | 2.4 |
-| 4 | Contraste de roles: Ajustes con cuenta normal frente a cuenta admin | iPad, dos cuentas | 2.4 |
-| 5 | 115 pruebas aprobadas, 0 fallidas | Xcode, navegador de pruebas | 3.1 |
-| 6 | Resumen de cobertura del pipeline | GitHub → Actions → run → Job Summary | 3.1 |
-| 7 | Pipeline completo en verde, tres trabajos | GitHub → Actions → run 36225036192 | 3.2 |
-| 8 | Build 22 en TestFlight | App Store Connect o app TestFlight | 3.2 |
-| 9 | Métricas y calificaciones A | sonarcloud.io, panel del proyecto | 3.3 |
-| 10 | Los cuatro hallazgos marcados como Fixed | SonarQube → Issues → filtro *Fixed* | 3.3 |
-| 11 | Quality gate `GirokIQ` superado | SonarQube → panel del proyecto | 3.3.1 |
-| 12 | Resumen de alertas de ZAP | Abrir `reports/seguridad/zap-baseline-report.html` | 3.4 |
-| 13 | Estructura del repositorio con la carpeta `reports/` | GitHub | 6 |
+| 1 | Configuración de la sesión: modalidades, cantidad, dificultad e instrucciones para la IA | iPad | 3.1 |
+| 2 | Pantalla de revisión: preguntas editables, borrar y compositor. **Debe verse que no aparece ninguna respuesta** | iPad | 3.3 |
+| 3 | Panel de administración con datos reales | iPad, cuenta admin | 3.6 |
+| 4 | Contraste de roles: Ajustes con cuenta normal frente a cuenta admin | iPad, dos cuentas | 3.6 |
+| 5 | 115 pruebas aprobadas, 0 fallidas | Xcode, navegador de pruebas | 4 |
+| 6 | Resumen de cobertura del pipeline | GitHub → Actions → run → Job Summary | 4.2 |
+| 7 | Pipeline completo en verde, tres trabajos | GitHub → Actions | 5 |
+| 8 | Build 22 en TestFlight | App Store Connect o app TestFlight | 5 |
+| 9 | Métricas y calificaciones A | sonarcloud.io, panel del proyecto | 6.1 |
+| 10 | Los cuatro hallazgos marcados como Fixed | SonarQube → Issues → filtro *Fixed* | 6.2 |
+| 11 | Quality gate `GirokIQ` superado | SonarQube → panel del proyecto | 6.4 |
+| 12 | Resumen de alertas de ZAP | Abrir `reports/seguridad/zap-baseline-report.html` | 7.1 |
+| 13 | Estructura del repositorio con la carpeta `reports/` | GitHub | 12 |
 
 **La número 4 es la más valiosa del conjunto.** Demuestra visualmente que el rol
 cambia el comportamiento del sistema, que es exactamente lo que evalúa el
